@@ -41,10 +41,12 @@
 
 ## Config (`internal/config/`)
 
-- `.echo.toml` is the single source of truth for project-level settings
-- Schema: `[project] version`, `stage`, `db`, `theme`, `logo`, `id`
-- Write the file atomically (write to `.echo.toml.tmp`, rename) to avoid corrupt state
-- Detect Odoo version in this order: `.echo.toml` → `docker-compose.yml` image tag → `Dockerfile FROM` → interactive prompt
+- `~/.config/echo/global.toml` — global prefs (theme, logo); schema: `theme`, `logo`
+- `~/.config/echo/projects/<sha256>.toml` — per-project; schema: `odoo_version`, `odoo_container`, `db_container`, `db_name`, `stage`
+- SHA-256 key is computed from the absolute project path
+- Write files atomically (write to `<file>.tmp`, rename) to avoid corrupt state
+- On startup, if no per-project config exists, fall back to auto-detect from `docker-compose.yml`
+- Never write any file inside the user's project directory
 
 ## File Organization
 
@@ -56,8 +58,8 @@ echo/
   context/                 — spec-driven-dev context files
   internal/
     theme/                 — Palette, Styles, PromptColor
-    detect/                — version + stage detection
-    config/                — .echo.toml read/write
+    detect/                — docker-compose.yml parser for auto-detection
+    config/                — global.toml + per-project toml read/write
     cmd/                   — docker.go, modules.go, db.go, i18n.go, shells.go, tests.go
     repl/                  — prompt loop, history, dispatch
     banner/                — ASCII logos, gradient rendering

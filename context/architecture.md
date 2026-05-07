@@ -9,7 +9,7 @@
 | Input      | Charm `bubbles/textinput`           | Readline-style input with history and autocomplete|
 | Lists      | Charm `bubbles/list`                | Filterable lists (modules, db-list, etc.)         |
 | Theming    | `lipgloss` v2                       | Semantic color tokens, all terminal output styling|
-| Config     | `.echo.toml` (TOML)                 | Per-project version, db name, stage, theme        |
+| Config     | `~/.config/echo/` (TOML)            | Global prefs + per-project container/db/version   |
 | Docker     | `os/exec` → `docker compose`        | Lifecycle commands, streaming stdout/stderr       |
 | Odoo CLI   | `os/exec` inside container          | Module install/update/test/shell                  |
 | Database   | `os/exec` → `psql`, `pg_dump`       | Backup, restore, list, drop                       |
@@ -17,18 +17,25 @@
 ## System Boundaries
 
 - `internal/theme/` — palette definitions (charm/hacker/odoo/tokyo), `Styles` struct, prompt color logic
-- `internal/detect/` — reads `.echo.toml` and `docker-compose.yml` to detect version, db, stage
+- `internal/detect/` — reads `docker-compose.yml` to auto-detect Odoo version and container names
 - `internal/cmd/` — one file per command group (`docker.go`, `modules.go`, `db.go`, `i18n.go`, `shells.go`, `tests.go`); each exposes `Run(ctx, args) (<-chan Line, error)`
 - `internal/repl/` — the interactive prompt loop: reads input, dispatches to cmd/, streams Line output, manages history
 - `internal/banner/` — ASCII art logos (echo, planet, python, anchor) with per-segment color tokens
-- `internal/config/` — load/save `.echo.toml`, defaults, version switch
+- `internal/config/` — load/save global and per-project config under `~/.config/echo/`
 - `main.go` — entry point: detect project, load config, render header, start REPL
 
 ## Storage Model
 
-- **`.echo.toml`** (project root): active Odoo version, database name, current stage, active theme. Written by `version`, `theme`, `logo` commands.
+- **`~/.config/echo/global.toml`**: user-level preferences shared across all projects — active theme, logo. Written by `theme` and `logo` commands.
+- **`~/.config/echo/projects/<sha256-of-abs-path>.toml`**: per-project config, keyed by the SHA-256 of the project's absolute path. Contains:
+  - `odoo_version` — e.g. `"17"`, `"18"`, `"19"`
+  - `odoo_container` — Docker container name for Odoo
+  - `db_container` — Docker container name for PostgreSQL
+  - `db_name` — database name inside PostgreSQL
+  - `stage` — `"dev"`, `"staging"`, or `"prod"`
+  Written by `echo init` and the `version` / `stage` meta-commands.
 - **`./backups/`**: db dumps produced by `db-backup`. Never read at startup; only written on demand.
-- **No application database**: Echo itself has no persistent store beyond the TOML config file.
+- **No files in the user's project repos**: Echo writes nothing to the project directory — all state lives in `~/.config/echo/`.
 
 ## Auth and Access Model
 

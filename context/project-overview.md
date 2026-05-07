@@ -64,9 +64,11 @@ prompt that accepts commands and streams their output in real time.
 - `test <mod>...` — run module tests with `--test-enable --stop-after-init`
 
 ### Meta / Config
+- `init` — interactive setup flow: Odoo version, container names, db name, stage. Persists to `~/.config/echo/projects/<hash>.toml`
 - `version [17|18|19]` — query or switch active Odoo version
-- `theme [charm|hacker|odoo|tokyo]` — switch color theme
-- `logo [echo|planet|python|anchor]` — switch ASCII banner logo
+- `stage [dev|staging|prod]` — query or switch current stage
+- `theme [charm|hacker|odoo|tokyo]` — switch color theme (global)
+- `logo [echo|planet|python|anchor]` — switch ASCII banner logo (global)
 - `help` — show command reference
 - `clear` / `Ctrl+L` — clear screen
 - `exit` / `Ctrl+D` — quit
@@ -79,7 +81,10 @@ prompt that accepts commands and streams their output in real time.
 - Branded compact header (two-column: welcome left, tips right)
 - 4 color themes with semantic token system (charm, hacker, odoo, tokyo)
 - Stage-aware prompt coloring (dev=green, staging=yellow, prod=red)
-- Odoo version detection from `.echo.toml` or `docker-compose.yml`
+- `init` command: interactive flow (Charm `huh`) to configure project (version, containers, db, stage)
+- Global config at `~/.config/echo/` — zero files written to user's project repos
+- Per-project config keyed by project path SHA-256
+- Odoo version auto-detection from `docker-compose.yml` (fallback when no init has run)
 - Keyboard shortcuts: ↑↓ history, Tab autocomplete, Ctrl+L clear
 - Filterable list UI for `modules` command (via Charm bubbles)
 
