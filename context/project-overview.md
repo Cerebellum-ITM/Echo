@@ -22,7 +22,7 @@ prompt that accepts commands and streams their output in real time.
 
 ## Core User Flow
 
-1. Developer runs `odev` in a project directory.
+1. Developer runs `echo` in a project directory.
 2. The header renders: branded top bar + two-column body (welcome + tips/news).
 3. The prompt appears: `{project}-{id} [{stage}/{version}.0]:~$ `
 4. Developer types a command (e.g. `up`, `install sale`, `logs`, `db-backup`).
@@ -66,7 +66,7 @@ prompt that accepts commands and streams their output in real time.
 ### Meta / Config
 - `version [17|18|19]` — query or switch active Odoo version
 - `theme [charm|hacker|odoo|tokyo]` — switch color theme
-- `logo [odev|planet|python|anchor]` — switch ASCII banner logo
+- `logo [echo|planet|python|anchor]` — switch ASCII banner logo
 - `help` — show command reference
 - `clear` / `Ctrl+L` — clear screen
 - `exit` / `Ctrl+D` — quit
@@ -79,7 +79,7 @@ prompt that accepts commands and streams their output in real time.
 - Branded compact header (two-column: welcome left, tips right)
 - 4 color themes with semantic token system (charm, hacker, odoo, tokyo)
 - Stage-aware prompt coloring (dev=green, staging=yellow, prod=red)
-- Odoo version detection from `.odev.toml` or `docker-compose.yml`
+- Odoo version detection from `.echo.toml` or `docker-compose.yml`
 - Keyboard shortcuts: ↑↓ history, Tab autocomplete, Ctrl+L clear
 - Filterable list UI for `modules` command (via Charm bubbles)
 
@@ -93,7 +93,7 @@ prompt that accepts commands and streams their output in real time.
 
 ## Success Criteria
 
-1. `odev` starts and renders the header without errors in any of the 4 themes.
+1. `echo` starts and renders the header without errors in any of the 4 themes.
 2. `up`, `down`, `ps`, `logs` stream Docker output line by line to the terminal.
 3. `install`, `update`, `test` correctly compose the `odoo` CLI invocation for
    versions 17, 18, and 19 (including any version-specific flag differences).

@@ -5,7 +5,7 @@
 Dark only. No light mode. Four named themes — `charm` (default), `hacker`, `odoo`, `tokyo`.
 Each theme defines the same semantic token slots so all rendering code is theme-agnostic.
 Colors are truecolor hex strings passed to `lipgloss.Color("#…")`.
-The active theme is stored in `.odev.toml` and loaded at startup.
+The active theme is stored in `.echo.toml` and loaded at startup.
 
 ## Color Tokens (per theme)
 

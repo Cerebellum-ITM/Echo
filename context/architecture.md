@@ -9,7 +9,7 @@
 | Input      | Charm `bubbles/textinput`           | Readline-style input with history and autocomplete|
 | Lists      | Charm `bubbles/list`                | Filterable lists (modules, db-list, etc.)         |
 | Theming    | `lipgloss` v2                       | Semantic color tokens, all terminal output styling|
-| Config     | `.odev.toml` (TOML)                 | Per-project version, db name, stage, theme        |
+| Config     | `.echo.toml` (TOML)                 | Per-project version, db name, stage, theme        |
 | Docker     | `os/exec` → `docker compose`        | Lifecycle commands, streaming stdout/stderr       |
 | Odoo CLI   | `os/exec` inside container          | Module install/update/test/shell                  |
 | Database   | `os/exec` → `psql`, `pg_dump`       | Backup, restore, list, drop                       |
@@ -17,16 +17,16 @@
 ## System Boundaries
 
 - `internal/theme/` — palette definitions (charm/hacker/odoo/tokyo), `Styles` struct, prompt color logic
-- `internal/detect/` — reads `.odev.toml` and `docker-compose.yml` to detect version, db, stage
+- `internal/detect/` — reads `.echo.toml` and `docker-compose.yml` to detect version, db, stage
 - `internal/cmd/` — one file per command group (`docker.go`, `modules.go`, `db.go`, `i18n.go`, `shells.go`, `tests.go`); each exposes `Run(ctx, args) (<-chan Line, error)`
 - `internal/repl/` — the interactive prompt loop: reads input, dispatches to cmd/, streams Line output, manages history
-- `internal/banner/` — ASCII art logos (odev, planet, python, anchor) with per-segment color tokens
-- `internal/config/` — load/save `.odev.toml`, defaults, version switch
+- `internal/banner/` — ASCII art logos (echo, planet, python, anchor) with per-segment color tokens
+- `internal/config/` — load/save `.echo.toml`, defaults, version switch
 - `main.go` — entry point: detect project, load config, render header, start REPL
 
 ## Storage Model
 
-- **`.odev.toml`** (project root): active Odoo version, database name, current stage, active theme. Written by `version`, `theme`, `logo` commands.
+- **`.echo.toml`** (project root): active Odoo version, database name, current stage, active theme. Written by `version`, `theme`, `logo` commands.
 - **`./backups/`**: db dumps produced by `db-backup`. Never read at startup; only written on demand.
 - **No application database**: Echo itself has no persistent store beyond the TOML config file.
 

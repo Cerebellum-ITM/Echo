@@ -41,10 +41,10 @@
 
 ## Config (`internal/config/`)
 
-- `.odev.toml` is the single source of truth for project-level settings
+- `.echo.toml` is the single source of truth for project-level settings
 - Schema: `[project] version`, `stage`, `db`, `theme`, `logo`, `id`
-- Write the file atomically (write to `.odev.toml.tmp`, rename) to avoid corrupt state
-- Detect Odoo version in this order: `.odev.toml` → `docker-compose.yml` image tag → `Dockerfile FROM` → interactive prompt
+- Write the file atomically (write to `.echo.toml.tmp`, rename) to avoid corrupt state
+- Detect Odoo version in this order: `.echo.toml` → `docker-compose.yml` image tag → `Dockerfile FROM` → interactive prompt
 
 ## File Organization
 
@@ -57,7 +57,7 @@ echo/
   internal/
     theme/                 — Palette, Styles, PromptColor
     detect/                — version + stage detection
-    config/                — .odev.toml read/write
+    config/                — .echo.toml read/write
     cmd/                   — docker.go, modules.go, db.go, i18n.go, shells.go, tests.go
     repl/                  — prompt loop, history, dispatch
     banner/                — ASCII logos, gradient rendering

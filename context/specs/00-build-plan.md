@@ -14,7 +14,7 @@ Decomposition of Echo into ordered, scoped, verifiable units.
 | #  | Name                        | What it builds                                                                 | Depends on |
 |----|-----------------------------|--------------------------------------------------------------------------------|------------|
 | 01 | scaffold-theme-header-prompt| Go module, theme system (4 palettes + Styles), header render, basic REPL + `ls`| none       |
-| 02 | config-detect               | `.odev.toml` read/write, Odoo version detection, stage detection               | 01         |
+| 02 | config-detect               | `.echo.toml` read/write, Odoo version detection, stage detection               | 01         |
 | 03 | docker-commands             | `up`, `down`, `restart`, `ps`, `logs` — streaming subprocess output            | 02         |
 | 04 | module-commands             | `install`, `update`, `uninstall`, `modules` (static list first)                | 03         |
 | 05 | db-commands                 | `db-backup`, `db-restore`, `db-drop --force`, `db-list`                        | 03         |

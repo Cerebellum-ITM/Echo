@@ -1,4 +1,4 @@
-# odev — Design Tokens
+# Echo — Design Tokens
 
 CLI/TUI para administrar entornos de desarrollo Odoo.
 Stack: **Go + Charmbracelet** (`bubbletea`, `lipgloss`, `bubbles`).
@@ -84,7 +84,7 @@ Cada línea impresa es de un tipo. Mapean directo a un `lipgloss.Style`:
 
 ## 5. Comandos (alfabético, agrupados)
 
-Auto-detectar version desde `docker-compose.yml` o `.odev.toml` del proyecto.
+Auto-detectar version desde `docker-compose.yml` o `.echo.toml` del proyecto.
 Soporta Odoo 17 / 18 / 19.
 
 ### Docker
@@ -121,7 +121,7 @@ Soporta Odoo 17 / 18 / 19.
 ### Meta
 - `version [17|18|19]` — switch active version
 - `theme [charm|hacker|odoo|tokyo]`
-- `logo [odev|planet|python|anchor]`
+- `logo [echo|planet|python|anchor]`
 - `help` · `clear` (también `Ctrl+L`) · `exit`
 
 ### Atajos de teclado
@@ -228,7 +228,7 @@ internal/
   theme/        ← este archivo + paletas
   cmd/          ← un archivo por comando (up.go, install.go, …)
                   cada uno expone Run(ctx, args) (<-chan Line, error)
-  detect/       ← parser de docker-compose.yml + .odev.toml
+  detect/       ← parser de docker-compose.yml + .echo.toml
   tui/
     model.go    ← Model { lines []Line, input textinput.Model, history, busy }
     view.go     ← render del buffer + prompt
@@ -265,7 +265,7 @@ renderea con el `Styles` correspondiente al theme activo.
 
 Orden de precedencia (primero que matchee gana):
 
-1. `.odev.toml` en cwd → `[project] version = "18"`
+1. `.echo.toml` en cwd → `[project] version = "18"`
 2. `docker-compose.yml` → buscar `image: odoo:NN` o `image: odoo:NN.0`
 3. `Dockerfile` → `FROM odoo:NN`
-4. Preguntar interactivamente la primera vez, persistir en `.odev.toml`
+4. Preguntar interactivamente la primera vez, persistir en `.echo.toml`
