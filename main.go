@@ -30,5 +30,5 @@ func main() {
 		username = u.Username
 	}
 
-	repl.Start(styles, palette, cfg.Logo, "01", stage, cfg.OdooVersion, cfg.Theme, username, cwd)
+	repl.Start(styles, palette, cfg.Logo, "01", stage, cfg.OdooVersion, cfg.Theme, username, cwd, cfg)
 }

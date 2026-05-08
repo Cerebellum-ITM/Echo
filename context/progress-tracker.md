@@ -6,16 +6,17 @@
 
 ## Current Goal
 
-Unit 03: `init` interactive flow (Odoo version, containers, db name, stage) via Charm `huh`.
+Unit 04: `up`, `down`, `restart`, `ps`, `logs` — streaming subprocess output.
 
 ## In Progress
 
-_(none — ready for Unit 03)_
+_(none — ready for Unit 04)_
 
 ## Completed
 
 - [x] Unit 01 — scaffold + theme system (4 palettes) + two-column header + REPL prompt with `ls`
 - [x] Unit 02 — `internal/config/` package: `Load`, `SaveGlobal`, `SaveProject`; `~/.config/echo/` layout; `PaletteByName`/`StageFromString` in theme; wired into `main.go` and `repl.go`
+- [x] Unit 03 — `init` command: `huh` form con auto-detect desde `docker-compose.yml`, persiste vía `SaveProject`, actualiza stage/version en el prompt al confirmar
 
 ## Open Questions
 
@@ -32,3 +33,4 @@ _(none yet)_
 - 2026-05-07: Project initialized with spec-driven-dev. Context files generated from
   DESIGN_TOKENS.md and initial conversation. First deliverable: header + `ls` command.
 - 2026-05-08: Unit 02 complete. Config package with TOML, atomic writes, defaults, and tests. Theme and stage now come from `~/.config/echo/` instead of being hardcoded.
+- 2026-05-08: Unit 03 complete. `init` command with `huh` form, docker-compose auto-detect, and live prompt update on confirm.

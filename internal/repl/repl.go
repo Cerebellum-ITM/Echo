@@ -3,13 +3,17 @@ package repl
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"strings"
 
+	"github.com/charmbracelet/huh"
 	"github.com/pascualchavez/echo/internal/banner"
+	"github.com/pascualchavez/echo/internal/cmd"
+	"github.com/pascualchavez/echo/internal/config"
 	"github.com/pascualchavez/echo/internal/theme"
 )
 
@@ -27,10 +31,12 @@ type session struct {
 	id         string
 	stage      theme.Stage
 	version    string
+	cfg        *config.Config
+	projectDir string
 }
 
 // Start renders the header and enters the interactive prompt loop.
-func Start(s theme.Styles, p theme.Palette, project, id string, stage theme.Stage, version, themeName, username, cwd string) {
+func Start(s theme.Styles, p theme.Palette, project, id string, stage theme.Stage, version, themeName, username, cwd string, cfg *config.Config) {
 	opts := banner.Opts{
 		Version:  "0.1.0",
 		Username: username,
@@ -47,6 +53,8 @@ func Start(s theme.Styles, p theme.Palette, project, id string, stage theme.Stag
 		id:         id,
 		stage:      stage,
 		version:    version,
+		cfg:        cfg,
+		projectDir: cwd,
 	}
 
 	fmt.Println(banner.Render(s, p, opts))
@@ -108,6 +116,8 @@ func (sess *session) dispatch(ctx context.Context, input string) {
 	case "clear":
 		fmt.Print("\033[H\033[2J")
 		fmt.Println(banner.Render(sess.styles, sess.palette, sess.bannerOpts))
+	case "init":
+		sess.runInit()
 	default:
 		sess.print(Line{Kind: "warn", Text: "unknown command: " + cmd + " — try help"})
 	}
@@ -130,6 +140,28 @@ func (sess *session) runLS(ctx context.Context, args []string) {
 	for _, line := range strings.Split(strings.TrimRight(string(out), "\n"), "\n") {
 		sess.print(Line{Kind: "out", Text: line})
 	}
+}
+
+func (sess *session) runInit() {
+	newCfg, err := cmd.RunInit(sess.cfg, sess.projectDir)
+	if err != nil {
+		if errors.Is(err, huh.ErrUserAborted) {
+			sess.print(Line{Kind: "warn", Text: "init cancelled — no changes saved"})
+		} else {
+			sess.print(Line{Kind: "err", Text: "init error: " + err.Error()})
+		}
+		return
+	}
+	sess.cfg = newCfg
+	sess.stage = theme.StageFromString(newCfg.Stage)
+	sess.version = newCfg.OdooVersion
+	sess.styles = theme.New(sess.palette, sess.stage)
+	sess.print(Line{Kind: "ok", Text: "✔ Project configured"})
+	sess.print(Line{Kind: "dim", Text: fmt.Sprintf("  version       %s", newCfg.OdooVersion)})
+	sess.print(Line{Kind: "dim", Text: fmt.Sprintf("  odoo          %s", newCfg.OdooContainer)})
+	sess.print(Line{Kind: "dim", Text: fmt.Sprintf("  db container  %s", newCfg.DBContainer)})
+	sess.print(Line{Kind: "dim", Text: fmt.Sprintf("  db name       %s", newCfg.DBName)})
+	sess.print(Line{Kind: "dim", Text: fmt.Sprintf("  stage         %s", newCfg.Stage)})
 }
 
 func (sess *session) print(l Line) {
