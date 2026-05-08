@@ -58,6 +58,7 @@ func Start(s theme.Styles, p theme.Palette, project, id string, stage theme.Stag
 		projectDir: cwd,
 	}
 
+	fmt.Print("\033[H\033[2J\033[3J")
 	fmt.Println(banner.Render(s, p, opts))
 
 	ctx := context.Background()
