@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/huh"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/pascualchavez/echo/internal/banner"
 	"github.com/pascualchavez/echo/internal/cmd"
 	"github.com/pascualchavez/echo/internal/config"
@@ -38,7 +39,7 @@ type session struct {
 // Start renders the header and enters the interactive prompt loop.
 func Start(s theme.Styles, p theme.Palette, project, id string, stage theme.Stage, version, themeName, username, cwd string, cfg *config.Config) {
 	opts := banner.Opts{
-		Version:  "0.1.0",
+		Version:  "0.2.0",
 		Username: username,
 		Theme:    themeName,
 		Stage:    string(stage),
@@ -120,6 +121,8 @@ func (sess *session) dispatch(ctx context.Context, input string) {
 		fmt.Println(banner.Render(sess.styles, sess.palette, sess.bannerOpts))
 	case "init":
 		sess.runInit()
+	case "reset":
+		sess.runReset()
 	default:
 		sess.print(Line{Kind: "warn", Text: "unknown command: " + cmd + " — try help"})
 	}
@@ -149,6 +152,7 @@ func (sess *session) runInit() {
 	newCfg, err := cmd.RunInit(ctx, cmd.InitOpts{
 		Cfg:       sess.cfg,
 		Root:      sess.projectDir,
+		Palette:   sess.palette,
 		StreamOut: func(line string) { sess.print(Line{Kind: "dim", Text: line}) },
 	})
 	if err != nil {
@@ -166,11 +170,41 @@ func (sess *session) runInit() {
 	sess.styles = theme.New(sess.palette, sess.stage)
 
 	sess.print(Line{Kind: "ok", Text: "  Project configured"})
-	sess.print(Line{Kind: "dim", Text: fmt.Sprintf("    \U000f01a7  version    %s", newCfg.OdooVersion)})
-	sess.print(Line{Kind: "dim", Text: fmt.Sprintf("    \U000f023b  stage      %s", newCfg.Stage)})
-	sess.print(Line{Kind: "dim", Text: fmt.Sprintf("      odoo       %s", newCfg.OdooContainer)})
-	sess.print(Line{Kind: "dim", Text: fmt.Sprintf("      db         %s", newCfg.DBContainer)})
-	sess.print(Line{Kind: "dim", Text: fmt.Sprintf("    \U000f01bc  db name    %s", newCfg.DBName)})
+	sess.print(Line{Kind: "dim", Text: confLine("\U000f01a7", "version", newCfg.OdooVersion)})
+	sess.print(Line{Kind: "dim", Text: confLine("\U000f023b", "stage", newCfg.Stage)})
+	sess.print(Line{Kind: "dim", Text: confLine("", "odoo", newCfg.OdooContainer)})
+	sess.print(Line{Kind: "dim", Text: confLine("", "db", newCfg.DBContainer)})
+	sess.print(Line{Kind: "dim", Text: confLine("\U000f01bc", "db name", newCfg.DBName)})
+}
+
+// confLine renders a single line of the post-init banner with consistent
+// column widths regardless of nerd-font glyph cell width.
+func confLine(icon, label, value string) string {
+	const (
+		indent      = "    "
+		iconCol     = 3
+		labelCol    = 10
+	)
+	iconCell := lipgloss.NewStyle().Width(iconCol).Render(icon)
+	labelCell := lipgloss.NewStyle().Width(labelCol).Render(label)
+	return indent + iconCell + labelCell + value
+}
+
+func (sess *session) runReset() {
+	result, err := cmd.RunReset(sess.cfg.ProjectKey, sess.palette)
+	if err != nil {
+		switch {
+		case errors.Is(err, huh.ErrUserAborted), errors.Is(err, cmd.ErrCancelled):
+			sess.print(Line{Kind: "warn", Text: "reset cancelled"})
+		default:
+			sess.print(Line{Kind: "err", Text: "reset error: " + err.Error()})
+		}
+		return
+	}
+	sess.print(Line{Kind: "ok", Text: fmt.Sprintf("  Reset (%s) — restart echo to re-detect", result.Scope)})
+	for _, path := range result.Removed {
+		sess.print(Line{Kind: "dim", Text: "    removed " + path})
+	}
 }
 
 func (sess *session) print(l Line) {

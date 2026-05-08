@@ -22,23 +22,44 @@ func DetectCompose(ctx context.Context) (string, error) {
 	return "", ErrComposeNotFound
 }
 
-// ListContainers returns names of services currently running in the project.
-func ListContainers(ctx context.Context, composeCmd, dir string) ([]string, error) {
-	args := append(splitCompose(composeCmd), "ps", "--services", "--status=running")
+// Container holds both the docker container name and its compose service.
+type Container struct {
+	Service string
+	Name    string
+}
+
+// Label returns "name - service" for display.
+func (c Container) Label() string { return c.Name + " - " + c.Service }
+
+// ListContainers returns running services with both their compose service
+// name and the actual container name.
+func ListContainers(ctx context.Context, composeCmd, dir string) ([]Container, error) {
+	args := append(splitCompose(composeCmd),
+		"ps", "--status=running",
+		"--format", "{{.Service}}\t{{.Name}}",
+	)
 	cmd := exec.CommandContext(ctx, args[0], args[1:]...)
 	cmd.Dir = dir
 	out, err := cmd.Output()
 	if err != nil {
 		return nil, err
 	}
-	var services []string
+	var containers []Container
 	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
 		line = strings.TrimSpace(line)
-		if line != "" {
-			services = append(services, line)
+		if line == "" {
+			continue
 		}
+		parts := strings.SplitN(line, "\t", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		containers = append(containers, Container{
+			Service: strings.TrimSpace(parts[0]),
+			Name:    strings.TrimSpace(parts[1]),
+		})
 	}
-	return services, nil
+	return containers, nil
 }
 
 // Up runs `<compose> up -d` in dir, streaming combined stdout/stderr line
