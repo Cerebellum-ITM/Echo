@@ -152,3 +152,17 @@ func max(a, b int) int {
 	}
 	return b
 }
+
+// LogoIcon returns the nerd-font glyph associated with a logo name.
+func LogoIcon(name string) string {
+	switch name {
+	case "planet":
+		return ""
+	case "python":
+		return "\U000f0320"
+	case "anchor":
+		return "\U000f0031"
+	default:
+		return ""
+	}
+}

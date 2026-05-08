@@ -94,7 +94,9 @@ func Start(s theme.Styles, p theme.Palette, project, id string, stage theme.Stag
 func (sess *session) renderPrompt() string {
 	s := sess.styles
 	projectID := sess.project + "-" + sess.id
-	return s.Project.Render(projectID) +
+	icon := banner.LogoIcon(sess.cfg.Logo)
+	return s.Accent.Render(icon) + " " +
+		s.Project.Render(projectID) +
 		s.Out.Render(" [") +
 		s.Bracket.Render(string(sess.stage)+"/"+sess.version+".0") +
 		s.Out.Render("]:") +
@@ -143,11 +145,17 @@ func (sess *session) runLS(ctx context.Context, args []string) {
 }
 
 func (sess *session) runInit() {
-	newCfg, err := cmd.RunInit(sess.cfg, sess.projectDir)
+	ctx := context.Background()
+	newCfg, err := cmd.RunInit(ctx, cmd.InitOpts{
+		Cfg:       sess.cfg,
+		Root:      sess.projectDir,
+		StreamOut: func(line string) { sess.print(Line{Kind: "dim", Text: line}) },
+	})
 	if err != nil {
-		if errors.Is(err, huh.ErrUserAborted) {
+		switch {
+		case errors.Is(err, huh.ErrUserAborted), errors.Is(err, cmd.ErrCancelled):
 			sess.print(Line{Kind: "warn", Text: "init cancelled — no changes saved"})
-		} else {
+		default:
 			sess.print(Line{Kind: "err", Text: "init error: " + err.Error()})
 		}
 		return
@@ -156,12 +164,13 @@ func (sess *session) runInit() {
 	sess.stage = theme.StageFromString(newCfg.Stage)
 	sess.version = newCfg.OdooVersion
 	sess.styles = theme.New(sess.palette, sess.stage)
-	sess.print(Line{Kind: "ok", Text: "✔ Project configured"})
-	sess.print(Line{Kind: "dim", Text: fmt.Sprintf("  version       %s", newCfg.OdooVersion)})
-	sess.print(Line{Kind: "dim", Text: fmt.Sprintf("  odoo          %s", newCfg.OdooContainer)})
-	sess.print(Line{Kind: "dim", Text: fmt.Sprintf("  db container  %s", newCfg.DBContainer)})
-	sess.print(Line{Kind: "dim", Text: fmt.Sprintf("  db name       %s", newCfg.DBName)})
-	sess.print(Line{Kind: "dim", Text: fmt.Sprintf("  stage         %s", newCfg.Stage)})
+
+	sess.print(Line{Kind: "ok", Text: "  Project configured"})
+	sess.print(Line{Kind: "dim", Text: fmt.Sprintf("    \U000f01a7  version    %s", newCfg.OdooVersion)})
+	sess.print(Line{Kind: "dim", Text: fmt.Sprintf("    \U000f023b  stage      %s", newCfg.Stage)})
+	sess.print(Line{Kind: "dim", Text: fmt.Sprintf("      odoo       %s", newCfg.OdooContainer)})
+	sess.print(Line{Kind: "dim", Text: fmt.Sprintf("      db         %s", newCfg.DBContainer)})
+	sess.print(Line{Kind: "dim", Text: fmt.Sprintf("    \U000f01bc  db name    %s", newCfg.DBName)})
 }
 
 func (sess *session) print(l Line) {

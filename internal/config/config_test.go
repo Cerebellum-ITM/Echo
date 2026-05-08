@@ -9,6 +9,7 @@ import (
 )
 
 func TestLoadDefaults(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
 	cfg, err := Load("/nonexistent/project/path/xyz123")
 	if err != nil {
 		t.Fatal(err)
@@ -28,6 +29,7 @@ func TestLoadDefaults(t *testing.T) {
 }
 
 func TestProjectKey(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
 	path := "/some/project"
 	cfg, _ := Load(path)
 	sum := sha256.Sum256([]byte(path))
@@ -38,6 +40,7 @@ func TestProjectKey(t *testing.T) {
 }
 
 func TestDifferentPaths(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
 	cfg1, _ := Load("/path/a")
 	cfg2, _ := Load("/path/b")
 	if cfg1.ProjectKey == cfg2.ProjectKey {

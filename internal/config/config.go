@@ -11,6 +11,7 @@ import (
 type Config struct {
 	Theme         string
 	Logo          string
+	ComposeCmd    string
 	OdooVersion   string
 	OdooContainer string
 	DBContainer   string
@@ -21,8 +22,9 @@ type Config struct {
 }
 
 type globalFile struct {
-	Theme string `toml:"theme"`
-	Logo  string `toml:"logo"`
+	Theme      string `toml:"theme"`
+	Logo       string `toml:"logo"`
+	ComposeCmd string `toml:"compose_cmd"`
 }
 
 type projectFile struct {
@@ -52,6 +54,7 @@ func Load(projectPath string) (*Config, error) {
 	}
 	cfg.Theme = g.Theme
 	cfg.Logo = g.Logo
+	cfg.ComposeCmd = g.ComposeCmd
 
 	var p projectFile
 	if data, err := os.ReadFile(filepath.Join(root, "projects", cfg.ProjectKey+".toml")); err == nil {
@@ -78,7 +81,11 @@ func SaveGlobal(cfg *Config) error {
 	}
 
 	var buf bytes.Buffer
-	if err := toml.NewEncoder(&buf).Encode(globalFile{Theme: cfg.Theme, Logo: cfg.Logo}); err != nil {
+	if err := toml.NewEncoder(&buf).Encode(globalFile{
+		Theme:      cfg.Theme,
+		Logo:       cfg.Logo,
+		ComposeCmd: cfg.ComposeCmd,
+	}); err != nil {
 		return err
 	}
 	return writeAtomic(filepath.Join(root, "global.toml"), buf.Bytes())
