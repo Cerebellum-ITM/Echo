@@ -79,6 +79,30 @@ var Tokyo = Palette{
 	Info:    "#7dcfff",
 }
 
+func PaletteByName(name string) Palette {
+	switch name {
+	case "hacker":
+		return Hacker
+	case "odoo":
+		return Odoo
+	case "tokyo":
+		return Tokyo
+	default:
+		return Charm
+	}
+}
+
+func StageFromString(s string) Stage {
+	switch s {
+	case "staging":
+		return StageStaging
+	case "prod":
+		return StageProd
+	default:
+		return StageDev
+	}
+}
+
 type Styles struct {
 	Out, Dim, Faint, Info, Ok, Warn, Err, Accent, Label lipgloss.Style
 	Project, Bracket, Tilde, Dollar                     lipgloss.Style

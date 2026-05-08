@@ -6,15 +6,16 @@
 
 ## Current Goal
 
-Unit 01: Go module scaffold + theme system + header + prompt accepting `ls`.
+Unit 03: `init` interactive flow (Odoo version, containers, db name, stage) via Charm `huh`.
 
 ## In Progress
 
-_(none — ready for Unit 02)_
+_(none — ready for Unit 03)_
 
 ## Completed
 
 - [x] Unit 01 — scaffold + theme system (4 palettes) + two-column header + REPL prompt with `ls`
+- [x] Unit 02 — `internal/config/` package: `Load`, `SaveGlobal`, `SaveProject`; `~/.config/echo/` layout; `PaletteByName`/`StageFromString` in theme; wired into `main.go` and `repl.go`
 
 ## Open Questions
 
@@ -30,3 +31,4 @@ _(none yet)_
 
 - 2026-05-07: Project initialized with spec-driven-dev. Context files generated from
   DESIGN_TOKENS.md and initial conversation. First deliverable: header + `ls` command.
+- 2026-05-08: Unit 02 complete. Config package with TOML, atomic writes, defaults, and tests. Theme and stage now come from `~/.config/echo/` instead of being hardcoded.
