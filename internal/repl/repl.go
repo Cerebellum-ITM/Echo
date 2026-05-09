@@ -58,8 +58,7 @@ func Start(s theme.Styles, p theme.Palette, project, id string, stage theme.Stag
 		projectDir: cwd,
 	}
 
-	fmt.Print("\033[H\033[2J\033[3J")
-	fmt.Println(banner.Render(s, p, opts))
+	sess.clearAndRenderHeader()
 
 	ctx := context.Background()
 	reader := bufio.NewReader(os.Stdin)
@@ -118,8 +117,7 @@ func (sess *session) dispatch(ctx context.Context, input string) {
 	case "ls":
 		sess.runLS(ctx, args)
 	case "clear":
-		fmt.Print("\033[H\033[2J")
-		fmt.Println(banner.Render(sess.styles, sess.palette, sess.bannerOpts))
+		sess.clearAndRenderHeader()
 	case "init":
 		sess.runInit()
 	case "reset":
@@ -189,6 +187,14 @@ func confLine(icon, label, value string) string {
 	iconCell := lipgloss.NewStyle().Width(iconCol).Render(icon)
 	labelCell := lipgloss.NewStyle().Width(labelCol).Render(label)
 	return indent + iconCell + labelCell + value
+}
+
+// clearAndRenderHeader wipes the terminal (including scrollback) and
+// reprints the welcome banner. Any command can call this to reset the
+// visible context.
+func (sess *session) clearAndRenderHeader() {
+	fmt.Print("\033[H\033[2J\033[3J")
+	fmt.Println(banner.Render(sess.styles, sess.palette, sess.bannerOpts))
 }
 
 func (sess *session) runReset() {
