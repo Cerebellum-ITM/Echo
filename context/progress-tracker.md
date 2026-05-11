@@ -6,11 +6,11 @@
 
 ## Current Goal
 
-Unit 04: `up`, `down`, `restart`, `ps`, `logs` — streaming subprocess output.
+Unit 05: `install`, `update`, `uninstall`, `modules` para gestionar módulos de Odoo.
 
 ## In Progress
 
-_(none — ready for Unit 04)_
+_(none — ready for Unit 05)_
 
 ## Completed
 
@@ -18,6 +18,7 @@ _(none — ready for Unit 04)_
 - [x] Unit 02 — `internal/config/` package: `Load`, `SaveGlobal`, `SaveProject`; `~/.config/echo/` layout; `PaletteByName`/`StageFromString` in theme; wired into `main.go` and `repl.go`
 - [x] Unit 03 — `init` command (v2): form `huh` 3 steps con iconos nerd-font, project root walk-up, auto-detect compose flavor (docker compose vs docker-compose) persistido en global.toml, `compose ps`/`psql -lqt` para listar containers/DBs, parser `.env` para POSTGRES_USER/DB, charm/log para fatales
 - [x] Unit 11 (parcial) — historial de comandos persistido en `~/.config/echo/history`, navegable con ↑/↓ via `bubbles/textinput`. Tab autocomplete queda pendiente.
+- [x] Unit 04 — docker commands (`up`, `down`, `restart`, `ps`, `logs`). `logs` sigue por defecto (Ctrl+C corta), defaultea al container de Odoo, tail por defecto de 100, soporte para `--copy` al clipboard, `--all`, `-t N`, `--no-follow`. Comando `help` con secciones; `ls` eliminado.
 
 ## Open Questions
 
@@ -37,3 +38,4 @@ _(none yet)_
 - 2026-05-08: Unit 03 complete. `init` command with `huh` form, docker-compose auto-detect, and live prompt update on confirm.
 - 2026-05-08: Unit 03 reescrito (v2) tras feedback. Eliminado parsing YAML; ahora todo viene de docker live (`compose ps`, `psql -lqt`). Nuevo `internal/project/` (walk-up al root), `internal/docker/` (compose+psql), `internal/env/` (.env parser). Compose flavor (`docker compose` vs `docker-compose`) auto-detectado y persistido en `global.toml`. Iconos nerd-font en form, banner final y prompt. `charmbracelet/log` para fatales.
 - 2026-05-11: Historial de comandos (Unit 11 parcial). REPL migrado de `bufio.Reader` a `bubbles/textinput` para soportar ↑/↓. Persistencia en `~/.config/echo/history`, cap 1000 entradas, dedupe consecutivo. Autocomplete pendiente.
+- 2026-05-11: Unit 04 completo. Docker commands con streaming (`up`, `down`, `restart`, `ps`) y `logs` con follow por defecto, default Odoo, tail 100, `--copy` al clipboard via atotto/clipboard, `--all`, `--no-follow`. `help` real con secciones; `ls` eliminado. Spec `04-docker-commands.md` escrito.

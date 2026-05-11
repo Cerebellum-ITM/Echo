@@ -57,7 +57,7 @@ func RunInit(ctx context.Context, opts InitOpts) (*config.Config, error) {
 		if opts.StreamOut != nil {
 			opts.StreamOut("starting containers…")
 		}
-		if err := docker.Up(ctx, cfg.ComposeCmd, opts.Root, opts.StreamOut); err != nil {
+		if err := docker.Up(ctx, cfg.ComposeCmd, opts.Root, nil, opts.StreamOut); err != nil {
 			return nil, fmt.Errorf("compose up failed: %w", err)
 		}
 		containers, err = docker.ListContainers(ctx, cfg.ComposeCmd, opts.Root)

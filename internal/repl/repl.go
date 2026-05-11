@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os/exec"
 	"strings"
 
 	"github.com/charmbracelet/huh"
@@ -110,35 +109,60 @@ func (sess *session) dispatch(ctx context.Context, input string) {
 	cmd, args := parts[0], parts[1:]
 
 	switch cmd {
-	case "ls":
-		sess.runLS(ctx, args)
+	case "help":
+		sess.runHelp()
 	case "clear":
 		sess.clearAndRenderHeader()
 	case "init":
 		sess.runInit()
 	case "reset":
 		sess.runReset()
+	case "up", "down", "restart", "ps", "logs":
+		sess.runDocker(ctx, cmd, args)
 	default:
 		sess.print(Line{Kind: "warn", Text: "unknown command: " + cmd + " — try help"})
 	}
 }
 
-func (sess *session) runLS(ctx context.Context, args []string) {
-	display := "ls -la"
-	if len(args) > 0 {
-		display += " " + strings.Join(args, " ")
+func (sess *session) runHelp() {
+	type entry struct{ cmd, desc string }
+	type section struct {
+		title string
+		items []entry
 	}
-	sess.print(Line{Kind: "info", Text: "$ " + display})
-
-	cmdArgs := append([]string{"-la"}, args...)
-	out, err := exec.CommandContext(ctx, "ls", cmdArgs...).Output()
-	if err != nil {
-		sess.print(Line{Kind: "err", Text: err.Error()})
-		return
+	sections := []section{
+		{"Project", []entry{
+			{"init", "Configure Odoo project (containers, version, DB)"},
+			{"reset", "Wipe Echo configuration (global / per-project / all)"},
+		}},
+		{"Docker", []entry{
+			{"up [service]", "Start containers (compose up -d)"},
+			{"down [service]", "Stop and remove containers"},
+			{"restart [service]", "Restart services"},
+			{"ps", "Show container status"},
+			{"logs [service]", "Follow logs of Odoo (or [service]) — Ctrl+C to exit"},
+			{"  -t N", "Tail last N lines (default 100)"},
+			{"  --no-follow", "Disable follow; print bounded output"},
+			{"  -c, --copy", "Bounded output and copy to clipboard"},
+			{"  --all", "All compose services (instead of just Odoo)"},
+		}},
+		{"Shell", []entry{
+			{"clear", "Clear screen and reprint header"},
+			{"help", "Show this help"},
+			{"exit, quit, Ctrl+D", "Quit Echo"},
+		}},
 	}
 
-	for _, line := range strings.Split(strings.TrimRight(string(out), "\n"), "\n") {
-		sess.print(Line{Kind: "out", Text: line})
+	s := sess.styles
+	for i, sec := range sections {
+		if i > 0 {
+			sess.print(Line{Kind: "out", Text: ""})
+		}
+		sess.print(Line{Kind: "accent", Text: sec.title})
+		for _, it := range sec.items {
+			label := lipgloss.NewStyle().Width(22).Render(it.cmd)
+			fmt.Println("  " + s.Info.Render(label) + s.Out.Render(it.desc))
+		}
 	}
 }
 
@@ -188,6 +212,38 @@ func confLine(icon, label, value string) string {
 // clearAndRenderHeader wipes the terminal (including scrollback) and
 // reprints the welcome banner. Any command can call this to reset the
 // visible context.
+func (sess *session) runDocker(ctx context.Context, name string, args []string) {
+	display := name
+	if len(args) > 0 {
+		display += " " + strings.Join(args, " ")
+	}
+	sess.print(Line{Kind: "info", Text: "$ " + display})
+
+	opts := cmd.DockerOpts{
+		Cfg:       sess.cfg,
+		Root:      sess.projectDir,
+		Args:      args,
+		StreamOut: func(line string) { sess.print(Line{Kind: "out", Text: line}) },
+	}
+
+	var err error
+	switch name {
+	case "up":
+		err = cmd.RunUp(ctx, opts)
+	case "down":
+		err = cmd.RunDown(ctx, opts)
+	case "restart":
+		err = cmd.RunRestart(ctx, opts)
+	case "ps":
+		err = cmd.RunPS(ctx, opts)
+	case "logs":
+		err = cmd.RunLogs(ctx, opts)
+	}
+	if err != nil {
+		sess.print(Line{Kind: "err", Text: name + ": " + err.Error()})
+	}
+}
+
 func (sess *session) clearAndRenderHeader() {
 	fmt.Print("\033[H\033[2J\033[3J")
 	fmt.Println(banner.Render(sess.styles, sess.palette, sess.bannerOpts))

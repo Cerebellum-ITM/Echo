@@ -5,7 +5,9 @@ import (
 	"context"
 	"errors"
 	"io"
+	"os"
 	"os/exec"
+	"os/signal"
 	"strings"
 )
 
@@ -62,11 +64,74 @@ func ListContainers(ctx context.Context, composeCmd, dir string) ([]Container, e
 	return containers, nil
 }
 
-// Up runs `<compose> up -d` in dir, streaming combined stdout/stderr line
-// by line through onLine. Returns when the subprocess exits.
-func Up(ctx context.Context, composeCmd, dir string, onLine func(string)) error {
-	args := append(splitCompose(composeCmd), "up", "-d")
-	cmd := exec.CommandContext(ctx, args[0], args[1:]...)
+// Up runs `<compose> up -d [services...]` and streams output line by line.
+func Up(ctx context.Context, composeCmd, dir string, services []string, onLine func(string)) error {
+	args := append([]string{"up", "-d"}, services...)
+	return runStreamed(ctx, composeCmd, dir, onLine, args...)
+}
+
+// Down runs `<compose> down [services...]` and streams output line by line.
+func Down(ctx context.Context, composeCmd, dir string, services []string, onLine func(string)) error {
+	args := append([]string{"down"}, services...)
+	return runStreamed(ctx, composeCmd, dir, onLine, args...)
+}
+
+// Restart runs `<compose> restart [services...]` and streams output.
+func Restart(ctx context.Context, composeCmd, dir string, services []string, onLine func(string)) error {
+	args := append([]string{"restart"}, services...)
+	return runStreamed(ctx, composeCmd, dir, onLine, args...)
+}
+
+// PS runs `<compose> ps` and streams the table to onLine.
+func PS(ctx context.Context, composeCmd, dir string, onLine func(string)) error {
+	return runStreamed(ctx, composeCmd, dir, onLine, "ps")
+}
+
+// Logs runs `<compose> logs [--tail N] [services...]` (bounded) and streams
+// output. tail is the line count limit; empty string means unbounded.
+func Logs(ctx context.Context, composeCmd, dir, tail string, services []string, onLine func(string)) error {
+	args := []string{"logs"}
+	if tail != "" {
+		args = append(args, "--tail", tail)
+	}
+	args = append(args, services...)
+	return runStreamed(ctx, composeCmd, dir, onLine, args...)
+}
+
+// LogsFollow runs `<compose> logs -f [--tail N] [services...]` with full TTY
+// pass-through. SIGINT is consumed in the parent so the subprocess (in the
+// same process group) handles the interrupt and exits cleanly.
+func LogsFollow(ctx context.Context, composeCmd, dir, tail string, services []string) error {
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, os.Interrupt)
+	defer func() {
+		signal.Stop(sigChan)
+		close(sigChan)
+	}()
+	go func() {
+		for range sigChan {
+			// consume; the subprocess gets its own copy via the process group
+		}
+	}()
+
+	full := append(splitCompose(composeCmd), "logs", "-f")
+	if tail != "" {
+		full = append(full, "--tail", tail)
+	}
+	full = append(full, services...)
+	cmd := exec.CommandContext(ctx, full[0], full[1:]...)
+	cmd.Dir = dir
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
+}
+
+// runStreamed is the shared pattern: pipe combined stdout/stderr, scan
+// line-by-line, deliver each line to onLine.
+func runStreamed(ctx context.Context, composeCmd, dir string, onLine func(string), subcommand ...string) error {
+	full := append(splitCompose(composeCmd), subcommand...)
+	cmd := exec.CommandContext(ctx, full[0], full[1:]...)
 	cmd.Dir = dir
 
 	stdout, err := cmd.StdoutPipe()
