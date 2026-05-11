@@ -1,12 +1,9 @@
 package repl
 
 import (
-	"bufio"
 	"context"
 	"errors"
 	"fmt"
-	"io"
-	"os"
 	"os/exec"
 	"strings"
 
@@ -61,31 +58,30 @@ func Start(s theme.Styles, p theme.Palette, project, id string, stage theme.Stag
 	sess.clearAndRenderHeader()
 
 	ctx := context.Background()
-	reader := bufio.NewReader(os.Stdin)
+	history := loadHistory()
 
 	for {
-		fmt.Print(sess.renderPrompt())
-
-		input, err := reader.ReadString('\n')
-		input = strings.TrimSpace(input)
-
-		if err == io.EOF {
-			fmt.Println()
-			break
-		}
+		res, err := readLine(sess.renderPrompt(), history)
 		if err != nil {
 			sess.print(Line{Kind: "err", Text: "read error: " + err.Error()})
 			break
 		}
-
+		if res.eof {
+			fmt.Println()
+			break
+		}
+		if res.aborted {
+			continue
+		}
+		input := strings.TrimSpace(res.value)
 		if input == "" {
 			continue
 		}
-
 		if input == "exit" || input == "quit" {
 			break
 		}
 
+		history = appendHistory(history, input)
 		sess.dispatch(ctx, input)
 	}
 
