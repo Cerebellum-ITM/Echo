@@ -5,7 +5,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/atotto/clipboard"
+	"github.com/pascualchavez/echo/internal/clipboard"
 	"github.com/pascualchavez/echo/internal/config"
 	"github.com/pascualchavez/echo/internal/docker"
 )
