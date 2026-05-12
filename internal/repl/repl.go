@@ -143,7 +143,8 @@ func (sess *session) runHelp() {
 			{"update <mod...>", "Update modules"},
 			{"  --all", "Update every installed module"},
 			{"uninstall <mod...>", "Uninstall modules"},
-			{"modules", "List local modules (./, ./addons/, ./custom/)"},
+			{"modules", "List modules from configured addons paths"},
+			{"  --config", "Pick which folders are addons paths (form)"},
 		}},
 		{"Docker", []entry{
 			{"up [service]", "Start containers (compose up -d)"},
@@ -233,6 +234,7 @@ func (sess *session) runModules(ctx context.Context, name string, args []string)
 		Cfg:       sess.cfg,
 		Root:      sess.projectDir,
 		Args:      args,
+		Palette:   sess.palette,
 		StreamOut: func(line string) { sess.print(Line{Kind: "out", Text: line}) },
 	}
 

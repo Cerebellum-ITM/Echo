@@ -17,6 +17,7 @@ type Config struct {
 	DBContainer   string
 	DBName        string
 	Stage         string
+	AddonsPaths   []string
 	ProjectPath   string
 	ProjectKey    string
 }
@@ -28,11 +29,12 @@ type globalFile struct {
 }
 
 type projectFile struct {
-	OdooVersion   string `toml:"odoo_version"`
-	OdooContainer string `toml:"odoo_container"`
-	DBContainer   string `toml:"db_container"`
-	DBName        string `toml:"db_name"`
-	Stage         string `toml:"stage"`
+	OdooVersion   string   `toml:"odoo_version"`
+	OdooContainer string   `toml:"odoo_container"`
+	DBContainer   string   `toml:"db_container"`
+	DBName        string   `toml:"db_name"`
+	Stage         string   `toml:"stage"`
+	AddonsPaths   []string `toml:"addons_paths"`
 }
 
 // Load reads global + per-project config for the given project path.
@@ -65,6 +67,7 @@ func Load(projectPath string) (*Config, error) {
 	cfg.DBContainer = p.DBContainer
 	cfg.DBName = p.DBName
 	cfg.Stage = p.Stage
+	cfg.AddonsPaths = p.AddonsPaths
 
 	applyDefaults(cfg)
 	return cfg, nil
@@ -108,6 +111,7 @@ func SaveProject(cfg *Config) error {
 		DBContainer:   cfg.DBContainer,
 		DBName:        cfg.DBName,
 		Stage:         cfg.Stage,
+		AddonsPaths:   cfg.AddonsPaths,
 	}
 	var buf bytes.Buffer
 	if err := toml.NewEncoder(&buf).Encode(p); err != nil {
