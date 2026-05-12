@@ -119,6 +119,8 @@ func (sess *session) dispatch(ctx context.Context, input string) {
 		sess.runReset()
 	case "up", "down", "restart", "ps", "logs":
 		sess.runDocker(ctx, cmd, args)
+	case "install", "update", "uninstall", "modules":
+		sess.runModules(ctx, cmd, args)
 	default:
 		sess.print(Line{Kind: "warn", Text: "unknown command: " + cmd + " — try help"})
 	}
@@ -134,6 +136,14 @@ func (sess *session) runHelp() {
 		{"Project", []entry{
 			{"init", "Configure Odoo project (containers, version, DB)"},
 			{"reset", "Wipe Echo configuration (global / per-project / all)"},
+		}},
+		{"Modules", []entry{
+			{"install <mod...>", "Install modules in the current DB"},
+			{"  --with-demo", "Include demo data"},
+			{"update <mod...>", "Update modules"},
+			{"  --all", "Update every installed module"},
+			{"uninstall <mod...>", "Uninstall modules"},
+			{"modules", "List local modules (./, ./addons/, ./custom/)"},
 		}},
 		{"Docker", []entry{
 			{"up [service]", "Start containers (compose up -d)"},
@@ -212,6 +222,36 @@ func confLine(icon, label, value string) string {
 // clearAndRenderHeader wipes the terminal (including scrollback) and
 // reprints the welcome banner. Any command can call this to reset the
 // visible context.
+func (sess *session) runModules(ctx context.Context, name string, args []string) {
+	display := name
+	if len(args) > 0 {
+		display += " " + strings.Join(args, " ")
+	}
+	sess.print(Line{Kind: "info", Text: "$ " + display})
+
+	opts := cmd.ModulesOpts{
+		Cfg:       sess.cfg,
+		Root:      sess.projectDir,
+		Args:      args,
+		StreamOut: func(line string) { sess.print(Line{Kind: "out", Text: line}) },
+	}
+
+	var err error
+	switch name {
+	case "install":
+		err = cmd.RunInstall(ctx, opts)
+	case "update":
+		err = cmd.RunUpdate(ctx, opts)
+	case "uninstall":
+		err = cmd.RunUninstall(ctx, opts)
+	case "modules":
+		err = cmd.RunModules(ctx, opts)
+	}
+	if err != nil {
+		sess.print(Line{Kind: "err", Text: name + ": " + err.Error()})
+	}
+}
+
 func (sess *session) runDocker(ctx context.Context, name string, args []string) {
 	display := name
 	if len(args) > 0 {
