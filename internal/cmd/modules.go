@@ -140,41 +140,14 @@ func RunUninstall(ctx context.Context, opts ModulesOpts) error {
 	return runOdoo(ctx, opts, odoo.Uninstall(buildConn(opts), modules))
 }
 
-// pickModulesInteractive opens a filterable multiselect of locally
-// available modules and returns the user's choice. Empty selection or
-// user cancellation returns ErrCancelled / huh.ErrUserAborted unchanged.
+// pickModulesInteractive opens an fzf-style fuzzy picker with always-on
+// filter for locally available modules.
 func pickModulesInteractive(opts ModulesOpts, title string) ([]string, error) {
 	available := listAvailableModules(opts.Cfg, opts.Root)
 	if len(available) == 0 {
 		return nil, ErrNoModulesAvailable
 	}
-
-	options := make([]huh.Option[string], len(available))
-	for i, m := range available {
-		options[i] = huh.NewOption(m, m)
-	}
-
-	var picked []string
-	form := huh.NewForm(huh.NewGroup(
-		huh.NewMultiSelect[string]().
-			Title(title).
-			Description("Type to filter • Tab to toggle • Enter to confirm").
-			Filterable(true).
-			Options(options...).
-			Value(&picked),
-	)).
-		WithTheme(BuildHuhTheme(opts.Palette)).
-		WithKeyMap(tabToggleKeymap()).
-		WithInput(os.Stdin).
-		WithOutput(os.Stdout)
-
-	if err := form.Run(); err != nil {
-		return nil, err
-	}
-	if len(picked) == 0 {
-		return nil, ErrCancelled
-	}
-	return picked, nil
+	return runFuzzyPicker(title, available, opts.Palette)
 }
 
 // listAvailableModules walks the configured addons paths (or defaults)
