@@ -230,12 +230,13 @@ func (sess *session) runModules(ctx context.Context, name string, args []string)
 	}
 	sess.print(Line{Kind: "info", Text: "$ " + display})
 
+	lc := &logColorer{}
 	opts := cmd.ModulesOpts{
 		Cfg:       sess.cfg,
 		Root:      sess.projectDir,
 		Args:      args,
 		Palette:   sess.palette,
-		StreamOut: func(line string) { sess.print(Line{Kind: "out", Text: line}) },
+		StreamOut: func(line string) { sess.print(Line{Kind: lc.classify(line), Text: line}) },
 	}
 
 	var err error
@@ -261,11 +262,12 @@ func (sess *session) runDocker(ctx context.Context, name string, args []string) 
 	}
 	sess.print(Line{Kind: "info", Text: "$ " + display})
 
+	lc := &logColorer{}
 	opts := cmd.DockerOpts{
 		Cfg:       sess.cfg,
 		Root:      sess.projectDir,
 		Args:      args,
-		StreamOut: func(line string) { sess.print(Line{Kind: "out", Text: line}) },
+		StreamOut: func(line string) { sess.print(Line{Kind: lc.classify(line), Text: line}) },
 	}
 
 	var err error
