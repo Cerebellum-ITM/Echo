@@ -1,2 +1,5 @@
 # Build output
 bin/
+
+# Local verification notes (untested checklist)
+.unverified/
