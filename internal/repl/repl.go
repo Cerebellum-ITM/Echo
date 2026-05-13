@@ -231,12 +231,15 @@ func (sess *session) runModules(ctx context.Context, name string, args []string)
 	sess.print(Line{Kind: "info", Text: "$ " + display})
 
 	lc := &logColorer{}
+	stats := &runStats{}
 	opts := cmd.ModulesOpts{
-		Cfg:       sess.cfg,
-		Root:      sess.projectDir,
-		Args:      args,
-		Palette:   sess.palette,
-		StreamOut: func(line string) { sess.print(Line{Kind: lc.classify(line), Text: line}) },
+		Cfg:     sess.cfg,
+		Root:    sess.projectDir,
+		Args:    args,
+		Palette: sess.palette,
+		StreamOut: stats.wrap(func(line string) {
+			sess.print(Line{Kind: lc.classify(line), Text: line})
+		}),
 	}
 
 	var err error
@@ -249,10 +252,12 @@ func (sess *session) runModules(ctx context.Context, name string, args []string)
 		err = cmd.RunUninstall(ctx, opts)
 	case "modules":
 		err = cmd.RunModules(ctx, opts)
+		if err != nil {
+			sess.print(Line{Kind: "err", Text: name + ": " + err.Error()})
+		}
+		return
 	}
-	if err != nil {
-		sess.print(Line{Kind: "err", Text: name + ": " + err.Error()})
-	}
+	sess.finalize(name, modulesSummary(name, args), stats.errors, err)
 }
 
 func (sess *session) runDocker(ctx context.Context, name string, args []string) {
@@ -263,11 +268,14 @@ func (sess *session) runDocker(ctx context.Context, name string, args []string) 
 	sess.print(Line{Kind: "info", Text: "$ " + display})
 
 	lc := &logColorer{}
+	stats := &runStats{}
 	opts := cmd.DockerOpts{
-		Cfg:       sess.cfg,
-		Root:      sess.projectDir,
-		Args:      args,
-		StreamOut: func(line string) { sess.print(Line{Kind: lc.classify(line), Text: line}) },
+		Cfg:  sess.cfg,
+		Root: sess.projectDir,
+		Args: args,
+		StreamOut: stats.wrap(func(line string) {
+			sess.print(Line{Kind: lc.classify(line), Text: line})
+		}),
 	}
 
 	var err error
@@ -278,13 +286,60 @@ func (sess *session) runDocker(ctx context.Context, name string, args []string) 
 		err = cmd.RunDown(ctx, opts)
 	case "restart":
 		err = cmd.RunRestart(ctx, opts)
-	case "ps":
-		err = cmd.RunPS(ctx, opts)
-	case "logs":
-		err = cmd.RunLogs(ctx, opts)
+	case "ps", "logs":
+		var runErr error
+		if name == "ps" {
+			runErr = cmd.RunPS(ctx, opts)
+		} else {
+			runErr = cmd.RunLogs(ctx, opts)
+		}
+		if runErr != nil {
+			sess.print(Line{Kind: "err", Text: name + ": " + runErr.Error()})
+		}
+		return
 	}
-	if err != nil {
-		sess.print(Line{Kind: "err", Text: name + ": " + err.Error()})
+	sess.finalize(name, name, stats.errors, err)
+}
+
+// finalize prints the post-command ✓/✗ line per Unit 07 decision matrix.
+// `summary` is the user-visible label (`install (sale)`, `up`, etc.).
+func (sess *session) finalize(name, summary string, errorCount int, err error) {
+	sess.print(Line{Kind: "out", Text: ""})
+	switch {
+	case errors.Is(err, cmd.ErrCancelled), errors.Is(err, huh.ErrUserAborted):
+		sess.print(Line{Kind: "warn", Text: name + " cancelled — no changes saved"})
+	case err != nil:
+		sess.print(Line{Kind: "err", Text: "✗ " + summary + " failed: " + err.Error()})
+	case errorCount > 0:
+		sess.print(Line{Kind: "err", Text: fmt.Sprintf("✗ %s finished with %d error(s)", summary, errorCount)})
+	default:
+		sess.print(Line{Kind: "ok", Text: "✓ " + summary + " completed"})
+	}
+}
+
+// modulesSummary builds the user-visible label for the final result line
+// of install/update/uninstall. Strips flags, and renders `--all` as
+// "all modules".
+func modulesSummary(name string, args []string) string {
+	var mods []string
+	all := false
+	for _, a := range args {
+		if a == "--all" {
+			all = true
+			continue
+		}
+		if strings.HasPrefix(a, "-") {
+			continue
+		}
+		mods = append(mods, a)
+	}
+	switch {
+	case all:
+		return name + " (all modules)"
+	case len(mods) > 0:
+		return name + " (" + strings.Join(mods, ", ") + ")"
+	default:
+		return name
 	}
 }
 

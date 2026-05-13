@@ -10,7 +10,7 @@ Polish triple (08 → 07 → 06): log coloring → action result → fzf-style p
 
 ## In Progress
 
-_(Unit 06 — picker prototype escrito en `internal/cmd/picker.go` pero pendiente de build/test)_
+_(siguiente: Unit 09 — db-commands)_
 
 ## Completed
 
@@ -21,6 +21,8 @@ _(Unit 06 — picker prototype escrito en `internal/cmd/picker.go` pero pendient
 - [x] Unit 04 — docker commands (`up`, `down`, `restart`, `ps`, `logs`). `logs` sigue por defecto (Ctrl+C corta), defaultea al container de Odoo, tail por defecto de 100, soporte para `--copy` al clipboard, `--all`, `-t N`, `--no-follow`. Comando `help` con secciones; `ls` eliminado.
 - [x] Unit 05 — module commands (`install`, `update`, `uninstall`, `modules`). Builder en `internal/odoo/`, ejecuta via `compose exec -T <odoo>` y stream al REPL. `install` con `--with-demo`, `update --all`, `modules` escanea `./`, `./addons/`, `./custom/` uno-deep.
 - [x] Unit 08 — log-level coloring. `internal/repl/loglevel.go` clasifica líneas Odoo (DEBUG/INFO/WARNING/ERROR/CRITICAL) al kind del tema; `logColorer` mantiene el último kind para que los tracebacks indentados hereden el color. Cableado en `runDocker` y `runModules`.
+- [x] Unit 06 — fuzzy picker. `internal/cmd/picker.go` con modelo Bubble Tea fzf-style (filtro siempre activo, Tab toggle, Enter confirma, Esc cancela). `pickModulesInteractive` migrado de `huh.MultiSelect` a `runFuzzyPicker`.
+- [x] Unit 07 — action result. `runStats` cuenta líneas ERROR/CRITICAL durante el stream y `finalize` imprime la línea ✓/✗ (con separador en blanco) tras `install`/`update`/`uninstall`/`up`/`down`/`restart`. Cancelación de picker → warn, no ✗. `modulesSummary` filtra flags y formatea `--all` como "all modules".
 
 ## Open Questions
 
@@ -45,3 +47,4 @@ _(none yet)_
 - 2026-05-12: Fix entrypoint bypass — `odoo.Conn` con flags `--db_host/--db_port/--db_user/--db_password` explícitos. Echo lee POSTGRES_USER/PASSWORD/PORT del `.env` y usa `cfg.DBContainer` como host.
 - 2026-05-12: Specs 06 (fuzzy-picker), 07 (action-result), 08 (log-level-coloring) escritos. Build plan reordenado para meterlos antes que db-commands. Sesión cerrada con cwd locked por macOS Full Disk Access; próxima sesión reanuda con build/test del prototipo en `internal/cmd/picker.go`.
 - 2026-05-12: Unit 08 implementado. Nuevo `internal/repl/loglevel.go` con regex de niveles Odoo y wrapper `logColorer` con herencia para tracebacks indentados. `runDocker` y `runModules` instancian un `logColorer` fresco por comando y lo aplican al callback de stream. `go build ./...` pasa.
+- 2026-05-12: Unit 06 + Unit 07 implementados y commiteados. Unit 06: picker fzf-style en Bubble Tea reemplaza huh.MultiSelect. Unit 07: `runStats` cuenta ERROR/CRITICAL, helper `finalize` imprime ✓/✗ con separador, `modulesSummary` filtra flags. Triple polish 08→07→06 cerrado.

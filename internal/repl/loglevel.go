@@ -36,3 +36,18 @@ func (l *logColorer) classify(line string) string {
 	l.last = k
 	return k
 }
+
+// runStats observes streamed lines and counts those classified as
+// ERROR/CRITICAL severity. Used to detect silent failures where the
+// subprocess exits 0 but logged errors. Counts only level-prefixed
+// lines, so traceback continuations don't inflate the total.
+type runStats struct{ errors int }
+
+func (s *runStats) wrap(inner func(string)) func(string) {
+	return func(line string) {
+		if m := odooLevel.FindString(line); m == "ERROR" || m == "CRITICAL" {
+			s.errors++
+		}
+		inner(line)
+	}
+}
