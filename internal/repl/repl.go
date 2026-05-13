@@ -109,6 +109,7 @@ var dispatchNames = []string{
 	"init", "reset",
 	"up", "down", "restart", "ps", "logs",
 	"install", "update", "uninstall", "modules",
+	"i18n-export", "i18n-update",
 	"db-backup", "db-restore", "db-drop", "db-list",
 	"shell", "bash", "psql",
 }
@@ -134,6 +135,8 @@ func (sess *session) dispatch(ctx context.Context, input string) {
 		sess.runDocker(ctx, cmd, args)
 	case "install", "update", "uninstall", "modules":
 		sess.runModules(ctx, cmd, args)
+	case "i18n-export", "i18n-update":
+		sess.runI18n(ctx, cmd, args)
 	case "db-backup", "db-restore", "db-drop", "db-list":
 		sess.runDB(ctx, cmd, args)
 	case "shell", "bash", "psql":
@@ -163,6 +166,12 @@ func helpSections() []helpSection {
 			{"uninstall <mod...>", "Uninstall modules"},
 			{"modules", "List modules from configured addons paths"},
 			{"  --config", "Pick which folders are addons paths (form)"},
+		}},
+		{"i18n", []helpEntry{
+			{"i18n-export <mod> [lang]", "Export <mod>/i18n/<lang>.po (default es_MX)"},
+			{"  --out <path>", "Write to <path> instead of the module's i18n/"},
+			{"i18n-update <mod> [lang]", "Import the module's <lang>.po into the DB (--i18n-overwrite)"},
+			{"  --force", "Skip the prod-stage confirmation prompt"},
 		}},
 		{"Database", []helpEntry{
 			{"db-backup [name]", "Dump DB (default: configured) to ./backups/"},
@@ -320,6 +329,61 @@ func (sess *session) runModules(ctx context.Context, name string, args []string)
 		return
 	}
 	sess.finalize(name, modulesSummary(name, args), stats.errors, err)
+}
+
+func (sess *session) runI18n(ctx context.Context, name string, args []string) {
+	display := name
+	if len(args) > 0 {
+		display += " " + strings.Join(args, " ")
+	}
+	sess.print(Line{Kind: "info", Text: "$ " + display})
+
+	lc := &logColorer{}
+	stats := &runStats{}
+	opts := cmd.I18nOpts{
+		Cfg:     sess.cfg,
+		Root:    sess.projectDir,
+		Args:    args,
+		Palette: sess.palette,
+		StreamOut: stats.wrap(func(line string) {
+			sess.print(Line{Kind: lc.classify(line), Text: line})
+		}),
+	}
+
+	var err error
+	switch name {
+	case "i18n-export":
+		err = cmd.RunI18nExport(ctx, opts)
+	case "i18n-update":
+		err = cmd.RunI18nUpdate(ctx, opts)
+	}
+	sess.finalize(name, i18nSummary(name, args), stats.errors, err)
+}
+
+// i18nSummary formats the post-run label as `i18n-export (<mod>, <lang>)`,
+// dropping flags. Falls back to the bare command name when positionals
+// aren't present.
+func i18nSummary(name string, args []string) string {
+	var positional []string
+	skipNext := false
+	for _, a := range args {
+		if skipNext {
+			skipNext = false
+			continue
+		}
+		if a == "--out" {
+			skipNext = true
+			continue
+		}
+		if strings.HasPrefix(a, "-") {
+			continue
+		}
+		positional = append(positional, a)
+	}
+	if len(positional) > 0 {
+		return name + " (" + strings.Join(positional, ", ") + ")"
+	}
+	return name
 }
 
 func (sess *session) runDocker(ctx context.Context, name string, args []string) {

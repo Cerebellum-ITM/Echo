@@ -71,3 +71,28 @@ func Uninstall(c Conn, modules []string) Cmd {
 	args := append(Cmd{"odoo"}, c.flags()...)
 	return append(args, "--uninstall", strings.Join(modules, ","), "--stop-after-init")
 }
+
+// ExportI18n builds the argv to extract a module's translations to a
+// .po file at outPath inside the container.
+func ExportI18n(c Conn, module, lang, outPath string) Cmd {
+	args := append(Cmd{"odoo"}, c.flags()...)
+	return append(args,
+		"--modules="+module,
+		"-l", lang,
+		"--i18n-export="+outPath,
+		"--stop-after-init",
+	)
+}
+
+// UpdateI18n builds the argv to import a .po file at inPath into the DB
+// with --i18n-overwrite.
+func UpdateI18n(c Conn, module, lang, inPath string) Cmd {
+	args := append(Cmd{"odoo"}, c.flags()...)
+	return append(args,
+		"--modules="+module,
+		"-l", lang,
+		"--i18n-import="+inPath,
+		"--i18n-overwrite",
+		"--stop-after-init",
+	)
+}
