@@ -121,6 +121,8 @@ func (sess *session) dispatch(ctx context.Context, input string) {
 		sess.runDocker(ctx, cmd, args)
 	case "install", "update", "uninstall", "modules":
 		sess.runModules(ctx, cmd, args)
+	case "db-backup", "db-restore", "db-drop", "db-list":
+		sess.runDB(ctx, cmd, args)
 	default:
 		sess.print(Line{Kind: "warn", Text: "unknown command: " + cmd + " — try help"})
 	}
@@ -145,6 +147,15 @@ func (sess *session) runHelp() {
 			{"uninstall <mod...>", "Uninstall modules"},
 			{"modules", "List modules from configured addons paths"},
 			{"  --config", "Pick which folders are addons paths (form)"},
+		}},
+		{"Database", []entry{
+			{"db-backup [name]", "Dump DB (default: configured) to ./backups/"},
+			{"  --with-filestore", "Include filestore (.zip instead of .dump)"},
+			{"db-restore [--as N]", "Pick a backup and restore (creates DB)"},
+			{"  --force", "Replace target DB if it already exists"},
+			{"db-drop [name]", "Drop a database (confirmation by default)"},
+			{"  --force", "Skip the confirmation prompt"},
+			{"db-list", "List DBs with size, date; ● marks the active one"},
 		}},
 		{"Docker", []entry{
 			{"up [service]", "Start containers (compose up -d)"},
@@ -341,6 +352,65 @@ func modulesSummary(name string, args []string) string {
 	default:
 		return name
 	}
+}
+
+func (sess *session) runDB(ctx context.Context, name string, args []string) {
+	display := name
+	if len(args) > 0 {
+		display += " " + strings.Join(args, " ")
+	}
+	sess.print(Line{Kind: "info", Text: "$ " + display})
+
+	opts := cmd.DBOpts{
+		Cfg:       sess.cfg,
+		Root:      sess.projectDir,
+		Args:      args,
+		Palette:   sess.palette,
+		StreamOut: func(line string) { sess.print(Line{Kind: "out", Text: line}) },
+	}
+
+	if name == "db-list" {
+		if err := cmd.RunDBList(ctx, opts); err != nil {
+			sess.print(Line{Kind: "err", Text: name + ": " + err.Error()})
+		}
+		return
+	}
+
+	var err error
+	switch name {
+	case "db-backup":
+		err = cmd.RunDBBackup(ctx, opts)
+	case "db-restore":
+		err = cmd.RunDBRestore(ctx, opts)
+	case "db-drop":
+		err = cmd.RunDBDrop(ctx, opts)
+	}
+	sess.finalize(name, dbSummary(name, args), 0, err)
+}
+
+// dbSummary mirrors modulesSummary for db-* commands: strips flags,
+// renders --all-style options inline.
+func dbSummary(name string, args []string) string {
+	var positional []string
+	skipNext := false
+	for _, a := range args {
+		if skipNext {
+			skipNext = false
+			continue
+		}
+		if a == "--as" {
+			skipNext = true
+			continue
+		}
+		if strings.HasPrefix(a, "-") {
+			continue
+		}
+		positional = append(positional, a)
+	}
+	if len(positional) > 0 {
+		return name + " (" + strings.Join(positional, ", ") + ")"
+	}
+	return name
 }
 
 func (sess *session) clearAndRenderHeader() {

@@ -11,7 +11,9 @@ import (
 )
 
 // fuzzyPicker is a fzf-style multi-select: filter is always active, no
-// `/` prefix needed. Tab toggles, Enter confirms, Esc cancels.
+// `/` prefix needed. Tab toggles, Enter confirms, Esc cancels. When
+// `single` is true the picker disables Tab and Enter returns the
+// highlighted item directly.
 type fuzzyPicker struct {
 	filter   textinput.Model
 	items    []pickerItem
@@ -20,6 +22,7 @@ type fuzzyPicker struct {
 	title    string
 	palette  theme.Palette
 	canceled bool
+	single   bool
 }
 
 type pickerItem struct {
@@ -76,6 +79,9 @@ func (m fuzzyPicker) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "enter":
 			return m, tea.Quit
 		case "tab":
+			if m.single {
+				return m, nil
+			}
 			if len(m.visible) > 0 {
 				idx := m.visible[m.cursor]
 				m.items[idx].selected = !m.items[idx].selected
@@ -106,9 +112,11 @@ func (m fuzzyPicker) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m fuzzyPicker) View() string {
 	p := m.palette
 	title := lipgloss.NewStyle().Foreground(p.Accent).Bold(true).Render(m.title)
-	help := lipgloss.NewStyle().Foreground(p.Faint).Render(
-		"type to filter · tab toggle · ↑↓ navigate · enter confirm · esc cancel",
-	)
+	helpText := "type to filter · tab toggle · ↑↓ navigate · enter confirm · esc cancel"
+	if m.single {
+		helpText = "type to filter · ↑↓ navigate · enter select · esc cancel"
+	}
+	help := lipgloss.NewStyle().Foreground(p.Faint).Render(helpText)
 	counter := lipgloss.NewStyle().Foreground(p.Dim).Render(
 		fmt.Sprintf(" (%d/%d)", len(m.visible), len(m.items)),
 	)
@@ -127,13 +135,17 @@ func (m fuzzyPicker) View() string {
 			if i == m.cursor {
 				cursorStr = lipgloss.NewStyle().Foreground(p.Accent2).Render("❯ ")
 			}
-			checkbox := lipgloss.NewStyle().Foreground(p.Faint).Render("[ ]")
-			if it.selected {
-				checkbox = lipgloss.NewStyle().Foreground(p.Success).Render("[×]")
-			}
 			name := it.name
 			if i == m.cursor {
 				name = lipgloss.NewStyle().Foreground(p.Accent).Bold(true).Render(name)
+			}
+			if m.single {
+				b.WriteString(cursorStr + name + "\n")
+				continue
+			}
+			checkbox := lipgloss.NewStyle().Foreground(p.Faint).Render("[ ]")
+			if it.selected {
+				checkbox = lipgloss.NewStyle().Foreground(p.Success).Render("[×]")
 			}
 			b.WriteString(cursorStr + checkbox + " " + name + "\n")
 		}
@@ -170,4 +182,20 @@ func runFuzzyPicker(title string, available []string, palette theme.Palette) ([]
 		return nil, ErrCancelled
 	}
 	return picked, nil
+}
+
+// runSingleFuzzyPicker is the single-select variant: Enter commits the
+// highlighted row. Returns ErrCancelled on Esc / empty list.
+func runSingleFuzzyPicker(title string, available []string, palette theme.Palette) (string, error) {
+	m := newFuzzyPicker(title, available, palette)
+	m.single = true
+	final, err := tea.NewProgram(m).Run()
+	if err != nil {
+		return "", err
+	}
+	fm := final.(fuzzyPicker)
+	if fm.canceled || len(fm.visible) == 0 {
+		return "", ErrCancelled
+	}
+	return fm.items[fm.visible[fm.cursor]].name, nil
 }
