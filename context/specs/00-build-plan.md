@@ -36,4 +36,4 @@ Decomposition of Echo into ordered, scoped, verifiable units.
 - Units 04, 05 are now done; 06/07/08 are the next polish set.
 - Unit 06 (fuzzy-picker) covers the `modules` half of the originally-planned filterable-list (Unit 10). The `db-list` half lands together with Unit 09 (db-commands).
 - Units 07 and 08 are cross-cutting polish over the streaming output. 08 should land before 07 so the action-result code can reuse the classifier.
-- Unit 13 (history) is partially complete: ↑/↓ history persistence done. Tab autocomplete pending.
+- Unit 13 (history-autocomplete) complete: ↑/↓ persistence + bash-style Tab completion against Registry, with consistency tests across Registry/help/dispatch.

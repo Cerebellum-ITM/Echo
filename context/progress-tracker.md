@@ -12,12 +12,14 @@ Unit 11 (test-command: `test <mod>...` con flags version-specific).
 
 _(siguiente: Unit 11 — test-command)_
 
+
+
 ## Completed
 
 - [x] Unit 01 — scaffold + theme system (4 palettes) + two-column header + REPL prompt with `ls`
 - [x] Unit 02 — `internal/config/` package: `Load`, `SaveGlobal`, `SaveProject`; `~/.config/echo/` layout; `PaletteByName`/`StageFromString` in theme; wired into `main.go` and `repl.go`
 - [x] Unit 03 — `init` command (v2): form `huh` 3 steps con iconos nerd-font, project root walk-up, auto-detect compose flavor (docker compose vs docker-compose) persistido en global.toml, `compose ps`/`psql -lqt` para listar containers/DBs, parser `.env` para POSTGRES_USER/DB, charm/log para fatales
-- [x] Unit 11 (parcial) — historial de comandos persistido en `~/.config/echo/history`, navegable con ↑/↓ via `bubbles/textinput`. Tab autocomplete queda pendiente.
+- [x] Unit 13 — history-autocomplete. ↑/↓ history ring (persistencia en `~/.config/echo/history`, dedupe consecutivo, cap 1000) + Tab autocomplete bash-style sobre `Registry` (`internal/repl/commands.go`): 0 matches → no-op, 1 → completa con espacio, >1 → LCP y segundo Tab consecutivo lista debajo del prompt via `tea.Println`. Sólo primer token; case-sensitive prefix. `dispatchNames` y `helpSections`/`helpCommandNames` sincronizados con `Registry` vía tests (`registry_test.go`).
 - [x] Unit 04 — docker commands (`up`, `down`, `restart`, `ps`, `logs`). `logs` sigue por defecto (Ctrl+C corta), defaultea al container de Odoo, tail por defecto de 100, soporte para `--copy` al clipboard, `--all`, `-t N`, `--no-follow`. Comando `help` con secciones; `ls` eliminado.
 - [x] Unit 05 — module commands (`install`, `update`, `uninstall`, `modules`). Builder en `internal/odoo/`, ejecuta via `compose exec -T <odoo>` y stream al REPL. `install` con `--with-demo`, `update --all`, `modules` escanea `./`, `./addons/`, `./custom/` uno-deep.
 - [x] Unit 08 — log-level coloring. `internal/repl/loglevel.go` clasifica líneas Odoo (DEBUG/INFO/WARNING/ERROR/CRITICAL) al kind del tema; `logColorer` mantiene el último kind para que los tracebacks indentados hereden el color. Cableado en `runDocker` y `runModules`.
@@ -52,3 +54,4 @@ _(none yet)_
 - 2026-05-12: Unit 06 + Unit 07 implementados y commiteados. Unit 06: picker fzf-style en Bubble Tea reemplaza huh.MultiSelect. Unit 07: `runStats` cuenta ERROR/CRITICAL, helper `finalize` imprime ✓/✗ con separador, `modulesSummary` filtra flags. Triple polish 08→07→06 cerrado.
 - 2026-05-13: Unit 09 implementado. Nuevos helpers en `internal/docker/postgres.go` y `pgdump.go`; `internal/cmd/db.go` con los cuatro `RunDB*`; picker extendido con variante `runSingleFuzzyPicker`. Backups en `./backups/` con append automático a `.gitignore`. Drop con `huh.Confirm` rojo, connection-guard previo, restore con picker sobre `*.dump`/`*.zip`. Build + vet limpios; no probado contra Postgres real.
 - 2026-05-13: Unit 10 implementado. `docker.ExecInteractive` (TTY pass-through estilo `LogsFollow`, sin `-T`), `cmd.RunBash`/`RunPsql`/`RunOdooShell` y dispatch en el REPL. Multi-DB queda fuera por decisión explícita: siempre `cfg.DBName`. Prod confirm con `--force` para saltar. Build + vet limpios.
+- 2026-05-13: Unit 13 cerrado. Nuevo `internal/repl/commands.go` con `Registry` ordenado + `matchPrefix`/`longestCommonPrefix`. `lineinput.go` maneja `tab` con latch `lastWasTab`; `tea.Println` imprime la lista de matches sobre el prompt. `lineModel` ahora recibe `infoStyle`. `repl.go`: `dispatchNames` declarado junto a `dispatch`, `runHelp` extraído a `helpSections()` + `helpCommandNames()` helper. `registry_test.go` con cinco tests guarda la consistencia Registry↔help↔dispatch y verifica `matchPrefix`/`longestCommonPrefix`. Decisiones cerradas en mockup: bash UX, prefix case-sensitive, ignore Tab on empty.
