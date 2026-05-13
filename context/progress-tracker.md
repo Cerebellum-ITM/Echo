@@ -6,11 +6,11 @@
 
 ## Current Goal
 
-Unit 06: `db-backup`, `db-restore`, `db-drop --force`, `db-list`. Pre-Unit-06: addons-path config (`modules --config`).
+Polish triple (08 → 07 → 06): log coloring → action result → fzf-style picker. After eso, Unit 09 (db-commands).
 
 ## In Progress
 
-_(addons-path config form + auto-detect)_
+_(Unit 06 — picker prototype escrito en `internal/cmd/picker.go` pero pendiente de build/test)_
 
 ## Completed
 
@@ -20,6 +20,7 @@ _(addons-path config form + auto-detect)_
 - [x] Unit 11 (parcial) — historial de comandos persistido en `~/.config/echo/history`, navegable con ↑/↓ via `bubbles/textinput`. Tab autocomplete queda pendiente.
 - [x] Unit 04 — docker commands (`up`, `down`, `restart`, `ps`, `logs`). `logs` sigue por defecto (Ctrl+C corta), defaultea al container de Odoo, tail por defecto de 100, soporte para `--copy` al clipboard, `--all`, `-t N`, `--no-follow`. Comando `help` con secciones; `ls` eliminado.
 - [x] Unit 05 — module commands (`install`, `update`, `uninstall`, `modules`). Builder en `internal/odoo/`, ejecuta via `compose exec -T <odoo>` y stream al REPL. `install` con `--with-demo`, `update --all`, `modules` escanea `./`, `./addons/`, `./custom/` uno-deep.
+- [x] Unit 08 — log-level coloring. `internal/repl/loglevel.go` clasifica líneas Odoo (DEBUG/INFO/WARNING/ERROR/CRITICAL) al kind del tema; `logColorer` mantiene el último kind para que los tracebacks indentados hereden el color. Cableado en `runDocker` y `runModules`.
 
 ## Open Questions
 
@@ -41,3 +42,6 @@ _(none yet)_
 - 2026-05-11: Historial de comandos (Unit 11 parcial). REPL migrado de `bufio.Reader` a `bubbles/textinput` para soportar ↑/↓. Persistencia en `~/.config/echo/history`, cap 1000 entradas, dedupe consecutivo. Autocomplete pendiente.
 - 2026-05-11: Unit 04 completo. Docker commands con streaming (`up`, `down`, `restart`, `ps`) y `logs` con follow por defecto, default Odoo, tail 100, `--copy` al clipboard via atotto/clipboard, `--all`, `--no-follow`. `help` real con secciones; `ls` eliminado. Spec `04-docker-commands.md` escrito.
 - 2026-05-12: Unit 05 completo. Investigación de flags Odoo CLI v17/v18/v19 (idénticos para install/update/uninstall/test). Nuevo paquete `internal/odoo/` con builders. Helper `docker.Exec` para `compose exec`. `modules` lista local (one-deep en `./`, `./addons/`, `./custom/`). Spec `05-module-commands.md`.
+- 2026-05-12: Fix entrypoint bypass — `odoo.Conn` con flags `--db_host/--db_port/--db_user/--db_password` explícitos. Echo lee POSTGRES_USER/PASSWORD/PORT del `.env` y usa `cfg.DBContainer` como host.
+- 2026-05-12: Specs 06 (fuzzy-picker), 07 (action-result), 08 (log-level-coloring) escritos. Build plan reordenado para meterlos antes que db-commands. Sesión cerrada con cwd locked por macOS Full Disk Access; próxima sesión reanuda con build/test del prototipo en `internal/cmd/picker.go`.
+- 2026-05-12: Unit 08 implementado. Nuevo `internal/repl/loglevel.go` con regex de niveles Odoo y wrapper `logColorer` con herencia para tracebacks indentados. `runDocker` y `runModules` instancian un `logColorer` fresco por comando y lo aplican al callback de stream. `go build ./...` pasa.
