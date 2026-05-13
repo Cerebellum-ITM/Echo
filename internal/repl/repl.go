@@ -123,6 +123,8 @@ func (sess *session) dispatch(ctx context.Context, input string) {
 		sess.runModules(ctx, cmd, args)
 	case "db-backup", "db-restore", "db-drop", "db-list":
 		sess.runDB(ctx, cmd, args)
+	case "shell", "bash", "psql":
+		sess.runShell(ctx, cmd, args)
 	default:
 		sess.print(Line{Kind: "warn", Text: "unknown command: " + cmd + " — try help"})
 	}
@@ -156,6 +158,12 @@ func (sess *session) runHelp() {
 			{"db-drop [name]", "Drop a database (confirmation by default)"},
 			{"  --force", "Skip the confirmation prompt"},
 			{"db-list", "List DBs with size, date; ● marks the active one"},
+		}},
+		{"Shell", []entry{
+			{"bash", "Bash session inside the Odoo container"},
+			{"psql", "PostgreSQL client against the configured DB"},
+			{"shell", "Odoo Python shell against the configured DB"},
+			{"  --force", "Skip the prod-stage confirmation prompt"},
 		}},
 		{"Docker", []entry{
 			{"up [service]", "Start containers (compose up -d)"},
@@ -411,6 +419,37 @@ func dbSummary(name string, args []string) string {
 		return name + " (" + strings.Join(positional, ", ") + ")"
 	}
 	return name
+}
+
+func (sess *session) runShell(ctx context.Context, name string, args []string) {
+	display := name
+	if len(args) > 0 {
+		display += " " + strings.Join(args, " ")
+	}
+	sess.print(Line{Kind: "info", Text: "$ " + display})
+
+	opts := cmd.ShellOpts{
+		Cfg:     sess.cfg,
+		Root:    sess.projectDir,
+		Args:    args,
+		Palette: sess.palette,
+	}
+
+	var err error
+	switch name {
+	case "bash":
+		err = cmd.RunBash(ctx, opts)
+	case "psql":
+		err = cmd.RunPsql(ctx, opts)
+	case "shell":
+		err = cmd.RunOdooShell(ctx, opts)
+	}
+	switch {
+	case errors.Is(err, cmd.ErrCancelled), errors.Is(err, huh.ErrUserAborted):
+		sess.print(Line{Kind: "warn", Text: name + " cancelled"})
+	case err != nil:
+		sess.print(Line{Kind: "err", Text: "✗ " + name + " failed: " + err.Error()})
+	}
 }
 
 func (sess *session) clearAndRenderHeader() {

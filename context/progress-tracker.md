@@ -6,11 +6,11 @@
 
 ## Current Goal
 
-Unit 10 (shell-commands: `shell`, `bash`, `psql`).
+Unit 11 (test-command: `test <mod>...` con flags version-specific).
 
 ## In Progress
 
-_(siguiente: Unit 10 — shell-commands)_
+_(siguiente: Unit 11 — test-command)_
 
 ## Completed
 
@@ -24,6 +24,7 @@ _(siguiente: Unit 10 — shell-commands)_
 - [x] Unit 06 — fuzzy picker. `internal/cmd/picker.go` con modelo Bubble Tea fzf-style (filtro siempre activo, Tab toggle, Enter confirma, Esc cancela). `pickModulesInteractive` migrado de `huh.MultiSelect` a `runFuzzyPicker`.
 - [x] Unit 07 — action result. `runStats` cuenta líneas ERROR/CRITICAL durante el stream y `finalize` imprime la línea ✓/✗ (con separador en blanco) tras `install`/`update`/`uninstall`/`up`/`down`/`restart`. Cancelación de picker → warn, no ✗. `modulesSummary` filtra flags y formatea `--all` como "all modules".
 - [x] Unit 09 — db-commands (`db-backup`, `db-restore`, `db-drop`, `db-list`). Helpers en `internal/docker/postgres.go` (List detallado con tamaño/fecha, ActiveConnections, DatabaseExists, Create/DropDatabase) y `pgdump.go` (Dump/Restore via `compose exec -T`). `internal/cmd/db.go` orquesta: backup a `./backups/` (`.dump` o `.zip` con filestore), restore con picker single-select sobre los backups, drop con `huh.Confirm` rojo, list con `●` marcando la DB activa. Picker reusa `runSingleFuzzyPicker` (variante añadida). Append automático de `backups/` a `.gitignore`. Connection-guard aborta destructivos si hay conexiones activas.
+- [x] Unit 10 — shell-commands (`bash`, `psql`, `shell`). Nuevo `internal/docker/shell.go` con `ExecInteractive` (TTY pass-through, SIGINT a la subprocess). `internal/cmd/shell.go` con `RunBash`/`RunPsql`/`RunOdooShell`; `shell` usa flags explícitos `--db_host/port/user/password --no-http` para bypass del entrypoint. Confirmación `huh.Confirm` roja en `prod` para los tres, `--force` la salta.
 
 ## Open Questions
 
@@ -50,3 +51,4 @@ _(none yet)_
 - 2026-05-12: Unit 08 implementado. Nuevo `internal/repl/loglevel.go` con regex de niveles Odoo y wrapper `logColorer` con herencia para tracebacks indentados. `runDocker` y `runModules` instancian un `logColorer` fresco por comando y lo aplican al callback de stream. `go build ./...` pasa.
 - 2026-05-12: Unit 06 + Unit 07 implementados y commiteados. Unit 06: picker fzf-style en Bubble Tea reemplaza huh.MultiSelect. Unit 07: `runStats` cuenta ERROR/CRITICAL, helper `finalize` imprime ✓/✗ con separador, `modulesSummary` filtra flags. Triple polish 08→07→06 cerrado.
 - 2026-05-13: Unit 09 implementado. Nuevos helpers en `internal/docker/postgres.go` y `pgdump.go`; `internal/cmd/db.go` con los cuatro `RunDB*`; picker extendido con variante `runSingleFuzzyPicker`. Backups en `./backups/` con append automático a `.gitignore`. Drop con `huh.Confirm` rojo, connection-guard previo, restore con picker sobre `*.dump`/`*.zip`. Build + vet limpios; no probado contra Postgres real.
+- 2026-05-13: Unit 10 implementado. `docker.ExecInteractive` (TTY pass-through estilo `LogsFollow`, sin `-T`), `cmd.RunBash`/`RunPsql`/`RunOdooShell` y dispatch en el REPL. Multi-DB queda fuera por decisión explícita: siempre `cfg.DBName`. Prod confirm con `--force` para saltar. Build + vet limpios.
