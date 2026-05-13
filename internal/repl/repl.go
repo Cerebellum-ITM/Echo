@@ -60,7 +60,7 @@ func Start(s theme.Styles, p theme.Palette, project, id string, stage theme.Stag
 	history := loadHistory()
 
 	for {
-		res, err := readLine(sess.renderPrompt(), history)
+		res, err := readLine(sess.renderPrompt(), history, s.Info)
 		if err != nil {
 			sess.print(Line{Kind: "err", Text: "read error: " + err.Error()})
 			break
@@ -100,6 +100,19 @@ func (sess *session) renderPrompt() string {
 		s.Dollar.Render("$ ")
 }
 
+// dispatchNames lists every command name routed by `dispatch`. It is
+// the second source of truth for the registry consistency test in
+// registry_test.go; `exit` and `quit` are handled in Start (above) and
+// are therefore not part of this slice.
+var dispatchNames = []string{
+	"help", "clear",
+	"init", "reset",
+	"up", "down", "restart", "ps", "logs",
+	"install", "update", "uninstall", "modules",
+	"db-backup", "db-restore", "db-drop", "db-list",
+	"shell", "bash", "psql",
+}
+
 func (sess *session) dispatch(ctx context.Context, input string) {
 	parts := strings.Fields(input)
 	if len(parts) == 0 {
@@ -130,18 +143,19 @@ func (sess *session) dispatch(ctx context.Context, input string) {
 	}
 }
 
-func (sess *session) runHelp() {
-	type entry struct{ cmd, desc string }
-	type section struct {
-		title string
-		items []entry
-	}
-	sections := []section{
-		{"Project", []entry{
+type helpEntry struct{ cmd, desc string }
+type helpSection struct {
+	title string
+	items []helpEntry
+}
+
+func helpSections() []helpSection {
+	return []helpSection{
+		{"Project", []helpEntry{
 			{"init", "Configure Odoo project (containers, version, DB)"},
 			{"reset", "Wipe Echo configuration (global / per-project / all)"},
 		}},
-		{"Modules", []entry{
+		{"Modules", []helpEntry{
 			{"install <mod...>", "Install modules in the current DB"},
 			{"  --with-demo", "Include demo data"},
 			{"update <mod...>", "Update modules"},
@@ -150,7 +164,7 @@ func (sess *session) runHelp() {
 			{"modules", "List modules from configured addons paths"},
 			{"  --config", "Pick which folders are addons paths (form)"},
 		}},
-		{"Database", []entry{
+		{"Database", []helpEntry{
 			{"db-backup [name]", "Dump DB (default: configured) to ./backups/"},
 			{"  --with-filestore", "Include filestore (.zip instead of .dump)"},
 			{"db-restore [--as N]", "Pick a backup and restore (creates DB)"},
@@ -159,13 +173,13 @@ func (sess *session) runHelp() {
 			{"  --force", "Skip the confirmation prompt"},
 			{"db-list", "List DBs with size, date; ● marks the active one"},
 		}},
-		{"Shell", []entry{
+		{"Shell", []helpEntry{
 			{"bash", "Bash session inside the Odoo container"},
 			{"psql", "PostgreSQL client against the configured DB"},
 			{"shell", "Odoo Python shell against the configured DB"},
 			{"  --force", "Skip the prod-stage confirmation prompt"},
 		}},
-		{"Docker", []entry{
+		{"Docker", []helpEntry{
 			{"up [service]", "Start containers (compose up -d)"},
 			{"down [service]", "Stop and remove containers"},
 			{"restart [service]", "Restart services"},
@@ -176,15 +190,17 @@ func (sess *session) runHelp() {
 			{"  -c, --copy", "Bounded output and copy to clipboard"},
 			{"  --all", "All compose services (instead of just Odoo)"},
 		}},
-		{"Shell", []entry{
+		{"Shell", []helpEntry{
 			{"clear", "Clear screen and reprint header"},
 			{"help", "Show this help"},
 			{"exit, quit, Ctrl+D", "Quit Echo"},
 		}},
 	}
+}
 
+func (sess *session) runHelp() {
 	s := sess.styles
-	for i, sec := range sections {
+	for i, sec := range helpSections() {
 		if i > 0 {
 			sess.print(Line{Kind: "out", Text: ""})
 		}
@@ -194,6 +210,33 @@ func (sess *session) runHelp() {
 			fmt.Println("  " + s.Info.Render(label) + s.Out.Render(it.desc))
 		}
 	}
+}
+
+// helpCommandNames extracts the flat set of top-level command names
+// referenced in the help table. Used by the registry consistency test.
+// Skips flag rows (leading whitespace or starting with "-") and
+// keyboard tokens like "Ctrl+D".
+func helpCommandNames() []string {
+	var out []string
+	for _, sec := range helpSections() {
+		for _, it := range sec.items {
+			if strings.HasPrefix(it.cmd, " ") || strings.HasPrefix(it.cmd, "-") {
+				continue
+			}
+			for _, part := range strings.Split(it.cmd, ",") {
+				fields := strings.Fields(part)
+				if len(fields) == 0 {
+					continue
+				}
+				name := fields[0]
+				if strings.ContainsAny(name, "+<[") {
+					continue
+				}
+				out = append(out, name)
+			}
+		}
+	}
+	return out
 }
 
 func (sess *session) runInit() {
