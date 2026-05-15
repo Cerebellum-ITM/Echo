@@ -35,7 +35,7 @@ var Charm = Palette{
 	Accent:  "#b794f6",
 	Accent2: "#f687b3",
 	Success: "#68d391",
-	Warning: "#f6ad55",
+	Warning: "#fde047",
 	Error:   "#fc8181",
 	Info:    "#63b3ed",
 }
