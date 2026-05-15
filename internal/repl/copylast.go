@@ -62,15 +62,21 @@ func (sess *session) runCopyLast(args []string) {
 // copyFailureLog handles the auto-copy-on-failure path for module
 // commands. It is called instead of finalize() when err != nil or
 // errCount > 0 (cancellation is handled separately in runModules).
-func (sess *session) copyFailureLog(name string, args []string, summary string, runErr error, errCount int) {
+//
+// The clipboard payload covers everything from the first err/warn line
+// onwards — that includes preceding warnings that contextualise the
+// crash, the traceback, and shutdown/cleanup INFO lines emitted while
+// Odoo tears down. The final REPL line is a single charmbracelet/log
+// Error styled with the active palette.
+func (sess *session) copyFailureLog(name string, resolved []string, summary string, runErr error, errCount, warnCount int) {
 	sess.print(Line{Kind: "out", Text: ""})
 
 	header := "✗ " + summary + " failed"
-	errLines := sess.lastOutput.Filtered(errKinds)
+	failLines := sess.lastOutput.FromFirstError()
 	var buf strings.Builder
 	buf.WriteString(header)
 	buf.WriteByte('\n')
-	for _, l := range errLines {
+	for _, l := range failLines {
 		buf.WriteString(l.Text)
 		buf.WriteByte('\n')
 	}
@@ -78,12 +84,15 @@ func (sess *session) copyFailureLog(name string, args []string, summary string, 
 	copyErr := clipboard.WriteAll(buf.String())
 	copied := copyErr == nil
 
-	fields := []any{"module", moduleField(name, args)}
+	fields := []any{"module", moduleField(resolved)}
 	if runErr != nil {
 		fields = append(fields, "err", runErr.Error())
 	}
 	if errCount > 0 {
 		fields = append(fields, "errors", errCount)
+	}
+	if warnCount > 0 {
+		fields = append(fields, "warnings", warnCount)
 	}
 	fields = append(fields, "copied", copied)
 
@@ -97,27 +106,14 @@ func (sess *session) copyFailureLog(name string, args []string, summary string, 
 }
 
 // moduleField returns the comma-joined module list to expose as a log
-// field. Mirrors modulesSummary's flag-stripping logic but returns the
-// raw token (no parentheses).
-func moduleField(name string, args []string) string {
-	var mods []string
-	all := false
-	for _, a := range args {
-		if a == "--all" {
-			all = true
-			continue
-		}
-		if strings.HasPrefix(a, "-") {
-			continue
-		}
-		mods = append(mods, a)
+// field. Accepts the resolved-modules slice from RunInstall/Update/
+// Uninstall, so it covers picker selections and the `--all` sentinel.
+func moduleField(resolved []string) string {
+	if len(resolved) == 0 {
+		return "(none)"
 	}
-	switch {
-	case all:
+	if len(resolved) == 1 && resolved[0] == "--all" {
 		return "all"
-	case len(mods) > 0:
-		return strings.Join(mods, ",")
-	default:
-		return "(picker)"
 	}
+	return strings.Join(resolved, ",")
 }

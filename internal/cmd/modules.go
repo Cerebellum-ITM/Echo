@@ -74,9 +74,14 @@ var (
 	ErrNoModulesAvailable = errors.New("no modules found — configure addons paths with `modules --config`")
 )
 
-func RunInstall(ctx context.Context, opts ModulesOpts) error {
+// RunInstall returns the modules that were actually targeted (after
+// flag stripping and picker resolution) along with any error from the
+// Odoo subprocess. The caller uses the returned slice to label the
+// finalize line / auto-copy log so the report always names the real
+// modules, even when the user invoked the command with no args.
+func RunInstall(ctx context.Context, opts ModulesOpts) ([]string, error) {
 	if err := requireOdooConfig(opts.Cfg); err != nil {
-		return err
+		return nil, err
 	}
 	withDemo := false
 	modules := make([]string, 0, len(opts.Args))
@@ -91,16 +96,19 @@ func RunInstall(ctx context.Context, opts ModulesOpts) error {
 	if len(modules) == 0 {
 		picked, err := pickModulesInteractive(opts, "Modules to install")
 		if err != nil {
-			return err
+			return nil, err
 		}
 		modules = picked
 	}
-	return runOdoo(ctx, opts, odoo.Install(buildConn(opts), modules, withDemo))
+	return modules, runOdoo(ctx, opts, odoo.Install(buildConn(opts), modules, withDemo))
 }
 
-func RunUpdate(ctx context.Context, opts ModulesOpts) error {
+// RunUpdate returns the resolved modules along with the run error.
+// With --all the slice is the sentinel []string{"--all"} so the caller
+// can render "all modules" in the summary.
+func RunUpdate(ctx context.Context, opts ModulesOpts) ([]string, error) {
 	if err := requireOdooConfig(opts.Cfg); err != nil {
-		return err
+		return nil, err
 	}
 	all := false
 	modules := make([]string, 0, len(opts.Args))
@@ -113,31 +121,32 @@ func RunUpdate(ctx context.Context, opts ModulesOpts) error {
 		}
 	}
 	if all {
-		return runOdoo(ctx, opts, odoo.UpdateAll(buildConn(opts)))
+		return []string{"--all"}, runOdoo(ctx, opts, odoo.UpdateAll(buildConn(opts)))
 	}
 	if len(modules) == 0 {
 		picked, err := pickModulesInteractive(opts, "Modules to update")
 		if err != nil {
-			return err
+			return nil, err
 		}
 		modules = picked
 	}
-	return runOdoo(ctx, opts, odoo.Update(buildConn(opts), modules))
+	return modules, runOdoo(ctx, opts, odoo.Update(buildConn(opts), modules))
 }
 
-func RunUninstall(ctx context.Context, opts ModulesOpts) error {
+// RunUninstall returns the resolved modules along with the run error.
+func RunUninstall(ctx context.Context, opts ModulesOpts) ([]string, error) {
 	if err := requireOdooConfig(opts.Cfg); err != nil {
-		return err
+		return nil, err
 	}
 	modules := opts.Args
 	if len(modules) == 0 {
 		picked, err := pickModulesInteractive(opts, "Modules to uninstall")
 		if err != nil {
-			return err
+			return nil, err
 		}
 		modules = picked
 	}
-	return runOdoo(ctx, opts, odoo.Uninstall(buildConn(opts), modules))
+	return modules, runOdoo(ctx, opts, odoo.Uninstall(buildConn(opts), modules))
 }
 
 // pickModulesInteractive opens an fzf-style fuzzy picker with always-on

@@ -2,17 +2,24 @@ package repl
 
 import "regexp"
 
-var odooLevel = regexp.MustCompile(`\b(DEBUG|INFO|WARNING|ERROR|CRITICAL)\b`)
+// odooLogPrefix matches the canonical Odoo log line prefix and captures
+// the level token. Using the full prefix (not just the bare keyword)
+// avoids classifying stray text like `# Restart with "--log-handler X:DEBUG"`
+// inside a traceback frame as a new log line, which would break
+// err-kind inheritance and truncate the captured failure context.
+var odooLogPrefix = regexp.MustCompile(
+	`^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},\d{3} \d+ (DEBUG|INFO|WARNING|ERROR|CRITICAL) `,
+)
 
 // classifyOdooLog returns the Line.Kind for an Odoo log line. Non-matching
 // lines fall back to "out", except when the previous line was an err/warn
-// level — in that case the continuation (indented traceback frames, the
-// non-indented `Traceback (most recent call last):` header, and the final
-// `ExceptionType: message` line) inherits the previous kind so the full
-// failure stays grouped and gets included in copy-on-failure.
+// level — in that case the continuation (Traceback header, indented
+// frames, the final `ExceptionType: message` line, etc.) inherits the
+// previous kind so the full failure stays grouped and gets included in
+// copy-on-failure.
 func classifyOdooLog(line, previousKind string) string {
-	if m := odooLevel.FindString(line); m != "" {
-		switch m {
+	if m := odooLogPrefix.FindStringSubmatch(line); m != nil {
+		switch m[1] {
 		case "DEBUG":
 			return "faint"
 		case "INFO":
@@ -41,15 +48,19 @@ func (l *logColorer) classify(line string) string {
 }
 
 // runStats observes streamed lines and counts those classified as
-// ERROR/CRITICAL severity. Used to detect silent failures where the
-// subprocess exits 0 but logged errors. Counts only level-prefixed
-// lines, so traceback continuations don't inflate the total.
-type runStats struct{ errors int }
+// ERROR/CRITICAL and WARNING severity. Counts only level-prefixed lines,
+// so traceback continuations don't inflate the totals.
+type runStats struct{ errors, warnings int }
 
 func (s *runStats) wrap(inner func(string)) func(string) {
 	return func(line string) {
-		if m := odooLevel.FindString(line); m == "ERROR" || m == "CRITICAL" {
-			s.errors++
+		if m := odooLogPrefix.FindStringSubmatch(line); m != nil {
+			switch m[1] {
+			case "ERROR", "CRITICAL":
+				s.errors++
+			case "WARNING":
+				s.warnings++
+			}
 		}
 		inner(line)
 	}

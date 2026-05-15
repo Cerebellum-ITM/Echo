@@ -344,13 +344,14 @@ func (sess *session) runModules(ctx context.Context, name string, args []string)
 	}
 
 	var err error
+	var resolved []string
 	switch name {
 	case "install":
-		err = cmd.RunInstall(ctx, opts)
+		resolved, err = cmd.RunInstall(ctx, opts)
 	case "update":
-		err = cmd.RunUpdate(ctx, opts)
+		resolved, err = cmd.RunUpdate(ctx, opts)
 	case "uninstall":
-		err = cmd.RunUninstall(ctx, opts)
+		resolved, err = cmd.RunUninstall(ctx, opts)
 	case "modules":
 		err = cmd.RunModules(ctx, opts)
 		if err != nil {
@@ -358,14 +359,14 @@ func (sess *session) runModules(ctx context.Context, name string, args []string)
 		}
 		return
 	}
-	summary := modulesSummary(name, args)
+	summary := modulesSummary(name, resolved)
 	switch {
 	case errors.Is(err, cmd.ErrCancelled), errors.Is(err, huh.ErrUserAborted):
-		sess.finalize(name, summary, stats.errors, err)
+		sess.finalize(name, summary, stats.errors, stats.warnings, err)
 	case err != nil, stats.errors > 0:
-		sess.copyFailureLog(name, args, summary, err, stats.errors)
+		sess.copyFailureLog(name, resolved, summary, err, stats.errors, stats.warnings)
 	default:
-		sess.finalize(name, summary, stats.errors, err)
+		sess.finalize(name, summary, stats.errors, stats.warnings, err)
 	}
 }
 
@@ -395,7 +396,7 @@ func (sess *session) runI18n(ctx context.Context, name string, args []string) {
 	case "i18n-update":
 		err = cmd.RunI18nUpdate(ctx, opts)
 	}
-	sess.finalize(name, i18nSummary(name, args), stats.errors, err)
+	sess.finalize(name, i18nSummary(name, args), stats.errors, stats.warnings, err)
 }
 
 // i18nSummary formats the post-run label as `i18n-export (<mod>, <lang>)`,
@@ -462,12 +463,14 @@ func (sess *session) runDocker(ctx context.Context, name string, args []string) 
 		}
 		return
 	}
-	sess.finalize(name, name, stats.errors, err)
+	sess.finalize(name, name, stats.errors, stats.warnings, err)
 }
 
 // finalize prints the post-command ✓/✗ line per Unit 07 decision matrix.
 // `summary` is the user-visible label (`install (sale)`, `up`, etc.).
-func (sess *session) finalize(name, summary string, errorCount int, err error) {
+// When the command succeeds with warnings, the count is appended in
+// parentheses so the user notices them.
+func (sess *session) finalize(name, summary string, errorCount, warnCount int, err error) {
 	sess.print(Line{Kind: "out", Text: ""})
 	switch {
 	case errors.Is(err, cmd.ErrCancelled), errors.Is(err, huh.ErrUserAborted):
@@ -477,7 +480,11 @@ func (sess *session) finalize(name, summary string, errorCount int, err error) {
 	case errorCount > 0:
 		sess.print(Line{Kind: "err", Text: fmt.Sprintf("✗ %s finished with %d error(s)", summary, errorCount)})
 	default:
-		sess.print(Line{Kind: "ok", Text: "✓ " + summary + " completed"})
+		ok := "✓ " + summary + " completed"
+		if warnCount > 0 {
+			ok += fmt.Sprintf(" (%d warning(s))", warnCount)
+		}
+		sess.print(Line{Kind: "ok", Text: ok})
 	}
 }
 
@@ -538,7 +545,7 @@ func (sess *session) runDB(ctx context.Context, name string, args []string) {
 	case "db-drop":
 		err = cmd.RunDBDrop(ctx, opts)
 	}
-	sess.finalize(name, dbSummary(name, args), 0, err)
+	sess.finalize(name, dbSummary(name, args), 0, 0, err)
 }
 
 // dbSummary mirrors modulesSummary for db-* commands: strips flags,

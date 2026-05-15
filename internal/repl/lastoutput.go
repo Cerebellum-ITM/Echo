@@ -70,6 +70,32 @@ func linesToPlain(lines []Line, truncated bool) string {
 	return sb.String()
 }
 
+// FromFirstError returns every line from the first err/warn entry
+// onwards. The auto-copy path uses this so the captured failure
+// includes everything that contextualises the error (warnings before
+// it, the traceback after it, and any shutdown/cleanup INFO lines
+// emitted as Odoo unwinds). Returns nil when the buffer has no
+// err/warn lines.
+func (b *lastOutputBuffer) FromFirstError() []Line {
+	for i, l := range b.lines {
+		if l.Kind == "err" || l.Kind == "warn" {
+			out := make([]Line, len(b.lines)-i)
+			copy(out, b.lines[i:])
+			return out
+		}
+	}
+	return nil
+}
+
+// PlainFromFirstError renders the FromFirstError slice as plain text.
+func (b *lastOutputBuffer) PlainFromFirstError() string {
+	lines := b.FromFirstError()
+	if len(lines) == 0 {
+		return ""
+	}
+	return linesToPlain(lines, b.truncated)
+}
+
 // Len returns the current number of buffered lines.
 func (b *lastOutputBuffer) Len() int { return len(b.lines) }
 
