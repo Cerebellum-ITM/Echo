@@ -622,27 +622,31 @@ func (sess *session) runReset() {
 func (sess *session) print(l Line) {
 	s := sess.styles
 	var text string
-	switch l.Kind {
-	case "out":
-		text = s.Out.Render(l.Text)
-	case "dim":
-		text = s.Dim.Render(l.Text)
-	case "faint":
-		text = s.Faint.Render(l.Text)
-	case "info":
-		text = s.Info.Render(l.Text)
-	case "ok":
-		text = s.Ok.Render(l.Text)
-	case "warn":
-		text = s.Warn.Render(l.Text)
-	case "err":
-		text = s.Err.Render(l.Text)
-	case "accent":
-		text = s.Accent.Render(l.Text)
-	case "label":
-		text = s.Label.Render(l.Text)
-	default:
-		text = l.Text
+	if rendered, ok := formatOdooLine(l.Text, s, sess.palette); ok {
+		text = rendered
+	} else {
+		switch l.Kind {
+		case "out":
+			text = s.Out.Render(l.Text)
+		case "dim":
+			text = s.Dim.Render(l.Text)
+		case "faint":
+			text = s.Faint.Render(l.Text)
+		case "info":
+			text = s.Info.Render(l.Text)
+		case "ok":
+			text = s.Ok.Render(l.Text)
+		case "warn":
+			text = s.Warn.Render(l.Text)
+		case "err":
+			text = s.Err.Render(l.Text)
+		case "accent":
+			text = s.Accent.Render(l.Text)
+		case "label":
+			text = s.Label.Render(l.Text)
+		default:
+			text = l.Text
+		}
 	}
 	if sess.lastOutput != nil {
 		sess.lastOutput.Add(l)
