@@ -28,6 +28,7 @@ Decomposition of Echo into ordered, scoped, verifiable units.
 | 13 | history-autocomplete        | ↑↓ history ring (done) + Tab autocomplete from command registry (pending)      | 01         |
 | 14 | meta-commands               | `theme`, `logo`, `version`, `stage`, `help`, `clear`                           | 02         |
 | 15 | banner-ascii                | All 4 ASCII logos with per-segment token coloring                              | 01         |
+| 16 | copy-output                 | `copy-last` + auto-copy on module failure (charm/log line); OSC 52 priority when remote | 04, 05     |
 
 ## Notes
 
