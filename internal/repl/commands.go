@@ -12,6 +12,7 @@ var Registry = []string{
 	"db-backup", "db-restore", "db-drop", "db-list",
 	"bash", "psql", "shell",
 	"up", "down", "restart", "ps", "logs",
+	"copy-last",
 	"clear", "help", "exit", "quit",
 }
 

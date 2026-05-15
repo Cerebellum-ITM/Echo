@@ -5,22 +5,25 @@ import "regexp"
 var odooLevel = regexp.MustCompile(`\b(DEBUG|INFO|WARNING|ERROR|CRITICAL)\b`)
 
 // classifyOdooLog returns the Line.Kind for an Odoo log line. Non-matching
-// lines fall back to "out". Pass the previous kind so indented continuation
-// lines (Python tracebacks) inherit the level of the line that triggered them.
+// lines fall back to "out", except when the previous line was an err/warn
+// level — in that case the continuation (indented traceback frames, the
+// non-indented `Traceback (most recent call last):` header, and the final
+// `ExceptionType: message` line) inherits the previous kind so the full
+// failure stays grouped and gets included in copy-on-failure.
 func classifyOdooLog(line, previousKind string) string {
 	if m := odooLevel.FindString(line); m != "" {
 		switch m {
 		case "DEBUG":
 			return "faint"
 		case "INFO":
-			return "dim"
+			return "info"
 		case "WARNING":
 			return "warn"
 		case "ERROR", "CRITICAL":
 			return "err"
 		}
 	}
-	if (previousKind == "err" || previousKind == "warn") && len(line) > 0 && (line[0] == ' ' || line[0] == '\t') {
+	if previousKind == "err" || previousKind == "warn" {
 		return previousKind
 	}
 	return "out"

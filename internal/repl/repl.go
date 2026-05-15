@@ -4,10 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/charmbracelet/huh"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/log"
 	"github.com/pascualchavez/echo/internal/banner"
 	"github.com/pascualchavez/echo/internal/cmd"
 	"github.com/pascualchavez/echo/internal/config"
@@ -30,6 +32,8 @@ type session struct {
 	version    string
 	cfg        *config.Config
 	projectDir string
+	lastOutput *lastOutputBuffer
+	log        *log.Logger
 }
 
 // Start renders the header and enters the interactive prompt loop.
@@ -52,7 +56,13 @@ func Start(s theme.Styles, p theme.Palette, project, id string, stage theme.Stag
 		version:    version,
 		cfg:        cfg,
 		projectDir: cwd,
+		lastOutput: newLastOutputBuffer(),
 	}
+	sess.log = log.NewWithOptions(os.Stdout, log.Options{
+		ReportTimestamp: false,
+		Level:           log.ErrorLevel,
+	})
+	sess.log.SetStyles(buildLogStyles(p))
 
 	sess.clearAndRenderHeader()
 
@@ -105,13 +115,25 @@ func (sess *session) renderPrompt() string {
 // registry_test.go; `exit` and `quit` are handled in Start (above) and
 // are therefore not part of this slice.
 var dispatchNames = []string{
-	"help", "clear",
+	"help", "clear", "copy-last",
 	"init", "reset",
 	"up", "down", "restart", "ps", "logs",
 	"install", "update", "uninstall", "modules",
 	"i18n-export", "i18n-update",
 	"db-backup", "db-restore", "db-drop", "db-list",
 	"shell", "bash", "psql",
+}
+
+// isMetaCommand returns true for commands whose output should not be
+// recorded as "the last command" — they are about the REPL itself, not
+// about a project action. Calling `copy-last` after `copy-last` should
+// still copy the previously-buffered command, not just the ok line.
+func isMetaCommand(name string) bool {
+	switch name {
+	case "copy-last", "help", "clear":
+		return true
+	}
+	return false
 }
 
 func (sess *session) dispatch(ctx context.Context, input string) {
@@ -122,11 +144,17 @@ func (sess *session) dispatch(ctx context.Context, input string) {
 
 	cmd, args := parts[0], parts[1:]
 
+	if !isMetaCommand(cmd) {
+		sess.lastOutput.Reset()
+	}
+
 	switch cmd {
 	case "help":
 		sess.runHelp()
 	case "clear":
 		sess.clearAndRenderHeader()
+	case "copy-last":
+		sess.runCopyLast(args)
 	case "init":
 		sess.runInit()
 	case "reset":
@@ -200,6 +228,8 @@ func helpSections() []helpSection {
 			{"  --all", "All compose services (instead of just Odoo)"},
 		}},
 		{"Shell", []helpEntry{
+			{"copy-last", "Copy the last command's output to clipboard"},
+			{"  --errors", "Only copy error/warning lines"},
 			{"clear", "Clear screen and reprint header"},
 			{"help", "Show this help"},
 			{"exit, quit, Ctrl+D", "Quit Echo"},
@@ -328,7 +358,15 @@ func (sess *session) runModules(ctx context.Context, name string, args []string)
 		}
 		return
 	}
-	sess.finalize(name, modulesSummary(name, args), stats.errors, err)
+	summary := modulesSummary(name, args)
+	switch {
+	case errors.Is(err, cmd.ErrCancelled), errors.Is(err, huh.ErrUserAborted):
+		sess.finalize(name, summary, stats.errors, err)
+	case err != nil, stats.errors > 0:
+		sess.copyFailureLog(name, args, summary, err, stats.errors)
+	default:
+		sess.finalize(name, summary, stats.errors, err)
+	}
 }
 
 func (sess *session) runI18n(ctx context.Context, name string, args []string) {
@@ -605,6 +643,9 @@ func (sess *session) print(l Line) {
 		text = s.Label.Render(l.Text)
 	default:
 		text = l.Text
+	}
+	if sess.lastOutput != nil {
+		sess.lastOutput.Add(l)
 	}
 	fmt.Println(text)
 }

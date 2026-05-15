@@ -40,14 +40,36 @@ func helpersFor() []helper {
 	return nil
 }
 
-// WriteAll copies text to the system clipboard. Tries the OS-specific
-// helpers in order; on Unix systems falls back to OSC 52 escape, which
-// modern terminals (iTerm2, kitty, alacritty, wezterm, Ghostty, foot,
-// ...) forward to the host clipboard. Returns ErrUnavailable if no
-// route works.
+// WriteAll copies text to the system clipboard. On local TTYs it
+// tries the OS-specific native helpers first and falls back to OSC 52.
+// On remote sessions (SSH or tmux) it inverts that priority — native
+// helpers under SSH would copy to the remote host, which is rarely what
+// the user wants, so OSC 52 (decoded by the local terminal) goes first.
+// Returns ErrUnavailable if no route works.
 func WriteAll(text string) error {
-	helpers := helpersFor()
+	if isRemote() && runtime.GOOS != "windows" {
+		if err := writeOSC52(text); err == nil {
+			return nil
+		}
+	}
 
+	if err := writeNative(text); err == nil {
+		return nil
+	}
+
+	if !isRemote() && runtime.GOOS != "windows" {
+		if err := writeOSC52(text); err == nil {
+			return nil
+		}
+	}
+
+	return fmt.Errorf("%w (install pbcopy, wl-copy, xclip, or xsel — or use a terminal with OSC 52)", ErrUnavailable)
+}
+
+// writeNative iterates the OS-specific helper list and returns nil on
+// the first successful copy. Returns ErrUnavailable when nothing works.
+func writeNative(text string) error {
+	helpers := helpersFor()
 	for _, h := range helpers {
 		if _, err := exec.LookPath(h.bin); err != nil {
 			continue
@@ -58,15 +80,17 @@ func WriteAll(text string) error {
 			return nil
 		}
 	}
+	return ErrUnavailable
+}
 
-	// OSC 52 fallback — only useful for terminal-controlled clipboards.
-	if runtime.GOOS != "windows" {
-		if err := writeOSC52(text); err == nil {
-			return nil
-		}
-	}
-
-	return fmt.Errorf("%w (install pbcopy, wl-copy, xclip, or xsel — or use a terminal with OSC 52)", ErrUnavailable)
+// isRemote reports whether Echo is running under SSH or inside tmux.
+// Both environments mean native clipboard helpers (pbcopy, wl-copy, …)
+// would write to the wrong host; OSC 52 is the path that reaches the
+// local terminal's clipboard.
+func isRemote() bool {
+	return os.Getenv("SSH_TTY") != "" ||
+		os.Getenv("SSH_CONNECTION") != "" ||
+		os.Getenv("TMUX") != ""
 }
 
 // writeOSC52 emits the OSC 52 escape sequence to the controlling
