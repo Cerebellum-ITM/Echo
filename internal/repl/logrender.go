@@ -18,9 +18,17 @@ var odooLogLine = regexp.MustCompile(
 )
 
 // formatOdooLine renders an Odoo log line with per-segment styling à la
-// charmbracelet/log: dim timestamp, faint pid, colored 4-char level,
-// faint db, dim logger, default-color message. Returns the rendered
-// string and a bool indicating whether the line matched.
+// charmbracelet/log. Segment palette:
+//
+//	timestamp → dim          (low-contrast gray)
+//	PID       → faint        (very low contrast — rarely needed)
+//	LEVEL     → bold + level color (DEBU/INFO/WARN/ERRO/CRIT chip)
+//	db        → palette.Accent (theme accent — distinguishes DB name)
+//	logger    → palette.Info   (cool tone — looks like a code path)
+//	message   → default fg     (highest contrast — the actual content)
+//
+// Returns the rendered string and a bool indicating whether the line
+// matched. Tracebacks / stray stdout fall back to the kind-based path.
 func formatOdooLine(line string, s theme.Styles, p theme.Palette) (string, bool) {
 	m := odooLogLine.FindStringSubmatch(line)
 	if m == nil {
@@ -29,12 +37,14 @@ func formatOdooLine(line string, s theme.Styles, p theme.Palette) (string, bool)
 	ts, pid, level, db, logger, msg := m[1], m[2], m[3], m[4], m[5], m[6]
 
 	short, levelStyle := shortLevel(level, p)
+	dbStyle := lipgloss.NewStyle().Foreground(p.Accent)
+	loggerStyle := lipgloss.NewStyle().Foreground(p.Info)
 
 	return s.Dim.Render(ts) + " " +
 		s.Faint.Render(pid) + " " +
 		levelStyle.Render(short) + " " +
-		s.Faint.Render(db) + " " +
-		s.Dim.Render(logger+":") + " " +
+		dbStyle.Render(db) + " " +
+		loggerStyle.Render(logger+":") + " " +
 		s.Out.Render(msg), true
 }
 
