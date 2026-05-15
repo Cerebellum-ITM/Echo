@@ -1,11 +1,35 @@
 package repl
 
 import (
+	"hash/fnv"
 	"regexp"
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/pascualchavez/echo/internal/theme"
 )
+
+// loggerPalette is an 8-color pastel rotation assigned by name hash to
+// each Odoo logger (odoo.service.server, odoo.modules.loading, …).
+// Each logger renders consistently in the same tone across a session so
+// the eye can group lines by origin.
+var loggerPalette = []lipgloss.Color{
+	"#ffb3ba", // coral
+	"#ffd6a5", // peach
+	"#caffbf", // mint
+	"#9bf6ff", // cyan
+	"#a0c4ff", // sky
+	"#bdb2ff", // lavender
+	"#ffc6ff", // pink
+	"#f0a6ca", // rose
+}
+
+// loggerColor maps a logger name to one of the pastel rotation slots
+// using FNV-1a so the assignment is stable across runs.
+func loggerColor(logger string) lipgloss.Color {
+	h := fnv.New32a()
+	_, _ = h.Write([]byte(logger))
+	return loggerPalette[h.Sum32()%uint32(len(loggerPalette))]
+}
 
 // odooLogLine matches the standard Odoo log line prefix:
 //
@@ -38,7 +62,7 @@ func formatOdooLine(line string, s theme.Styles, p theme.Palette) (string, bool)
 
 	short, levelStyle := shortLevel(level, p)
 	dbStyle := lipgloss.NewStyle().Foreground(p.Accent)
-	loggerStyle := lipgloss.NewStyle().Foreground(p.Info)
+	loggerStyle := lipgloss.NewStyle().Foreground(loggerColor(logger))
 
 	return s.Dim.Render(ts) + " " +
 		s.Faint.Render(pid) + " " +
