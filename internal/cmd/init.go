@@ -27,7 +27,7 @@ type InitOpts struct {
 	StreamOut func(string)
 }
 
-var ErrCancelled = errors.New("init cancelled")
+var ErrCancelled = errors.New("cancelled by user")
 
 func RunInit(ctx context.Context, opts InitOpts) (*config.Config, error) {
 	cfg := opts.Cfg
