@@ -3,6 +3,7 @@ package repl
 import (
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/pascualchavez/echo/internal/clipboard"
@@ -64,10 +65,10 @@ func (sess *session) runCopyLast(args []string) {
 // errCount > 0 (cancellation is handled separately in runModules).
 //
 // The clipboard payload covers everything from the first err/warn line
-// onwards — that includes preceding warnings that contextualise the
-// crash, the traceback, and shutdown/cleanup INFO lines emitted while
-// Odoo tears down. The final REPL line is a single charmbracelet/log
-// Error styled with the active palette.
+// onwards — preceding warnings, the traceback, and shutdown/cleanup
+// INFO lines emitted as Odoo unwinds. The final REPL line is a single
+// Odoo-style log line (emitOdooLog) so success and failure share the
+// exact same visual frame and slot in next to Odoo's own log stream.
 func (sess *session) copyFailureLog(name string, resolved []string, summary string, runErr error, errCount, warnCount int) {
 	sess.print(Line{Kind: "out", Text: ""})
 
@@ -84,25 +85,39 @@ func (sess *session) copyFailureLog(name string, resolved []string, summary stri
 	copyErr := clipboard.WriteAll(buf.String())
 	copied := copyErr == nil
 
-	fields := []any{"module", moduleField(resolved)}
+	var fields []logField
 	if runErr != nil {
-		fields = append(fields, "err", runErr.Error())
+		fields = append(fields, logField{"err", runErr.Error()})
 	}
 	if errCount > 0 {
-		fields = append(fields, "errors", errCount)
+		fields = append(fields, logField{"errors", strconv.Itoa(errCount)})
 	}
 	if warnCount > 0 {
-		fields = append(fields, "warnings", warnCount)
+		fields = append(fields, logField{"warnings", strconv.Itoa(warnCount)})
 	}
-	fields = append(fields, "copied", copied)
+	fields = append(fields, logField{"copied", strconv.FormatBool(copied)})
 
-	sess.log.Error(name+" failed", fields...)
+	emitOdooLog("ERROR", echoCommandLogger(name, resolved), name+" failed",
+		fields, sess.styles, sess.palette, sess.cfg.DBName)
 
 	if !copied && errors.Is(copyErr, clipboard.ErrUnavailable) {
 		sess.print(Line{Kind: "info", Text: copyErr.Error()})
 	} else if !copied && copyErr != nil {
 		sess.print(Line{Kind: "warn", Text: "copy failed: " + copyErr.Error()})
 	}
+}
+
+// successLog emits the post-command ✓ entry for module commands as
+// the Odoo-style INFO line, with the hierarchical logger naming the
+// module(s) targeted (echo.update.module.<mod> / .modules / .all).
+func (sess *session) successLog(name string, resolved []string, warnCount int) {
+	sess.print(Line{Kind: "out", Text: ""})
+	var fields []logField
+	if warnCount > 0 {
+		fields = append(fields, logField{"warnings", strconv.Itoa(warnCount)})
+	}
+	emitOdooLog("INFO", echoCommandLogger(name, resolved), name+" completed",
+		fields, sess.styles, sess.palette, sess.cfg.DBName)
 }
 
 // moduleField returns the comma-joined module list to expose as a log

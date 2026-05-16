@@ -4,12 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
 	"strings"
 
 	"github.com/charmbracelet/huh"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/charmbracelet/log"
 	"github.com/pascualchavez/echo/internal/banner"
 	"github.com/pascualchavez/echo/internal/cmd"
 	"github.com/pascualchavez/echo/internal/config"
@@ -33,7 +31,6 @@ type session struct {
 	cfg        *config.Config
 	projectDir string
 	lastOutput *lastOutputBuffer
-	log        *log.Logger
 }
 
 // Start renders the header and enters the interactive prompt loop.
@@ -58,11 +55,6 @@ func Start(s theme.Styles, p theme.Palette, project, id string, stage theme.Stag
 		projectDir: cwd,
 		lastOutput: newLastOutputBuffer(),
 	}
-	sess.log = log.NewWithOptions(os.Stdout, log.Options{
-		ReportTimestamp: false,
-		Level:           log.ErrorLevel,
-	})
-	sess.log.SetStyles(buildLogStyles(p))
 
 	sess.clearAndRenderHeader()
 
@@ -366,7 +358,7 @@ func (sess *session) runModules(ctx context.Context, name string, args []string)
 	case err != nil, stats.errors > 0:
 		sess.copyFailureLog(name, resolved, summary, err, stats.errors, stats.warnings)
 	default:
-		sess.finalize(name, summary, stats.errors, stats.warnings, err)
+		sess.successLog(name, resolved, stats.warnings)
 	}
 }
 
