@@ -388,7 +388,15 @@ func (sess *session) runI18n(ctx context.Context, name string, args []string) {
 	case "i18n-update":
 		err = cmd.RunI18nUpdate(ctx, opts)
 	}
-	sess.finalize(name, i18nSummary(name, args), stats.errors, stats.warnings, err)
+	summary := i18nSummary(name, args)
+	switch {
+	case errors.Is(err, cmd.ErrCancelled), errors.Is(err, huh.ErrUserAborted):
+		sess.finalize(name, summary, stats.errors, stats.warnings, err)
+	case err != nil, stats.errors > 0:
+		sess.commandFailureLog(name, err, stats.errors, stats.warnings)
+	default:
+		sess.finalize(name, summary, stats.errors, stats.warnings, err)
+	}
 }
 
 // i18nSummary formats the post-run label as `i18n-export (<mod>, <lang>)`,
@@ -455,7 +463,14 @@ func (sess *session) runDocker(ctx context.Context, name string, args []string) 
 		}
 		return
 	}
-	sess.finalize(name, name, stats.errors, stats.warnings, err)
+	switch {
+	case errors.Is(err, cmd.ErrCancelled), errors.Is(err, huh.ErrUserAborted):
+		sess.finalize(name, name, stats.errors, stats.warnings, err)
+	case err != nil, stats.errors > 0:
+		sess.commandFailureLog(name, err, stats.errors, stats.warnings)
+	default:
+		sess.finalize(name, name, stats.errors, stats.warnings, err)
+	}
 }
 
 // finalize prints the post-command ✓/✗ line per Unit 07 decision matrix.
@@ -537,7 +552,15 @@ func (sess *session) runDB(ctx context.Context, name string, args []string) {
 	case "db-drop":
 		err = cmd.RunDBDrop(ctx, opts)
 	}
-	sess.finalize(name, dbSummary(name, args), 0, 0, err)
+	summary := dbSummary(name, args)
+	switch {
+	case errors.Is(err, cmd.ErrCancelled), errors.Is(err, huh.ErrUserAborted):
+		sess.finalize(name, summary, 0, 0, err)
+	case err != nil:
+		sess.commandFailureLog(name, err, 0, 0)
+	default:
+		sess.finalize(name, summary, 0, 0, err)
+	}
 }
 
 // dbSummary mirrors modulesSummary for db-* commands: strips flags,
@@ -580,19 +603,20 @@ func (sess *session) runShell(ctx context.Context, name string, args []string) {
 	}
 
 	var err error
+	var captured string
 	switch name {
 	case "bash":
-		err = cmd.RunBash(ctx, opts)
+		captured, err = cmd.RunBash(ctx, opts)
 	case "psql":
-		err = cmd.RunPsql(ctx, opts)
+		captured, err = cmd.RunPsql(ctx, opts)
 	case "shell":
-		err = cmd.RunOdooShell(ctx, opts)
+		captured, err = cmd.RunOdooShell(ctx, opts)
 	}
 	switch {
 	case errors.Is(err, cmd.ErrCancelled), errors.Is(err, huh.ErrUserAborted):
 		sess.print(Line{Kind: "warn", Text: name + " cancelled"})
 	case err != nil:
-		sess.print(Line{Kind: "err", Text: "✗ " + name + " failed: " + err.Error()})
+		sess.shellFailureLog(name, captured, err)
 	}
 }
 

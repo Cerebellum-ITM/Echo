@@ -21,26 +21,29 @@ type ShellOpts struct {
 }
 
 // RunBash opens an interactive bash session inside the Odoo container.
-func RunBash(ctx context.Context, opts ShellOpts) error {
+// Returns the captured stderr so the REPL can auto-copy startup errors
+// (e.g. container not running) without losing the user-visible output.
+func RunBash(ctx context.Context, opts ShellOpts) (string, error) {
 	if err := requireOdooConfig(opts.Cfg); err != nil {
-		return err
+		return "", err
 	}
 	if err := maybeConfirmProd(opts, "bash"); err != nil {
-		return err
+		return "", err
 	}
 	return docker.ExecInteractive(ctx, opts.Cfg.ComposeCmd, opts.Root, opts.Cfg.OdooContainer, []string{"bash"})
 }
 
 // RunPsql opens an interactive psql session against the configured DB.
-func RunPsql(ctx context.Context, opts ShellOpts) error {
+// Returns the captured stderr so the REPL can auto-copy startup errors.
+func RunPsql(ctx context.Context, opts ShellOpts) (string, error) {
 	if opts.Cfg.DBContainer == "" {
-		return ErrNoDBContainer
+		return "", ErrNoDBContainer
 	}
 	if opts.Cfg.DBName == "" {
-		return ErrNoDB
+		return "", ErrNoDB
 	}
 	if err := maybeConfirmProd(opts, "psql"); err != nil {
-		return err
+		return "", err
 	}
 	envVars := env.Load(opts.Root)
 	user := envVars["POSTGRES_USER"]
@@ -51,13 +54,15 @@ func RunPsql(ctx context.Context, opts ShellOpts) error {
 	return docker.ExecInteractive(ctx, opts.Cfg.ComposeCmd, opts.Root, opts.Cfg.DBContainer, argv)
 }
 
-// RunOdooShell opens the Odoo Python shell loaded against the configured DB.
-func RunOdooShell(ctx context.Context, opts ShellOpts) error {
+// RunOdooShell opens the Odoo Python shell loaded against the
+// configured DB. Returns the captured stderr so the REPL can auto-copy
+// startup tracebacks (config errors, missing modules, etc.).
+func RunOdooShell(ctx context.Context, opts ShellOpts) (string, error) {
 	if err := requireOdooConfig(opts.Cfg); err != nil {
-		return err
+		return "", err
 	}
 	if err := maybeConfirmProd(opts, "shell"); err != nil {
-		return err
+		return "", err
 	}
 	envVars := env.Load(opts.Root)
 	argv := []string{

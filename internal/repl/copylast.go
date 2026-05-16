@@ -107,6 +107,84 @@ func (sess *session) copyFailureLog(name string, resolved []string, summary stri
 	}
 }
 
+// shellFailureLog auto-copies failures from interactive shell-style
+// commands (bash, psql, shell). They bypass sess.print and write
+// directly to the TTY, so we can't read from lastOutputBuffer; the
+// `captured` string is the stderr we tee'd inside `ExecInteractive`.
+func (sess *session) shellFailureLog(name, captured string, runErr error) {
+	sess.print(Line{Kind: "out", Text: ""})
+
+	header := "✗ " + name + " failed"
+	payload := header + "\n" + captured
+
+	copyErr := clipboard.WriteAll(payload)
+	copied := copyErr == nil
+
+	var fields []logField
+	if runErr != nil {
+		fields = append(fields, logField{"err", runErr.Error()})
+	}
+	fields = append(fields, logField{"copied", strconv.FormatBool(copied)})
+
+	emitOdooLog("ERROR", echoCommandLogger(name, nil), name+" failed",
+		fields, sess.styles, sess.palette, sess.cfg.DBName)
+
+	if !copied && copyErr != nil {
+		if errors.Is(copyErr, clipboard.ErrUnavailable) {
+			sess.print(Line{Kind: "info", Text: copyErr.Error()})
+		} else {
+			sess.print(Line{Kind: "warn", Text: "copy failed: " + copyErr.Error()})
+		}
+	}
+}
+
+// commandFailureLog auto-copies failures from non-module commands that
+// stream their output through sess.print (docker up/down/restart, i18n,
+// db-*). The clipboard payload is everything from the first err/warn
+// onwards, or the full buffer when no err/warn was logged.
+func (sess *session) commandFailureLog(name string, runErr error, errCount, warnCount int) {
+	sess.print(Line{Kind: "out", Text: ""})
+
+	header := "✗ " + name + " failed"
+	failLines := sess.lastOutput.FromFirstError()
+	if len(failLines) == 0 {
+		failLines = sess.lastOutput.Filtered(nil)
+	}
+	var buf strings.Builder
+	buf.WriteString(header)
+	buf.WriteByte('\n')
+	for _, l := range failLines {
+		buf.WriteString(l.Text)
+		buf.WriteByte('\n')
+	}
+
+	copyErr := clipboard.WriteAll(buf.String())
+	copied := copyErr == nil
+
+	var fields []logField
+	if runErr != nil {
+		fields = append(fields, logField{"err", runErr.Error()})
+	}
+	if errCount > 0 {
+		fields = append(fields, logField{"errors", strconv.Itoa(errCount)})
+	}
+	if warnCount > 0 {
+		fields = append(fields, logField{"warnings", strconv.Itoa(warnCount)})
+	}
+	fields = append(fields, logField{"copied", strconv.FormatBool(copied)})
+
+	emitOdooLog("ERROR", echoCommandLogger(name, nil), name+" failed",
+		fields, sess.styles, sess.palette, sess.cfg.DBName)
+
+	if !copied && copyErr != nil {
+		if errors.Is(copyErr, clipboard.ErrUnavailable) {
+			sess.print(Line{Kind: "info", Text: copyErr.Error()})
+		} else {
+			sess.print(Line{Kind: "warn", Text: "copy failed: " + copyErr.Error()})
+		}
+	}
+}
+
 // successLog emits the post-command ✓ entry for module commands as
 // the Odoo-style INFO line, with the hierarchical logger naming the
 // module(s) targeted (echo.update.module.<mod> / .modules / .all).
