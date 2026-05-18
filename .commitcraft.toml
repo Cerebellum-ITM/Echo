@@ -1,0 +1,13 @@
+# Local CommitCraft override for the Echo project.
+#
+# Disables the auto-changelog refiner stage. We maintain CHANGELOG.md
+# manually under the Keep-a-Changelog convention: every meaningful
+# commit appends to [Unreleased], and version bumps promote that block
+# to a new [X.Y.Z] section in the same commit that touches the version
+# constant in internal/repl/repl.go.
+#
+# Without this override, commitcraft auto-inserts a [X.Y.<patch>]
+# section per commit (bump_strategy="patch") which conflicts with the
+# manual policy.
+[changelog]
+  enabled = false
