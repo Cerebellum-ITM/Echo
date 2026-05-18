@@ -188,6 +188,40 @@ func (sess *session) commandFailureLog(name string, runErr error, errCount, warn
 	}
 }
 
+// shellExitLog emits the Odoo-style INFO line printed when an
+// interactive shell command returns cleanly. Counterpart to
+// startLog / shellFailureLog so a shell session reads as a normal
+// start → exit pair in the log stream.
+func (sess *session) shellExitLog(name string) {
+	sess.print(Line{Kind: "out", Text: ""})
+	emitOdooLog("INFO", echoCommandLogger(name, nil), name+" exited",
+		nil, sess.styles, sess.palette, sess.cfg.DBName)
+}
+
+// startLog emits the Odoo-style INFO line printed when a command
+// begins executing. Replaces the legacy `$ <name>` prompt-echo with
+// a structured event whose logger sits under `echo.<cmd>.start`. For
+// module commands the path embeds the resolved targets; for other
+// commands the positional args ride as a structured field.
+func (sess *session) startLog(name string, args []string) {
+	logger := startLogger(name, args)
+	var fields []logField
+	if !isModuleCommand(name) {
+		var positional []string
+		for _, a := range args {
+			if strings.HasPrefix(a, "-") {
+				continue
+			}
+			positional = append(positional, a)
+		}
+		if len(positional) > 0 {
+			fields = append(fields, logField{"args", strings.Join(positional, " ")})
+		}
+	}
+	emitOdooLog("INFO", logger, name, fields,
+		sess.styles, sess.palette, sess.cfg.DBName)
+}
+
 // successLog emits the post-command ✓ entry for module commands as
 // the Odoo-style INFO line, with the hierarchical logger naming the
 // module(s) targeted (echo.update.module.<mod> / .modules / .all).

@@ -129,6 +129,55 @@ func failureLogger(cmd string, resolved []string) string {
 	return echoCommandLogger(cmd, resolved) + ".error"
 }
 
+// startLogger builds the logger path for the start line emitted right
+// when a command begins executing. For module commands the path
+// embeds the resolved module(s) just like the success/failure paths,
+// so a sequence of three lines (start → completed / error) shares the
+// same prefix and reads as one event group:
+//
+//	echo.update.module.sale.start
+//	echo.update.module.sale          (success) or .error
+//
+// For non-module commands the path collapses to `echo.<cmd>.start` —
+// their positional args (if any) ride along as a structured field on
+// the start line instead of being baked into the logger.
+func startLogger(name string, args []string) string {
+	if isModuleCommand(name) {
+		return echoCommandLogger(name, resolvedFromArgs(args)) + ".start"
+	}
+	return "echo." + name + ".start"
+}
+
+// resolvedFromArgs mirrors what the cmd-layer RunInstall/Update/
+// Uninstall would return after picker resolution, but inferred from
+// the raw args alone — used at start time, before any picker runs.
+func resolvedFromArgs(args []string) []string {
+	var positional []string
+	all := false
+	for _, a := range args {
+		if a == "--all" {
+			all = true
+			continue
+		}
+		if strings.HasPrefix(a, "-") {
+			continue
+		}
+		positional = append(positional, a)
+	}
+	if all {
+		return []string{"--all"}
+	}
+	return positional
+}
+
+func isModuleCommand(name string) bool {
+	switch name {
+	case "install", "update", "uninstall":
+		return true
+	}
+	return false
+}
+
 // echoCommandLogger builds a hierarchical logger name for a module
 // command, so the post-command status line looks at home next to
 // Odoo's own `odoo.modules.loading`, `odoo.service.server` paths:

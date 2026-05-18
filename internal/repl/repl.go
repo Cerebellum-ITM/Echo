@@ -317,11 +317,7 @@ func confLine(icon, label, value string) string {
 // reprints the welcome banner. Any command can call this to reset the
 // visible context.
 func (sess *session) runModules(ctx context.Context, name string, args []string) {
-	display := name
-	if len(args) > 0 {
-		display += " " + strings.Join(args, " ")
-	}
-	sess.print(Line{Kind: "info", Text: "$ " + display})
+	sess.startLog(name, args)
 
 	lc := &logColorer{}
 	stats := &runStats{}
@@ -363,11 +359,7 @@ func (sess *session) runModules(ctx context.Context, name string, args []string)
 }
 
 func (sess *session) runI18n(ctx context.Context, name string, args []string) {
-	display := name
-	if len(args) > 0 {
-		display += " " + strings.Join(args, " ")
-	}
-	sess.print(Line{Kind: "info", Text: "$ " + display})
+	sess.startLog(name, args)
 
 	lc := &logColorer{}
 	stats := &runStats{}
@@ -426,11 +418,7 @@ func i18nSummary(name string, args []string) string {
 }
 
 func (sess *session) runDocker(ctx context.Context, name string, args []string) {
-	display := name
-	if len(args) > 0 {
-		display += " " + strings.Join(args, " ")
-	}
-	sess.print(Line{Kind: "info", Text: "$ " + display})
+	sess.startLog(name, args)
 
 	lc := &logColorer{}
 	stats := &runStats{}
@@ -522,11 +510,7 @@ func modulesSummary(name string, args []string) string {
 }
 
 func (sess *session) runDB(ctx context.Context, name string, args []string) {
-	display := name
-	if len(args) > 0 {
-		display += " " + strings.Join(args, " ")
-	}
-	sess.print(Line{Kind: "info", Text: "$ " + display})
+	sess.startLog(name, args)
 
 	opts := cmd.DBOpts{
 		Cfg:       sess.cfg,
@@ -589,11 +573,7 @@ func dbSummary(name string, args []string) string {
 }
 
 func (sess *session) runShell(ctx context.Context, name string, args []string) {
-	display := name
-	if len(args) > 0 {
-		display += " " + strings.Join(args, " ")
-	}
-	sess.print(Line{Kind: "info", Text: "$ " + display})
+	sess.startLog(name, args)
 
 	opts := cmd.ShellOpts{
 		Cfg:     sess.cfg,
@@ -617,6 +597,8 @@ func (sess *session) runShell(ctx context.Context, name string, args []string) {
 		sess.print(Line{Kind: "warn", Text: name + " cancelled"})
 	case err != nil:
 		sess.shellFailureLog(name, captured, err)
+	default:
+		sess.shellExitLog(name)
 	}
 }
 
