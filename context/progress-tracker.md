@@ -36,8 +36,11 @@ _(siguiente: Unit 11 — test-command)_
 ## Open Questions
 
 1. What ASCII logo should appear in the header by default? (`echo`, `planet`, `python`, `anchor`)
-2. Should history persist between sessions (file-based) or stay in-memory only for v1?
-3. Exact Odoo CLI flag differences between v17, v18, v19 for `install`/`update`/`test` — need to verify.
+2. Exact Odoo CLI flag differences between v17, v18, v19 for `install`/`update`/`test` — need to verify (`install`/`update`/`uninstall` already confirmed identical in Unit 05).
+
+## Resolved Questions
+
+- ~~_Should history persist between sessions (file-based) or stay in-memory only for v1?_~~ — resolved 2026-05-11/13 with Unit 13: file-based persistence at `~/.config/echo/history`, cap 1000, dedupe consecutivo.
 
 ## Architecture Decisions
 
