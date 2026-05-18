@@ -36,7 +36,7 @@ type session struct {
 // Start renders the header and enters the interactive prompt loop.
 func Start(s theme.Styles, p theme.Palette, project, id string, stage theme.Stage, version, themeName, username, cwd string, cfg *config.Config) {
 	opts := banner.Opts{
-		Version:  "0.2.0",
+		Version:  "0.3.0",
 		Username: username,
 		Theme:    themeName,
 		Stage:    string(stage),
