@@ -88,6 +88,17 @@ func ExecInteractive(ctx context.Context, composeCmd, dir, container string, arg
 	}
 	defer func() { _ = term.Restore(int(os.Stdin.Fd()), oldState) }()
 
+	// Dup stdin so we can close OUR copy of the fd after the subprocess
+	// exits — that unblocks the goroutine's Read with EBADF without
+	// touching the real os.Stdin the REPL needs once we return. Without
+	// this, each shell session leaks one stdin-reader goroutine that
+	// keeps stealing keystrokes from the REPL prompt afterwards.
+	stdinFd, err := syscall.Dup(int(os.Stdin.Fd()))
+	if err != nil {
+		return "", interrupted.Load(), err
+	}
+	stdinDup := os.NewFile(uintptr(stdinFd), "stdin-dup")
+
 	// Forward host stdin → PTY master, inspecting the byte stream for
 	// the ETX (^C, 0x03) sentinel. In raw mode the kernel does NOT
 	// translate Ctrl+C into SIGINT on the host — it lets the literal
@@ -97,7 +108,7 @@ func ExecInteractive(ctx context.Context, composeCmd, dir, container string, arg
 	go func() {
 		buf := make([]byte, 1024)
 		for {
-			n, rerr := os.Stdin.Read(buf)
+			n, rerr := stdinDup.Read(buf)
 			if n > 0 {
 				for _, b := range buf[:n] {
 					if b == 0x03 {
@@ -120,5 +131,10 @@ func ExecInteractive(ctx context.Context, composeCmd, dir, container string, arg
 	_, _ = io.Copy(io.MultiWriter(os.Stdout, &buf), ptmx)
 
 	err = cmd.Wait()
+	// Close the dup *before* returning so the stdin-reader goroutine
+	// exits cleanly (defers haven't run yet, so the terminal is still
+	// in raw mode — the goroutine wakes up, gets EBADF, returns, and
+	// only then does term.Restore put the TTY back into cooked mode).
+	_ = stdinDup.Close()
 	return buf.String(), interrupted.Load(), err
 }

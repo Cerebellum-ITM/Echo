@@ -5,6 +5,12 @@ All notable changes to Echo are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.1] - 2026-05-18
+
+### Fixed
+
+- Fixed a goroutine leak in ExecInteractive where the stdin-reader goroutine kept blocking the terminal after the subprocess exited.
+
 ## [Unreleased]
 
 ### Fixed
@@ -14,6 +20,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   never fires while the host terminal is raw. The shell session now
   correctly reports `echo.<cmd>.cancelled` (WARN) instead of falling
   through to the ERROR auto-copy path.
+- The stdin-reader goroutine spawned by `ExecInteractive` no longer
+  leaks after the subprocess exits. It now reads from a `syscall.Dup`
+  of stdin that is closed on the way out, unblocking the otherwise
+  permanent `Read` with `EBADF` and freeing keystrokes for the REPL
+  prompt — fixes the visible REPL "hang" after multiple `shell`
+  sessions.
 
 ## [0.3.0] — 2026-05-18
 
