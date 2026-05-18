@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Ctrl+C during interactive shells (`bash` / `psql` / `shell`) is now
+  detected by scanning the stdin byte stream for `0x03` (ETX), since
+  raw mode disables the kernel's SIGINT translation and `signal.Notify`
+  never fires while the host terminal is raw. The shell session now
+  correctly reports `echo.<cmd>.cancelled` (WARN) instead of falling
+  through to the ERROR auto-copy path.
+
 ## [0.3.0] — 2026-05-18
 
 ### Added

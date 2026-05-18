@@ -88,8 +88,30 @@ func ExecInteractive(ctx context.Context, composeCmd, dir, container string, arg
 	}
 	defer func() { _ = term.Restore(int(os.Stdin.Fd()), oldState) }()
 
-	// Forward host stdin → PTY master.
-	go func() { _, _ = io.Copy(ptmx, os.Stdin) }()
+	// Forward host stdin → PTY master, inspecting the byte stream for
+	// the ETX (^C, 0x03) sentinel. In raw mode the kernel does NOT
+	// translate Ctrl+C into SIGINT on the host — it lets the literal
+	// byte through so the in-container TTY (which isn't in raw mode)
+	// can handle it. That means signal.Notify never fires for us, so
+	// we must spot the byte ourselves to know the user cancelled.
+	go func() {
+		buf := make([]byte, 1024)
+		for {
+			n, rerr := os.Stdin.Read(buf)
+			if n > 0 {
+				for _, b := range buf[:n] {
+					if b == 0x03 {
+						interrupted.Store(true)
+						break
+					}
+				}
+				_, _ = ptmx.Write(buf[:n])
+			}
+			if rerr != nil {
+				return
+			}
+		}
+	}()
 
 	// Tee PTY master → stdout AND capture buffer. The container's
 	// stdout+stderr are fused in this stream because docker compose
