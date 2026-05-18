@@ -584,17 +584,20 @@ func (sess *session) runShell(ctx context.Context, name string, args []string) {
 
 	var err error
 	var captured string
+	var interrupted bool
 	switch name {
 	case "bash":
-		captured, err = cmd.RunBash(ctx, opts)
+		captured, interrupted, err = cmd.RunBash(ctx, opts)
 	case "psql":
-		captured, err = cmd.RunPsql(ctx, opts)
+		captured, interrupted, err = cmd.RunPsql(ctx, opts)
 	case "shell":
-		captured, err = cmd.RunOdooShell(ctx, opts)
+		captured, interrupted, err = cmd.RunOdooShell(ctx, opts)
 	}
 	switch {
 	case errors.Is(err, cmd.ErrCancelled), errors.Is(err, huh.ErrUserAborted):
 		sess.print(Line{Kind: "warn", Text: name + " cancelled"})
+	case interrupted:
+		sess.shellCancelledLog(name)
 	case err != nil:
 		sess.shellFailureLog(name, captured, err)
 	default:

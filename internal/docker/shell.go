@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"sync/atomic"
 	"syscall"
 
 	"github.com/creack/pty"
@@ -30,7 +31,8 @@ import (
 // the function falls back to a plain pipe-tee. SIGINT is consumed in
 // the parent so the subprocess (in the same process group) handles
 // the interrupt and exits cleanly — same pattern as LogsFollow.
-func ExecInteractive(ctx context.Context, composeCmd, dir, container string, argv []string) (string, error) {
+func ExecInteractive(ctx context.Context, composeCmd, dir, container string, argv []string) (string, bool, error) {
+	var interrupted atomic.Bool
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, os.Interrupt)
 	defer func() {
@@ -39,6 +41,7 @@ func ExecInteractive(ctx context.Context, composeCmd, dir, container string, arg
 	}()
 	go func() {
 		for range sigChan {
+			interrupted.Store(true)
 			// consume; the subprocess gets its own copy via the process group
 		}
 	}()
@@ -57,12 +60,12 @@ func ExecInteractive(ctx context.Context, composeCmd, dir, container string, arg
 		cmd.Stdout = io.MultiWriter(os.Stdout, &buf)
 		cmd.Stderr = io.MultiWriter(os.Stderr, &buf)
 		err := cmd.Run()
-		return buf.String(), err
+		return buf.String(), interrupted.Load(), err
 	}
 
 	ptmx, err := pty.Start(cmd)
 	if err != nil {
-		return "", err
+		return "", interrupted.Load(), err
 	}
 	defer ptmx.Close()
 
@@ -81,7 +84,7 @@ func ExecInteractive(ctx context.Context, composeCmd, dir, container string, arg
 	// without local echo/cooking; restore on exit.
 	oldState, err := term.MakeRaw(int(os.Stdin.Fd()))
 	if err != nil {
-		return "", err
+		return "", interrupted.Load(), err
 	}
 	defer func() { _ = term.Restore(int(os.Stdin.Fd()), oldState) }()
 
@@ -95,5 +98,5 @@ func ExecInteractive(ctx context.Context, composeCmd, dir, container string, arg
 	_, _ = io.Copy(io.MultiWriter(os.Stdout, &buf), ptmx)
 
 	err = cmd.Wait()
-	return buf.String(), err
+	return buf.String(), interrupted.Load(), err
 }

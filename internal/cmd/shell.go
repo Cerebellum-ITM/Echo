@@ -22,29 +22,28 @@ type ShellOpts struct {
 }
 
 // RunBash opens an interactive bash session inside the Odoo container.
-// Returns the captured stderr so the REPL can auto-copy startup errors
-// (e.g. container not running) without losing the user-visible output.
-func RunBash(ctx context.Context, opts ShellOpts) (string, error) {
+// Returns the captured output, an `interrupted` flag (true when the user
+// sent SIGINT during the session), and the run error.
+func RunBash(ctx context.Context, opts ShellOpts) (string, bool, error) {
 	if err := requireOdooConfig(opts.Cfg); err != nil {
-		return "", err
+		return "", false, err
 	}
 	if err := maybeConfirmProd(opts, "bash"); err != nil {
-		return "", err
+		return "", false, err
 	}
 	return docker.ExecInteractive(ctx, opts.Cfg.ComposeCmd, opts.Root, opts.Cfg.OdooContainer, []string{"bash"})
 }
 
 // RunPsql opens an interactive psql session against the configured DB.
-// Returns the captured stderr so the REPL can auto-copy startup errors.
-func RunPsql(ctx context.Context, opts ShellOpts) (string, error) {
+func RunPsql(ctx context.Context, opts ShellOpts) (string, bool, error) {
 	if opts.Cfg.DBContainer == "" {
-		return "", ErrNoDBContainer
+		return "", false, ErrNoDBContainer
 	}
 	if opts.Cfg.DBName == "" {
-		return "", ErrNoDB
+		return "", false, ErrNoDB
 	}
 	if err := maybeConfirmProd(opts, "psql"); err != nil {
-		return "", err
+		return "", false, err
 	}
 	envVars := env.Load(opts.Root)
 	user := envVars["POSTGRES_USER"]
@@ -56,14 +55,13 @@ func RunPsql(ctx context.Context, opts ShellOpts) (string, error) {
 }
 
 // RunOdooShell opens the Odoo Python shell loaded against the
-// configured DB. Returns the captured stderr so the REPL can auto-copy
-// startup tracebacks (config errors, missing modules, etc.).
-func RunOdooShell(ctx context.Context, opts ShellOpts) (string, error) {
+// configured DB.
+func RunOdooShell(ctx context.Context, opts ShellOpts) (string, bool, error) {
 	if err := requireOdooConfig(opts.Cfg); err != nil {
-		return "", err
+		return "", false, err
 	}
 	if err := maybeConfirmProd(opts, "shell"); err != nil {
-		return "", err
+		return "", false, err
 	}
 	envVars := env.Load(opts.Root)
 	conn := odoo.Conn{

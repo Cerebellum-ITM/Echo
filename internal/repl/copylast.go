@@ -198,6 +198,20 @@ func (sess *session) shellExitLog(name string) {
 		nil, sess.styles, sess.palette, sess.cfg.DBName)
 }
 
+// shellCancelledLog emits a WARN-level Odoo-style line when the user
+// hit Ctrl+C during an interactive shell. Distinct from
+// shellFailureLog because the subprocess error (Odoo catches SIGINT
+// and exits with code 1 plus a KeyboardInterrupt traceback) is the
+// expected outcome of cancellation, not a real failure — we don't
+// want to auto-copy a traceback the user already saw and intended to
+// trigger.
+func (sess *session) shellCancelledLog(name string) {
+	sess.print(Line{Kind: "out", Text: ""})
+	logger := echoCommandLogger(name, nil) + ".cancelled"
+	emitOdooLog("WARNING", logger, name+" interrupted by user",
+		nil, sess.styles, sess.palette, sess.cfg.DBName)
+}
+
 // startLog emits the Odoo-style INFO line printed when a command
 // begins executing. Replaces the legacy `$ <name>` prompt-echo with
 // a structured event whose logger sits under `echo.<cmd>.start`. For
