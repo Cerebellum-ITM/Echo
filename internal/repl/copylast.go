@@ -72,7 +72,8 @@ func (sess *session) runCopyLast(args []string) {
 func (sess *session) copyFailureLog(name string, resolved []string, summary string, runErr error, errCount, warnCount int) {
 	sess.print(Line{Kind: "out", Text: ""})
 
-	header := "✗ " + summary + " failed"
+	logger := failureLogger(name, resolved)
+	header := plainOdooLog("ERROR", logger, name+" failed", sess.cfg.DBName)
 	failLines := sess.lastOutput.FromFirstError()
 	var buf strings.Builder
 	buf.WriteString(header)
@@ -97,7 +98,7 @@ func (sess *session) copyFailureLog(name string, resolved []string, summary stri
 	}
 	fields = append(fields, logField{"copied", strconv.FormatBool(copied)})
 
-	emitOdooLog("ERROR", echoCommandLogger(name, resolved), name+" failed",
+	emitOdooLog("ERROR", logger, name+" failed",
 		fields, sess.styles, sess.palette, sess.cfg.DBName)
 
 	if !copied && errors.Is(copyErr, clipboard.ErrUnavailable) {
@@ -114,7 +115,8 @@ func (sess *session) copyFailureLog(name string, resolved []string, summary stri
 func (sess *session) shellFailureLog(name, captured string, runErr error) {
 	sess.print(Line{Kind: "out", Text: ""})
 
-	header := "✗ " + name + " failed"
+	logger := failureLogger(name, nil)
+	header := plainOdooLog("ERROR", logger, name+" failed", sess.cfg.DBName)
 	payload := header + "\n" + captured
 
 	copyErr := clipboard.WriteAll(payload)
@@ -126,7 +128,7 @@ func (sess *session) shellFailureLog(name, captured string, runErr error) {
 	}
 	fields = append(fields, logField{"copied", strconv.FormatBool(copied)})
 
-	emitOdooLog("ERROR", echoCommandLogger(name, nil), name+" failed",
+	emitOdooLog("ERROR", logger, name+" failed",
 		fields, sess.styles, sess.palette, sess.cfg.DBName)
 
 	if !copied && copyErr != nil {
@@ -145,7 +147,8 @@ func (sess *session) shellFailureLog(name, captured string, runErr error) {
 func (sess *session) commandFailureLog(name string, runErr error, errCount, warnCount int) {
 	sess.print(Line{Kind: "out", Text: ""})
 
-	header := "✗ " + name + " failed"
+	logger := failureLogger(name, nil)
+	header := plainOdooLog("ERROR", logger, name+" failed", sess.cfg.DBName)
 	failLines := sess.lastOutput.FromFirstError()
 	if len(failLines) == 0 {
 		failLines = sess.lastOutput.Filtered(nil)
@@ -173,7 +176,7 @@ func (sess *session) commandFailureLog(name string, runErr error, errCount, warn
 	}
 	fields = append(fields, logField{"copied", strconv.FormatBool(copied)})
 
-	emitOdooLog("ERROR", echoCommandLogger(name, nil), name+" failed",
+	emitOdooLog("ERROR", logger, name+" failed",
 		fields, sess.styles, sess.palette, sess.cfg.DBName)
 
 	if !copied && copyErr != nil {

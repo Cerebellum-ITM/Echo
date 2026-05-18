@@ -85,6 +85,50 @@ func quoteIfNeeded(v string) string {
 	return v
 }
 
+// plainOdooLog renders the same Odoo-style line as emitOdooLog but
+// without any ANSI styling. Used as the first line of the clipboard
+// payload on auto-copy so the copied text starts with a self-contained
+// header that identifies the failure (timestamp, pid, level, db,
+// logger, message) without leaking terminal escapes.
+func plainOdooLog(level, logger, msg, db string) string {
+	ts := time.Now().Format("2006-01-02 15:04:05.000")
+	ts = strings.Replace(ts, ".", ",", 1)
+	pid := strconv.Itoa(os.Getpid())
+	if db == "" {
+		db = "-"
+	}
+	return ts + " " + pid + " " + shortLevelName(level) + " " +
+		db + " " + logger + ": " + msg
+}
+
+// shortLevelName returns the 4-char display label for an Odoo level
+// token. Mirrors shortLevel but discards the style — useful for plain
+// text contexts (clipboard payload, plain renders).
+func shortLevelName(level string) string {
+	switch level {
+	case "DEBUG":
+		return "DEBU"
+	case "INFO":
+		return "INFO"
+	case "WARNING":
+		return "WARN"
+	case "ERROR":
+		return "ERRO"
+	case "CRITICAL":
+		return "CRIT"
+	}
+	return level
+}
+
+// failureLogger appends `.error` to the command logger so the logger
+// path itself encodes the severity. Used by every auto-copy path so
+// the line shows up as e.g. `echo.update.module.sale.error` —
+// hierarchical, greppable, distinguishable from the success line that
+// drops the suffix.
+func failureLogger(cmd string, resolved []string) string {
+	return echoCommandLogger(cmd, resolved) + ".error"
+}
+
 // echoCommandLogger builds a hierarchical logger name for a module
 // command, so the post-command status line looks at home next to
 // Odoo's own `odoo.modules.loading`, `odoo.service.server` paths:
