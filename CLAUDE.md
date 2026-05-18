@@ -33,3 +33,24 @@ This project uses the `spec-driven-dev` skill. Follow these rules in every sessi
    context: current phase, in progress, next unit, open questions.
 5. When asked to implement an existing spec, read `context/specs/NN-name.md` and
    implement exactly what is specified — no more, no less.
+
+---
+
+## Versioning & Changelog
+
+This project follows [Semantic Versioning](https://semver.org/) and maintains a
+`CHANGELOG.md` in the [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
+format. Two non-negotiables:
+
+1. **Every meaningful change appends to `[Unreleased]`** in `CHANGELOG.md`,
+   under the appropriate section (`Added` / `Changed` / `Fixed` / `Removed` /
+   `Deprecated` / `Security`). This entry is part of the same commit as the
+   code change.
+2. **Every version bump promotes `[Unreleased]` to a new `[X.Y.Z]` section**
+   in the same commit that updates the version constant
+   (`internal/repl/repl.go`, `Version: "..."`). Never bump the version without
+   moving the `[Unreleased]` entries into the new release block — and never
+   leave the bump in a separate commit from its changelog promotion.
+
+The `commitcraft` skill enforces the per-commit changelog rule on its end;
+this section codifies it on the project's side as well.
