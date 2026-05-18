@@ -5,13 +5,16 @@ All notable changes to Echo are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.3.1] - 2026-05-18
+## [0.3.2] - 2026-05-18
 
 ### Fixed
 
-- Fixed a goroutine leak in ExecInteractive where the stdin-reader goroutine kept blocking the terminal after the subprocess exited.
+- Fixed REPL runtime crashes due to ignored Ctrl-C input in raw-mode stdin by reading the byte `0x03` from stdin and treating it as an interrupt.
+- Resolved a goroutine leak caused by an unclosed duplicated file descriptor by closing the duplicated descriptor after use.
 
 ## [Unreleased]
+
+## [0.3.1] — 2026-05-18
 
 ### Fixed
 - Ctrl+C during interactive shells (`bash` / `psql` / `shell`) is now
@@ -119,6 +122,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   REPL prompt, and the `ls` command.
 
 [Unreleased]: #unreleased
+[0.3.1]: #031--2026-05-18
 [0.3.0]: #030--2026-05-18
 [0.2.0]: #020--2026-05-12
 [0.1.0]: #010--2026-05-07
