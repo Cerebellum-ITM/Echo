@@ -302,3 +302,161 @@ No new modules. Reuses:
 - [ ] `go build ./... && go vet ./... && go test ./...` clean.
 - [ ] `.unverified/untested.html` updated with the manual checks for
       this unit.
+
+---
+
+## Post-merge evolution (2026-05-15 → 2026-05-18)
+
+The unit shipped against this spec on 2026-05-15. The sections below
+override the original design where it diverged during follow-up
+polish — kept inline so the spec stays the source of truth for the
+implementation as it stands today.
+
+### Output formatting — manual Odoo-style render replaces `charmbracelet/log`
+
+The original spec routed the failure announce through a session-scoped
+`*log.Logger`. That was scrapped: charm/log's text formatter can't
+produce Odoo's exact line shape (timestamp with comma-separated
+milliseconds, PID slot, db slot between LEVEL and logger). The REPL
+no longer depends on `charmbracelet/log` at all (the package lives
+only in `main.go` for fatal/warn during boot).
+
+A new `internal/repl/logemit.go` owns rendering:
+
+- `emitOdooLog(level, logger, msg, fields, styles, palette, db)` prints
+  the styled line to stdout in the same shape as the Odoo logs in the
+  stream above. Timestamp dim, PID faint, level chip per level color
+  (4-char `DEBU`/`INFO`/`WARN`/`ERRO`/`CRIT`), db in `palette.Accent`,
+  logger via a stable FNV-8 pastel rotation (`loggerPalette`), msg in
+  default fg, per-key colors on the structured fields.
+- `plainOdooLog(level, logger, msg, db)` produces the unstyled sibling
+  used as the **first line of the clipboard payload** so the copy
+  starts with a self-describing header in the same format as the
+  lines that follow.
+
+### Hierarchical loggers
+
+The logger name encodes the event class so a single command produces
+a greppable triplet sharing a common prefix:
+
+| Phase     | Logger pattern                              | Level   |
+|-----------|---------------------------------------------|---------|
+| start     | `echo.<cmd>.start`                          | INFO    |
+| completed | `echo.<cmd>` (no suffix)                    | INFO    |
+| error     | `echo.<cmd>.error`                          | ERROR   |
+| cancelled | `echo.<cmd>.cancelled` (interactive shells) | WARNING |
+
+For module commands the path further embeds the resolved target:
+
+- `echo.update.module.sale[.start|.error]`  — single module
+- `echo.update.modules[.start|.error]`      — several modules
+- `echo.update.all[.start|.error]`          — `--all`
+
+For non-module commands the start line carries positional args as a
+structured `args=` field instead of baking them into the path.
+
+### Resolved modules returned by RunInstall/Update/Uninstall
+
+`RunInstall`, `RunUpdate`, `RunUninstall` were updated to return
+`([]string, error)` — the second value is the resolved targets after
+flag stripping and picker resolution (sentinel `["--all"]` for
+`--all`). `runModules` propagates the slice to the start / success /
+failure renders so the report always names the real modules — even
+when the user invoked the command with no args.
+
+### Failure capture: from first err/warn onwards
+
+`lastOutputBuffer.FromFirstError()` returns every line from the first
+err/warn-tagged entry to the end, used as the clipboard payload on
+auto-copy. That keeps the failing command's leading warnings, the
+traceback, and the trailing INFO lines Odoo emits while unwinding
+(shutdown, closed connections). Falls back to the full buffer when
+no err/warn was logged.
+
+The Odoo log classifier was tightened in passing: it now anchors on
+the full prefix (`^ts pid LEVEL `) so traceback frames that mention
+the literal words `DEBUG` / `INFO` (e.g. inside a `--log-handler`
+hint string) no longer break err-kind inheritance mid-stream.
+
+### Auto-copy extended to every subprocess command
+
+The original spec scoped auto-copy to module commands only. After
+the manual render landed the scope was widened to every command that
+runs a subprocess and could produce a useful failure capture:
+
+- module: `install` / `update` / `uninstall`           — via `lastOutputBuffer`
+- shells: `bash` / `psql` / `shell`                    — via PTY-tee'd output
+- i18n:   `i18n-export` / `i18n-update`                — via `lastOutputBuffer`
+- db:     `db-backup` / `db-restore` / `db-drop`       — via `lastOutputBuffer`
+- docker: `up` / `down` / `restart`                    — via `lastOutputBuffer`
+
+Read-only inspections (`ps`, `logs`, `db-list`, `modules`) and meta
+commands stay opt-out — `copy-last` is the manual path.
+
+Two helpers in `internal/repl/copylast.go` handle the two capture
+shapes:
+
+- `commandFailureLog(name, runErr, errCount, warnCount)` — reads
+  from `lastOutputBuffer.FromFirstError()`. Used by everything that
+  streams through `sess.print`.
+- `shellFailureLog(name, captured, runErr)` — uses the raw string
+  captured by `ExecInteractive`. Used by the interactive shells
+  whose output bypasses `sess.print`.
+
+### Interactive shells need a host-side PTY
+
+`docker compose exec` with the default `-t` allocates a PTY inside
+the container and fuses the container's stdout and stderr into one
+stream — tee'ing only stderr from the host captured nothing useful.
+`ExecInteractive` now spawns the docker subprocess under a host
+PTY via `github.com/creack/pty`:
+
+- host stdin → raw mode (`golang.org/x/term`) → PTY master
+- PTY master → `io.MultiWriter(os.Stdout, &captureBuf)` so the user
+  still sees the live stream AND we keep the bytes for auto-copy
+- `SIGWINCH` propagated via `pty.InheritSize` so resizing the host
+  window reaches the container's TTY
+- fallback to plain pipe-tee when stdin is not a TTY (tests, pipes)
+
+The function returns `(captured, interrupted, err)`. `interrupted`
+is set from an `atomic.Bool` toggled inside the SIGINT handler in
+the parent process — we use this rather than the exit code because
+Odoo's shell catches SIGINT, prints a `KeyboardInterrupt` traceback,
+and exits with status 1 (not 130). When `interrupted` is true the
+REPL emits the WARN-level `echo.<cmd>.cancelled` line instead of
+running `shellFailureLog` (the traceback the user already saw and
+deliberately triggered shouldn't end up in their clipboard).
+
+### Other small fixes that landed alongside
+
+- `ErrCancelled` text generalised from `"init cancelled"` to
+  `"cancelled by user"` — it's reused by every picker and prod
+  confirm, the old text was misleading when shown outside `init`.
+- `RunOdooShell` builds its connection argv via `odoo.Conn.Flags()`
+  (the same helper `install`/`update` use) instead of inline
+  string concatenation. Empty values are skipped so a missing
+  `POSTGRES_PORT` in `.env` doesn't produce a literal `--db_port=`
+  that crashed Odoo with `ValueError: int('')`. Defaults to `5432`
+  defensively. `Conn.flags()` is exposed publicly as `Conn.Flags()`.
+- Charm palette `Warning` switched from orange `#f6ad55` to pastel
+  yellow `#fde047` for better visual separation from `Error`.
+
+### Verify when done (additions)
+
+- [ ] `update <broken-mod>` produces a triplet
+      `echo.update.module.<mod>.start` (INFO) → traceback →
+      `echo.update.module.<mod>.error` (ERROR auto-copy).
+- [ ] `update <ok-mod>` produces `…start` (INFO) → INFO log stream →
+      `echo.update.module.<mod>` (INFO `completed warnings=N`).
+- [ ] `shell` then `exit` produces `echo.shell.start` → shell session
+      → `echo.shell: shell exited` (INFO).
+- [ ] `shell` then Ctrl+C produces `echo.shell.start` → traceback →
+      `echo.shell.cancelled: shell interrupted by user` (WARN), no
+      auto-copy.
+- [ ] `shell` with broken config (e.g. unset `POSTGRES_PORT`) emits
+      `echo.shell.error: shell failed err="exit status 1" copied=true`;
+      clipboard starts with the plain Odoo log header line.
+- [ ] `db-backup` / `db-restore` / `db-drop` / `i18n-*` / docker
+      `up`/`down`/`restart` honour the same start/error pattern.
+- [ ] Clipboard payload starts with a real plain Odoo log line, not
+      the legacy `✗ <name> failed` marker.
