@@ -24,6 +24,12 @@ type Conn struct {
 	Password string
 }
 
+// Flags returns the connection arguments (`-d`, `--db_host`, …)
+// omitting any field left empty so Odoo's own defaults apply. Exported
+// so callers outside this package (e.g. the shell command) can build
+// argvs with the same conventions.
+func (c Conn) Flags() Cmd { return c.flags() }
+
 func (c Conn) flags() Cmd {
 	args := Cmd{}
 	if c.DB != "" {

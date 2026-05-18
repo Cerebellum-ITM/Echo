@@ -10,6 +10,7 @@ import (
 	"github.com/pascualchavez/echo/internal/config"
 	"github.com/pascualchavez/echo/internal/docker"
 	"github.com/pascualchavez/echo/internal/env"
+	"github.com/pascualchavez/echo/internal/odoo"
 	"github.com/pascualchavez/echo/internal/theme"
 )
 
@@ -65,15 +66,18 @@ func RunOdooShell(ctx context.Context, opts ShellOpts) (string, error) {
 		return "", err
 	}
 	envVars := env.Load(opts.Root)
-	argv := []string{
-		"odoo", "shell",
-		"-d", opts.Cfg.DBName,
-		"--db_host=" + opts.Cfg.DBContainer,
-		"--db_port=" + envVars["POSTGRES_PORT"],
-		"--db_user=" + envVars["POSTGRES_USER"],
-		"--db_password=" + envVars["POSTGRES_PASSWORD"],
-		"--no-http",
+	conn := odoo.Conn{
+		DB:       opts.Cfg.DBName,
+		Host:     opts.Cfg.DBContainer,
+		Port:     envVars["POSTGRES_PORT"],
+		User:     envVars["POSTGRES_USER"],
+		Password: envVars["POSTGRES_PASSWORD"],
 	}
+	if conn.Port == "" {
+		conn.Port = "5432"
+	}
+	argv := append([]string{"odoo", "shell"}, conn.Flags()...)
+	argv = append(argv, "--no-http")
 	return docker.ExecInteractive(ctx, opts.Cfg.ComposeCmd, opts.Root, opts.Cfg.OdooContainer, argv)
 }
 
