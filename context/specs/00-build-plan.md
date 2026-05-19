@@ -29,6 +29,7 @@ Decomposition of Echo into ordered, scoped, verifiable units.
 | 14 | meta-commands               | `theme`, `logo`, `version`, `stage`, `help`, `clear`                           | 02         |
 | 15 | banner-ascii                | All 4 ASCII logos with per-segment token coloring                              | 01         |
 | 16 | copy-output                 | `copy-last` + auto-copy on module failure (charm/log line); OSC 52 priority when remote | 04, 05     |
+| 17 | cli-prompt-odoo-info        | Odoo-aware REPL prompt: compose project name + version/db bracket + colored stage chip + live container health (configurable via `[prompt]` in global.toml, TTL-cached) | 02, 04     |
 
 ## Notes
 

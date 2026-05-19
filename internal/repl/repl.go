@@ -31,6 +31,7 @@ type session struct {
 	cfg        *config.Config
 	projectDir string
 	lastOutput *lastOutputBuffer
+	prompt     *promptBuilder
 }
 
 // Start renders the header and enters the interactive prompt loop.
@@ -56,7 +57,14 @@ func Start(s theme.Styles, p theme.Palette, project, id string, stage theme.Stag
 		lastOutput: newLastOutputBuffer(),
 	}
 
+	valid, unknown := validatePromptSegments(cfg.PromptSegments)
+	cfg.PromptSegments = valid
+	sess.prompt = newPromptBuilder(sess)
+
 	sess.clearAndRenderHeader()
+	for _, u := range unknown {
+		sess.print(Line{Kind: "warn", Text: "unknown prompt segment in global.toml: " + u})
+	}
 
 	ctx := context.Background()
 	history := loadHistory()
@@ -90,16 +98,7 @@ func Start(s theme.Styles, p theme.Palette, project, id string, stage theme.Stag
 }
 
 func (sess *session) renderPrompt() string {
-	s := sess.styles
-	projectID := sess.project + "-" + sess.id
-	icon := banner.LogoIcon(sess.cfg.Logo)
-	return s.Accent.Render(icon) + " " +
-		s.Project.Render(projectID) +
-		s.Out.Render(" [") +
-		s.Bracket.Render(string(sess.stage)+"/"+sess.version+".0") +
-		s.Out.Render("]:") +
-		s.Tilde.Render("~") +
-		s.Dollar.Render("$ ")
+	return sess.prompt.Render(context.Background())
 }
 
 // dispatchNames lists every command name routed by `dispatch`. It is
@@ -291,6 +290,7 @@ func (sess *session) runInit() {
 	sess.stage = theme.StageFromString(newCfg.Stage)
 	sess.version = newCfg.OdooVersion
 	sess.styles = theme.New(sess.palette, sess.stage)
+	sess.prompt.refresh(sess)
 
 	sess.print(Line{Kind: "ok", Text: "  Project configured"})
 	sess.print(Line{Kind: "dim", Text: confLine("\U000f01a7", "version", newCfg.OdooVersion)})
@@ -435,10 +435,13 @@ func (sess *session) runDocker(ctx context.Context, name string, args []string) 
 	switch name {
 	case "up":
 		err = cmd.RunUp(ctx, opts)
+		sess.prompt.health.Invalidate()
 	case "down":
 		err = cmd.RunDown(ctx, opts)
+		sess.prompt.health.Invalidate()
 	case "restart":
 		err = cmd.RunRestart(ctx, opts)
+		sess.prompt.health.Invalidate()
 	case "ps", "logs":
 		var runErr error
 		if name == "ps" {

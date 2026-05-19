@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Odoo-aware REPL prompt: shows compose project name, Odoo version,
+  database, a colored stage chip, and live container health (Odoo +
+  Postgres) using Nerd Font glyphs. Segments are configurable via the
+  new `[prompt]` block in `~/.config/echo/global.toml`
+  (`segments`, `name_max`, `health_ttl`). Container health reads
+  through a TTL-cached `docker inspect` and refreshes immediately
+  after `up` / `down` / `restart`.
+- Per-project `compose_project` override in the project TOML for
+  cases where the docker-compose project name does not match the
+  folder name (e.g. when set via `COMPOSE_PROJECT_NAME`).
+
+### Changed
+- The REPL prompt no longer renders the per-session id. Project
+  identity now comes from the docker-compose project name resolved
+  from `COMPOSE_PROJECT_NAME`, the per-project `compose_project`
+  field, or the normalized project directory basename. The version
+  bracket no longer inherits the stage color — the stage is shown as
+  an independent colored chip after the bracket.
+
 ## [0.3.1] — 2026-05-18
 
 ### Fixed
