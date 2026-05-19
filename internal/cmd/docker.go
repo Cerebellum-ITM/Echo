@@ -29,6 +29,10 @@ func RunRestart(ctx context.Context, opts DockerOpts) error {
 	return docker.Restart(ctx, opts.Cfg.ComposeCmd, opts.Root, opts.Args, opts.StreamOut)
 }
 
+func RunStop(ctx context.Context, opts DockerOpts) error {
+	return docker.Stop(ctx, opts.Cfg.ComposeCmd, opts.Root, opts.Args, opts.StreamOut)
+}
+
 func RunPS(ctx context.Context, opts DockerOpts) error {
 	return docker.PS(ctx, opts.Cfg.ComposeCmd, opts.Root, opts.StreamOut)
 }

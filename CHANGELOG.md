@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `stop [service]` command — wraps `docker compose stop` to halt the
+  Odoo stack without removing the containers, complementing the
+  destructive `down`. Hooks into the prompt health cache invalidation
+  alongside `up` / `down` / `restart`.
+
 ### Changed
 - Read-only commands (`ps`, `logs`, `modules`, `db-list`) now close with
   an Odoo-style end-log line — `INFO echo.<cmd>: <name> completed` on

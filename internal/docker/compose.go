@@ -82,6 +82,14 @@ func Restart(ctx context.Context, composeCmd, dir string, services []string, onL
 	return runStreamed(ctx, composeCmd, dir, onLine, args...)
 }
 
+// Stop runs `<compose> stop [services...]` and streams output line by
+// line. Unlike Down it preserves the containers (they can be restarted
+// with `start` or `up` without losing their writable layer).
+func Stop(ctx context.Context, composeCmd, dir string, services []string, onLine func(string)) error {
+	args := append([]string{"stop"}, services...)
+	return runStreamed(ctx, composeCmd, dir, onLine, args...)
+}
+
 // PS runs `<compose> ps` and streams the table to onLine.
 func PS(ctx context.Context, composeCmd, dir string, onLine func(string)) error {
 	return runStreamed(ctx, composeCmd, dir, onLine, "ps")

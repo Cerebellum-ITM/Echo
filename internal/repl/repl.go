@@ -108,7 +108,7 @@ func (sess *session) renderPrompt() string {
 var dispatchNames = []string{
 	"help", "clear", "copy-last",
 	"init", "reset",
-	"up", "down", "restart", "ps", "logs",
+	"up", "down", "stop", "restart", "ps", "logs",
 	"install", "update", "uninstall", "modules",
 	"i18n-export", "i18n-update",
 	"db-backup", "db-restore", "db-drop", "db-list",
@@ -150,7 +150,7 @@ func (sess *session) dispatch(ctx context.Context, input string) {
 		sess.runInit()
 	case "reset":
 		sess.runReset()
-	case "up", "down", "restart", "ps", "logs":
+	case "up", "down", "stop", "restart", "ps", "logs":
 		sess.runDocker(ctx, cmd, args)
 	case "install", "update", "uninstall", "modules":
 		sess.runModules(ctx, cmd, args)
@@ -210,6 +210,7 @@ func helpSections() []helpSection {
 		{"Docker", []helpEntry{
 			{"up [service]", "Start containers (compose up -d)"},
 			{"down [service]", "Stop and remove containers"},
+			{"stop [service]", "Stop containers without removing them"},
 			{"restart [service]", "Restart services"},
 			{"ps", "Show container status"},
 			{"logs [service]", "Follow logs of Odoo (or [service]) — Ctrl+C to exit"},
@@ -436,6 +437,9 @@ func (sess *session) runDocker(ctx context.Context, name string, args []string) 
 		sess.prompt.health.Invalidate()
 	case "down":
 		err = cmd.RunDown(ctx, opts)
+		sess.prompt.health.Invalidate()
+	case "stop":
+		err = cmd.RunStop(ctx, opts)
 		sess.prompt.health.Invalidate()
 	case "restart":
 		err = cmd.RunRestart(ctx, opts)
