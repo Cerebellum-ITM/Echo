@@ -342,9 +342,7 @@ func (sess *session) runModules(ctx context.Context, name string, args []string)
 		resolved, err = cmd.RunUninstall(ctx, opts)
 	case "modules":
 		err = cmd.RunModules(ctx, opts)
-		if err != nil {
-			sess.print(Line{Kind: "err", Text: name + ": " + err.Error()})
-		}
+		sess.readonlyFinalize(name, err)
 		return
 	}
 	summary := modulesSummary(name, resolved)
@@ -449,9 +447,7 @@ func (sess *session) runDocker(ctx context.Context, name string, args []string) 
 		} else {
 			runErr = cmd.RunLogs(ctx, opts)
 		}
-		if runErr != nil {
-			sess.print(Line{Kind: "err", Text: name + ": " + runErr.Error()})
-		}
+		sess.readonlyFinalize(name, runErr)
 		return
 	}
 	switch {
@@ -524,9 +520,8 @@ func (sess *session) runDB(ctx context.Context, name string, args []string) {
 	}
 
 	if name == "db-list" {
-		if err := cmd.RunDBList(ctx, opts); err != nil {
-			sess.print(Line{Kind: "err", Text: name + ": " + err.Error()})
-		}
+		err := cmd.RunDBList(ctx, opts)
+		sess.readonlyFinalize(name, err)
 		return
 	}
 

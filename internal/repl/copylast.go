@@ -198,6 +198,24 @@ func (sess *session) shellExitLog(name string) {
 		nil, sess.styles, sess.palette, sess.cfg.DBName)
 }
 
+// readonlyFinalize emits the Odoo-style end-log line for read-only
+// commands (`ps`, `logs`, `modules`, `db-list`) whose output is a
+// listing the user reads directly. Mirrors the success/failure pair
+// emitted around shell sessions, but never auto-copies — these
+// commands do not change state, so a failure does not produce a
+// payload worth pasting.
+func (sess *session) readonlyFinalize(name string, runErr error) {
+	sess.print(Line{Kind: "out", Text: ""})
+	if runErr != nil {
+		emitOdooLog("ERROR", failureLogger(name, nil), name+" failed",
+			[]logField{{"err", runErr.Error()}},
+			sess.styles, sess.palette, sess.cfg.DBName)
+		return
+	}
+	emitOdooLog("INFO", echoCommandLogger(name, nil), name+" completed",
+		nil, sess.styles, sess.palette, sess.cfg.DBName)
+}
+
 // shellCancelledLog emits a WARN-level Odoo-style line when the user
 // hit Ctrl+C during an interactive shell. Distinct from
 // shellFailureLog because the subprocess error (Odoo catches SIGINT

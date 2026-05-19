@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- Read-only commands (`ps`, `logs`, `modules`, `db-list`) now close with
+  an Odoo-style end-log line — `INFO echo.<cmd>: <name> completed` on
+  success, `ERROR echo.<cmd>.error: <name> failed` on failure — matching
+  the start/end pair already emitted by `shell`, `bash`, and `psql`.
+  Failures of these commands do not auto-copy to the clipboard since
+  they do not change state.
+
 ### Added
 - Odoo-aware REPL prompt: shows compose project name, Odoo version,
   database, a colored stage chip, and live container health (Odoo +
