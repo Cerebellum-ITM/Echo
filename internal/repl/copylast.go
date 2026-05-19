@@ -69,7 +69,7 @@ func (sess *session) runCopyLast(args []string) {
 // INFO lines emitted as Odoo unwinds. The final REPL line is a single
 // Odoo-style log line (emitOdooLog) so success and failure share the
 // exact same visual frame and slot in next to Odoo's own log stream.
-func (sess *session) copyFailureLog(name string, resolved []string, summary string, runErr error, errCount, warnCount int) {
+func (sess *session) copyFailureLog(name string, resolved []string, runErr error, errCount, warnCount int) {
 	sess.print(Line{Kind: "out", Text: ""})
 
 	logger := failureLogger(name, resolved)

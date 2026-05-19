@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/charmbracelet/huh"
@@ -347,12 +348,11 @@ func (sess *session) runModules(ctx context.Context, name string, args []string)
 		sess.readonlyFinalize(name, err)
 		return
 	}
-	summary := modulesSummary(name, resolved)
 	switch {
 	case errors.Is(err, cmd.ErrCancelled), errors.Is(err, huh.ErrUserAborted):
-		sess.finalize(name, summary, stats.errors, stats.warnings, err)
+		sess.finalize(name, stats.errors, stats.warnings, err)
 	case err != nil, stats.errors > 0:
-		sess.copyFailureLog(name, resolved, summary, err, stats.errors, stats.warnings)
+		sess.copyFailureLog(name, resolved, err, stats.errors, stats.warnings)
 	default:
 		sess.successLog(name, resolved, stats.warnings)
 	}
@@ -380,41 +380,14 @@ func (sess *session) runI18n(ctx context.Context, name string, args []string) {
 	case "i18n-update":
 		err = cmd.RunI18nUpdate(ctx, opts)
 	}
-	summary := i18nSummary(name, args)
 	switch {
 	case errors.Is(err, cmd.ErrCancelled), errors.Is(err, huh.ErrUserAborted):
-		sess.finalize(name, summary, stats.errors, stats.warnings, err)
+		sess.finalize(name, stats.errors, stats.warnings, err)
 	case err != nil, stats.errors > 0:
 		sess.commandFailureLog(name, err, stats.errors, stats.warnings)
 	default:
-		sess.finalize(name, summary, stats.errors, stats.warnings, err)
+		sess.finalize(name, stats.errors, stats.warnings, err)
 	}
-}
-
-// i18nSummary formats the post-run label as `i18n-export (<mod>, <lang>)`,
-// dropping flags. Falls back to the bare command name when positionals
-// aren't present.
-func i18nSummary(name string, args []string) string {
-	var positional []string
-	skipNext := false
-	for _, a := range args {
-		if skipNext {
-			skipNext = false
-			continue
-		}
-		if a == "--out" {
-			skipNext = true
-			continue
-		}
-		if strings.HasPrefix(a, "-") {
-			continue
-		}
-		positional = append(positional, a)
-	}
-	if len(positional) > 0 {
-		return name + " (" + strings.Join(positional, ", ") + ")"
-	}
-	return name
 }
 
 func (sess *session) runDocker(ctx context.Context, name string, args []string) {
@@ -458,59 +431,42 @@ func (sess *session) runDocker(ctx context.Context, name string, args []string) 
 	}
 	switch {
 	case errors.Is(err, cmd.ErrCancelled), errors.Is(err, huh.ErrUserAborted):
-		sess.finalize(name, name, stats.errors, stats.warnings, err)
+		sess.finalize(name, stats.errors, stats.warnings, err)
 	case err != nil, stats.errors > 0:
 		sess.commandFailureLog(name, err, stats.errors, stats.warnings)
 	default:
-		sess.finalize(name, name, stats.errors, stats.warnings, err)
+		sess.finalize(name, stats.errors, stats.warnings, err)
 	}
 }
 
-// finalize prints the post-command ✓/✗ line per Unit 07 decision matrix.
-// `summary` is the user-visible label (`install (sale)`, `up`, etc.).
-// When the command succeeds with warnings, the count is appended in
-// parentheses so the user notices them.
-func (sess *session) finalize(name, summary string, errorCount, warnCount int, err error) {
+// finalize emits the Odoo-style end-log line for non-module commands
+// that stream output through sess.print (docker up/down/stop/restart,
+// i18n-*, db-backup/restore/drop). Success → INFO `echo.<cmd>`,
+// user cancellation → WARNING `echo.<cmd>.cancelled`, other errors →
+// ERROR `echo.<cmd>.error`. Mirrors the start/end pair already used
+// by module commands and shell sessions.
+func (sess *session) finalize(name string, errorCount, warnCount int, err error) {
 	sess.print(Line{Kind: "out", Text: ""})
 	switch {
 	case errors.Is(err, cmd.ErrCancelled), errors.Is(err, huh.ErrUserAborted):
-		sess.print(Line{Kind: "warn", Text: name + " cancelled — no changes saved"})
+		logger := echoCommandLogger(name, nil) + ".cancelled"
+		emitOdooLog("WARNING", logger, name+" cancelled by user",
+			nil, sess.styles, sess.palette, sess.cfg.DBName)
 	case err != nil:
-		sess.print(Line{Kind: "err", Text: "✗ " + summary + " failed: " + err.Error()})
+		emitOdooLog("ERROR", failureLogger(name, nil), name+" failed",
+			[]logField{{"err", err.Error()}},
+			sess.styles, sess.palette, sess.cfg.DBName)
 	case errorCount > 0:
-		sess.print(Line{Kind: "err", Text: fmt.Sprintf("✗ %s finished with %d error(s)", summary, errorCount)})
+		emitOdooLog("ERROR", failureLogger(name, nil), name+" finished with errors",
+			[]logField{{"errors", strconv.Itoa(errorCount)}},
+			sess.styles, sess.palette, sess.cfg.DBName)
 	default:
-		ok := "✓ " + summary + " completed"
+		var fields []logField
 		if warnCount > 0 {
-			ok += fmt.Sprintf(" (%d warning(s))", warnCount)
+			fields = append(fields, logField{"warnings", strconv.Itoa(warnCount)})
 		}
-		sess.print(Line{Kind: "ok", Text: ok})
-	}
-}
-
-// modulesSummary builds the user-visible label for the final result line
-// of install/update/uninstall. Strips flags, and renders `--all` as
-// "all modules".
-func modulesSummary(name string, args []string) string {
-	var mods []string
-	all := false
-	for _, a := range args {
-		if a == "--all" {
-			all = true
-			continue
-		}
-		if strings.HasPrefix(a, "-") {
-			continue
-		}
-		mods = append(mods, a)
-	}
-	switch {
-	case all:
-		return name + " (all modules)"
-	case len(mods) > 0:
-		return name + " (" + strings.Join(mods, ", ") + ")"
-	default:
-		return name
+		emitOdooLog("INFO", echoCommandLogger(name, nil), name+" completed",
+			fields, sess.styles, sess.palette, sess.cfg.DBName)
 	}
 }
 
@@ -540,40 +496,14 @@ func (sess *session) runDB(ctx context.Context, name string, args []string) {
 	case "db-drop":
 		err = cmd.RunDBDrop(ctx, opts)
 	}
-	summary := dbSummary(name, args)
 	switch {
 	case errors.Is(err, cmd.ErrCancelled), errors.Is(err, huh.ErrUserAborted):
-		sess.finalize(name, summary, 0, 0, err)
+		sess.finalize(name, 0, 0, err)
 	case err != nil:
 		sess.commandFailureLog(name, err, 0, 0)
 	default:
-		sess.finalize(name, summary, 0, 0, err)
+		sess.finalize(name, 0, 0, err)
 	}
-}
-
-// dbSummary mirrors modulesSummary for db-* commands: strips flags,
-// renders --all-style options inline.
-func dbSummary(name string, args []string) string {
-	var positional []string
-	skipNext := false
-	for _, a := range args {
-		if skipNext {
-			skipNext = false
-			continue
-		}
-		if a == "--as" {
-			skipNext = true
-			continue
-		}
-		if strings.HasPrefix(a, "-") {
-			continue
-		}
-		positional = append(positional, a)
-	}
-	if len(positional) > 0 {
-		return name + " (" + strings.Join(positional, ", ") + ")"
-	}
-	return name
 }
 
 func (sess *session) runShell(ctx context.Context, name string, args []string) {

@@ -14,6 +14,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   alongside `up` / `down` / `restart`.
 
 ### Changed
+- Every command now closes with an Odoo-style end-log line. `finalize`
+  was rewritten to emit `INFO echo.<cmd>: <name> completed` on success,
+  `WARNING echo.<cmd>.cancelled` when the user aborts a confirmation /
+  picker, and `ERROR echo.<cmd>.error` on residual errors — replacing
+  the legacy `✓ / ✗ <summary>` print. `up` / `down` / `stop` / `restart`,
+  `i18n-export` / `i18n-update`, and `db-backup` / `db-restore` /
+  `db-drop` now share the exact start/end frame already used by
+  `install` / `update` / `uninstall` and the shell sessions.
 - `down` now asks for a red `huh.Confirm` when `stage=prod` before
   tearing down the stack, mirroring the prod-confirm guard already
   applied to `bash` / `psql` / `shell` and `db-drop`. The `--force` flag
