@@ -14,6 +14,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   alongside `up` / `down` / `restart`.
 
 ### Changed
+- `down` now asks for a red `huh.Confirm` when `stage=prod` before
+  tearing down the stack, mirroring the prod-confirm guard already
+  applied to `bash` / `psql` / `shell` and `db-drop`. The `--force` flag
+  bypasses the prompt and is stripped from the arguments forwarded to
+  `docker compose down`. Behavior in `dev` / `staging` is unchanged.
 - Read-only commands (`ps`, `logs`, `modules`, `db-list`) now close with
   an Odoo-style end-log line — `INFO echo.<cmd>: <name> completed` on
   success, `ERROR echo.<cmd>.error: <name> failed` on failure — matching

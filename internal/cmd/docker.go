@@ -4,16 +4,19 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/pascualchavez/echo/internal/clipboard"
 	"github.com/pascualchavez/echo/internal/config"
 	"github.com/pascualchavez/echo/internal/docker"
+	"github.com/pascualchavez/echo/internal/theme"
 )
 
 type DockerOpts struct {
 	Cfg       *config.Config
 	Root      string
 	Args      []string
+	Palette   theme.Palette
 	StreamOut func(string)
 }
 
@@ -22,7 +25,41 @@ func RunUp(ctx context.Context, opts DockerOpts) error {
 }
 
 func RunDown(ctx context.Context, opts DockerOpts) error {
-	return docker.Down(ctx, opts.Cfg.ComposeCmd, opts.Root, opts.Args, opts.StreamOut)
+	if err := maybeConfirmDockerProd(opts, "down"); err != nil {
+		return err
+	}
+	services := stripFlag(opts.Args, "--force")
+	return docker.Down(ctx, opts.Cfg.ComposeCmd, opts.Root, services, opts.StreamOut)
+}
+
+// stripFlag removes every occurrence of flag from args, returning a new
+// slice with the remaining arguments. Used to filter REPL-only flags
+// (e.g. `--force`) before forwarding the rest to docker-compose.
+func stripFlag(args []string, flag string) []string {
+	out := make([]string, 0, len(args))
+	for _, a := range args {
+		if a == flag {
+			continue
+		}
+		out = append(out, a)
+	}
+	return out
+}
+
+// maybeConfirmDockerProd guards destructive compose actions (currently
+// `down`, which removes containers and networks) with a red huh.Confirm
+// when stage=prod. `--force` in Args skips the prompt. Returns
+// ErrCancelled when the user declines.
+func maybeConfirmDockerProd(opts DockerOpts, action string) error {
+	if !strings.EqualFold(opts.Cfg.Stage, "prod") {
+		return nil
+	}
+	for _, a := range opts.Args {
+		if a == "--force" {
+			return nil
+		}
+	}
+	return confirmProd(opts.Palette, action, opts.Cfg.DBName)
 }
 
 func RunRestart(ctx context.Context, opts DockerOpts) error {

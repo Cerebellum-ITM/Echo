@@ -209,7 +209,8 @@ func helpSections() []helpSection {
 		}},
 		{"Docker", []helpEntry{
 			{"up [service]", "Start containers (compose up -d)"},
-			{"down [service]", "Stop and remove containers"},
+			{"down [service]", "Stop and remove containers (prod confirm)"},
+			{"  --force", "Skip the prod-stage confirmation prompt"},
 			{"stop [service]", "Stop containers without removing them"},
 			{"restart [service]", "Restart services"},
 			{"ps", "Show container status"},
@@ -422,9 +423,10 @@ func (sess *session) runDocker(ctx context.Context, name string, args []string) 
 	lc := &logColorer{}
 	stats := &runStats{}
 	opts := cmd.DockerOpts{
-		Cfg:  sess.cfg,
-		Root: sess.projectDir,
-		Args: args,
+		Cfg:     sess.cfg,
+		Root:    sess.projectDir,
+		Args:    args,
+		Palette: sess.palette,
 		StreamOut: stats.wrap(func(line string) {
 			sess.print(Line{Kind: lc.classify(line), Text: line})
 		}),
