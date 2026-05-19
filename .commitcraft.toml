@@ -11,3 +11,12 @@
 # manual policy.
 [changelog]
   enabled = false
+
+[release_config]
+  version = "v0.3.1"
+  # GH_TOKEN = "ghp_123456789dummytoken"
+  repository = "Cerebellum-ITM/Echo"
+  binary_assets_path = "bin/"
+  auto_build = true
+  build_tool = "make"
+  build_target = "build_release"
