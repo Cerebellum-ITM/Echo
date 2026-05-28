@@ -110,7 +110,7 @@ var dispatchNames = []string{
 	"help", "clear", "copy-last",
 	"init", "reset",
 	"up", "down", "stop", "restart", "ps", "logs",
-	"install", "update", "uninstall", "modules",
+	"install", "update", "uninstall", "test", "modules",
 	"i18n-export", "i18n-update",
 	"db-backup", "db-restore", "db-drop", "db-list",
 	"shell", "bash", "psql",
@@ -153,7 +153,7 @@ func (sess *session) dispatch(ctx context.Context, input string) {
 		sess.runReset()
 	case "up", "down", "stop", "restart", "ps", "logs":
 		sess.runDocker(ctx, cmd, args)
-	case "install", "update", "uninstall", "modules":
+	case "install", "update", "uninstall", "test", "modules":
 		sess.runModules(ctx, cmd, args)
 	case "i18n-export", "i18n-update":
 		sess.runI18n(ctx, cmd, args)
@@ -184,6 +184,8 @@ func helpSections() []helpSection {
 			{"update <mod...>", "Update modules"},
 			{"  --all", "Update every installed module"},
 			{"uninstall <mod...>", "Uninstall modules"},
+			{"test <mod...>", "Run tests for modules (--test-enable, -u)"},
+			{"  --tags <spec>", "Filter via --test-tags (e.g. /sale, :TestX.test_y)"},
 			{"modules", "List modules from configured addons paths"},
 			{"  --config", "Pick which folders are addons paths (form)"},
 		}},
@@ -343,6 +345,8 @@ func (sess *session) runModules(ctx context.Context, name string, args []string)
 		resolved, err = cmd.RunUpdate(ctx, opts)
 	case "uninstall":
 		resolved, err = cmd.RunUninstall(ctx, opts)
+	case "test":
+		resolved, err = cmd.RunTest(ctx, opts)
 	case "modules":
 		err = cmd.RunModules(ctx, opts)
 		sess.readonlyFinalize(name, err)

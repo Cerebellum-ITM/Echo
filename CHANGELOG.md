@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `test <mod...> [--tags <spec>]` command — runs the Odoo test suite
+  for one or more modules via `odoo -u <mod> --test-enable
+  --stop-after-init` (or `--test-tags <spec>` when `--tags` is given,
+  which already implies `--test-enable`). Fourth sibling of
+  `install` / `update` / `uninstall`: same picker fallback when no
+  module is given, same streaming + finalize frame, same auto-copy on
+  failure (logger `echo.test.module.<mod>.error`). CLI flags are
+  identical across Odoo 17, 18 and 19, so no version branching is
+  required. Implements Unit 11.
+
+### Fixed
+- `test` now passes both `--no-http` and `--http-port=8189` so the
+  test process does not clash with the live Odoo server already
+  bound to 8069 inside the same container. `--no-http` alone is the
+  documented fix but was observed to be silently ignored on Odoo 19
+  Enterprise; the explicit `--http-port` redirect guarantees the
+  bind goes to an uncommon high port even on that distribution.
+  Without these flags the run aborted with `Address already in use`
+  before any test could execute. HttpCase suites are unaffected —
+  they spin up their own ephemeral server regardless.
+
 ## [0.4.0] — 2026-05-19
 
 ### Added

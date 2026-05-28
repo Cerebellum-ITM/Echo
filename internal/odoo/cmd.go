@@ -78,6 +78,40 @@ func Uninstall(c Conn, modules []string) Cmd {
 	return append(args, "--uninstall", strings.Join(modules, ","), "--stop-after-init")
 }
 
+// TestHTTPPort is the fallback HTTP port the test process binds to.
+// Chosen high and uncommon so it is unlikely to clash with anything
+// else running in the Odoo container.
+const TestHTTPPort = "8189"
+
+// Test builds the argv to run unit tests for one or more modules.
+// Uses `-u` (update) so an already-installed module picks up code
+// changes before running its suite, then toggles --test-enable. When
+// tags is non-empty we pass --test-tags <spec> instead, which already
+// implies --test-enable per Odoo's CLI behavior — emitting both would
+// be redundant.
+//
+// Defensive HTTP isolation: the test process runs in the same
+// container as the live Odoo server already bound to 8069. We pass
+// both `--no-http` (skip the HTTP bind entirely) AND
+// `--http-port=8189` (redirect the bind elsewhere if the build /
+// distribution silently ignores --no-http — observed on Odoo 19
+// Enterprise where --no-http alone did not prevent the 8069 bind).
+// Either one alone is enough on a compliant Odoo; together they
+// survive both quirks. HttpCase suites spin up their own ephemeral
+// server independently of these flags.
+//
+// Flag set is identical across Odoo 17, 18 and 19.
+func Test(c Conn, modules []string, tags string) Cmd {
+	args := append(Cmd{"odoo"}, c.flags()...)
+	args = append(args, "--no-http", "--http-port="+TestHTTPPort)
+	if tags != "" {
+		args = append(args, "--test-tags", tags)
+	} else {
+		args = append(args, "--test-enable")
+	}
+	return append(args, "-u", strings.Join(modules, ","), "--stop-after-init")
+}
+
 // ExportI18n builds the argv to extract a module's translations to a
 // .po file at outPath inside the container.
 func ExportI18n(c Conn, module, lang, outPath string) Cmd {

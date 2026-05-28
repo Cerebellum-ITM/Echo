@@ -7,7 +7,7 @@ import "strings"
 // determines the order of the match list rendered on a double-Tab.
 var Registry = []string{
 	"init", "reset",
-	"install", "update", "uninstall", "modules",
+	"install", "update", "uninstall", "test", "modules",
 	"i18n-export", "i18n-update",
 	"db-backup", "db-restore", "db-drop", "db-list",
 	"bash", "psql", "shell",

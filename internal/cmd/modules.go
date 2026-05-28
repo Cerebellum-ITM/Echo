@@ -149,6 +149,49 @@ func RunUninstall(ctx context.Context, opts ModulesOpts) ([]string, error) {
 	return modules, runOdoo(ctx, opts, odoo.Uninstall(buildConn(opts), modules))
 }
 
+// RunTest runs the Odoo test suite for the given modules via `-u
+// --test-enable --stop-after-init`. The optional `--tags <spec>` flag
+// is forwarded as `--test-tags <spec>` (which implies --test-enable).
+// Returns the resolved module list so the REPL layer can build the
+// hierarchical logger name (echo.test.module.<mod>).
+func RunTest(ctx context.Context, opts ModulesOpts) ([]string, error) {
+	if err := requireOdooConfig(opts.Cfg); err != nil {
+		return nil, err
+	}
+
+	var (
+		modules []string
+		tags    string
+	)
+	args := opts.Args
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		switch {
+		case a == "--tags":
+			if i+1 >= len(args) {
+				return nil, fmt.Errorf("--tags requires a value")
+			}
+			tags = args[i+1]
+			i++
+		case strings.HasPrefix(a, "--tags="):
+			tags = strings.TrimPrefix(a, "--tags=")
+		case strings.HasPrefix(a, "-"):
+			// forward-compat: ignore unknown flags instead of failing
+		default:
+			modules = append(modules, a)
+		}
+	}
+
+	if len(modules) == 0 {
+		picked, err := pickModulesInteractive(opts, "Modules to test")
+		if err != nil {
+			return nil, err
+		}
+		modules = picked
+	}
+	return modules, runOdoo(ctx, opts, odoo.Test(buildConn(opts), modules, tags))
+}
+
 // pickModulesInteractive opens an fzf-style fuzzy picker with always-on
 // filter for locally available modules.
 func pickModulesInteractive(opts ModulesOpts, title string) ([]string, error) {
