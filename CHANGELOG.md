@@ -18,6 +18,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   identical across Odoo 17, 18 and 19, so no version branching is
   required. Implements Unit 11.
 
+### Changed
+- The Echo binary version shown in the header now includes a
+  build-metadata suffix (`+<shortsha>.dirty`) whenever the working
+  tree had uncommitted or untracked changes at build time. Clean
+  builds keep the bare semver (e.g. `0.4.0`). The version constant
+  in `internal/repl/repl.go` remains the single source of truth — it
+  is bumped together with the `[Unreleased]` → `[X.Y.Z]` promotion
+  in the same release commit — and the Makefile decorates it via
+  `-ldflags` from `git status --porcelain` + `git rev-parse --short
+  HEAD`. Makes it obvious that a locally moved binary is ahead of
+  the last release commit.
+
 ### Fixed
 - `test` now passes both `--no-http` and `--http-port=8189` so the
   test process does not clash with the live Odoo server already

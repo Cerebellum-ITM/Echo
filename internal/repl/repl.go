@@ -15,6 +15,21 @@ import (
 	"github.com/pascualchavez/echo/internal/theme"
 )
 
+// Version is the Echo binary version shown in the header. Bumped in
+// the same commit that promotes the [Unreleased] section of
+// CHANGELOG.md to a new [X.Y.Z] block. VersionMeta is a build-time
+// suffix injected via `-ldflags` from the Makefile — empty for clean
+// builds, `+<shortsha>.dirty` when the working tree had uncommitted or
+// untracked changes at build time. Together they form a semver string
+// (`0.4.0` or `0.4.0+abc1234.dirty`).
+var (
+	Version     = "0.4.0"
+	VersionMeta = ""
+)
+
+// FullVersion returns Version with the build metadata suffix applied.
+func FullVersion() string { return Version + VersionMeta }
+
 // Line is a single piece of styled output.
 type Line struct {
 	Kind string // out, dim, faint, info, ok, warn, err, accent, label
@@ -38,7 +53,7 @@ type session struct {
 // Start renders the header and enters the interactive prompt loop.
 func Start(s theme.Styles, p theme.Palette, project, id string, stage theme.Stage, version, themeName, username, cwd string, cfg *config.Config) {
 	opts := banner.Opts{
-		Version:  "0.4.0",
+		Version:  FullVersion(),
 		Username: username,
 		Theme:    themeName,
 		Stage:    string(stage),
