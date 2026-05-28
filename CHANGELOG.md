@@ -8,6 +8,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Loguru log format support (Unit 19). Lines emitted by `loguru`
+  (`YYYY-MM-DD HH:MM:SS.mmm | LEVEL | module:func:line - msg`) are now
+  classified, colored, and rendered with the same per-segment styling as
+  standard Odoo `logging` lines. `| WARNING |` and `| ERROR |` lines
+  increment the run stats counters and trigger auto-copy on failure
+  exactly like their `logging` counterparts — closes the gap where a
+  loguru ERROR during a test run was invisible to the failure detector.
+  Traceback lines following a loguru error inherit the `err` kind for
+  copy-on-failure grouping. Implements Unit 19.
 - `test <mod...> [--tags <spec>]` command — runs the Odoo test suite
   for one or more modules via `odoo -u <mod> --test-enable
   --stop-after-init` (or `--test-tags <spec>` when `--tags` is given,

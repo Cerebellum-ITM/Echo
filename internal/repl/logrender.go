@@ -72,6 +72,48 @@ func formatOdooLine(line string, s theme.Styles, p theme.Palette) (string, bool)
 		s.Out.Render(msg), true
 }
 
+// loguruLogLine matches and captures the parts of a loguru log line:
+//
+//	YYYY-MM-DD HH:MM:SS.mmm | LEVEL | module:func:line - msg
+var loguruLogLine = regexp.MustCompile(
+	`^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d+) \| (DEBUG|INFO|WARNING|ERROR|CRITICAL) \| ([^:]+):([^:]+):(\d+) - (.*)$`,
+)
+
+// formatLoguruLine renders a loguru log line with per-segment styling.
+// Segment palette mirrors the Odoo renderer where fields exist:
+//
+//	timestamp       → dim
+//	LEVEL chip      → bold + level color (same shortLevel helper)
+//	module path     → loggerColor pastel rotation (stable by name)
+//	:func:line      → faint (low-contrast location suffix)
+//	message         → default fg
+func formatLoguruLine(line string, s theme.Styles, p theme.Palette) (string, bool) {
+	m := loguruLogLine.FindStringSubmatch(line)
+	if m == nil {
+		return "", false
+	}
+	ts, level, module, fn, lineno, msg := m[1], m[2], m[3], m[4], m[5], m[6]
+
+	short, levelStyle := shortLevel(level, p)
+	moduleStyle := lipgloss.NewStyle().Foreground(loggerColor(module))
+
+	return s.Dim.Render(ts) + " " +
+		levelStyle.Render(short) + " " +
+		moduleStyle.Render(module) +
+		s.Faint.Render(":"+fn+":"+lineno+":") + " " +
+		s.Out.Render(msg), true
+}
+
+// renderLogLine tries the standard Odoo format first, then loguru.
+// Falls back to ("", false) if neither matches, letting the caller
+// apply kind-based styling.
+func renderLogLine(line string, s theme.Styles, p theme.Palette) (string, bool) {
+	if out, ok := formatOdooLine(line, s, p); ok {
+		return out, true
+	}
+	return formatLoguruLine(line, s, p)
+}
+
 // shortLevel returns the 4-char display label and its style for an
 // Odoo level token, mirroring charmbracelet/log's level chip.
 func shortLevel(level string, p theme.Palette) (string, lipgloss.Style) {

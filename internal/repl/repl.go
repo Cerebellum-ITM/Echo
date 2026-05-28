@@ -583,7 +583,7 @@ func (sess *session) runReset() {
 func (sess *session) print(l Line) {
 	s := sess.styles
 	var text string
-	if rendered, ok := formatOdooLine(l.Text, s, sess.palette); ok {
+	if rendered, ok := renderLogLine(l.Text, s, sess.palette); ok {
 		text = rendered
 	} else {
 		switch l.Kind {
