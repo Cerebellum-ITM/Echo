@@ -17,15 +17,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   loguru ERROR during a test run was invisible to the failure detector.
   Traceback lines following a loguru error inherit the `err` kind for
   copy-on-failure grouping. Implements Unit 19.
-- `test <mod...> [--tags <spec>]` command — runs the Odoo test suite
-  for one or more modules via `odoo -u <mod> --test-enable
-  --stop-after-init` (or `--test-tags <spec>` when `--tags` is given,
-  which already implies `--test-enable`). Fourth sibling of
-  `install` / `update` / `uninstall`: same picker fallback when no
-  module is given, same streaming + finalize frame, same auto-copy on
-  failure (logger `echo.test.module.<mod>.error`). CLI flags are
-  identical across Odoo 17, 18 and 19, so no version branching is
-  required. Implements Unit 11.
+- `test <mod...> [--update] [--tags <spec>]` command — runs the Odoo
+  test suite for one or more modules. Default mode targets the
+  already-installed modules and filters execution to just their tests
+  via auto-built `--test-tags /<mod1>,/<mod2>` (no `-u`, fastest loop
+  for iterating on Python test code since `--stop-after-init` spawns
+  a fresh process that imports the latest disk state). `--update`
+  opts into the `-u <mods>` reload for when views / model schema
+  changed. `--tags <spec>` overrides the auto filter with a
+  user-supplied spec (e.g. `:TestClass.test_method`). Always emits
+  `--no-http` and `--http-port=8189` so the test process does not
+  clash with the live Odoo bound to 8069 inside the same container
+  (the explicit port is a safety net for Odoo 19 Enterprise where
+  `--no-http` alone was observed to be ignored). Always emits
+  `--log-level=test` (legacy but accepted in 17 / 18 / 19) for
+  focused output. Fourth sibling of `install` / `update` / `uninstall`:
+  same picker fallback when no module is given, same streaming +
+  finalize frame, same auto-copy on failure (logger
+  `echo.test.module.<mod>.error`). CLI flag set is identical across
+  Odoo 17, 18 and 19. Implements Unit 11.
 
 ### Changed
 - The Echo binary version shown in the header now includes a

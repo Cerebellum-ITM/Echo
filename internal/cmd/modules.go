@@ -149,9 +149,16 @@ func RunUninstall(ctx context.Context, opts ModulesOpts) ([]string, error) {
 	return modules, runOdoo(ctx, opts, odoo.Uninstall(buildConn(opts), modules))
 }
 
-// RunTest runs the Odoo test suite for the given modules via `-u
-// --test-enable --stop-after-init`. The optional `--tags <spec>` flag
-// is forwarded as `--test-tags <spec>` (which implies --test-enable).
+// RunTest runs the Odoo test suite for the given modules.
+//
+// Default mode filters via `--test-tags /<mod1>,/<mod2>` against the
+// already-installed modules and does NOT pass `-u`, so Python test
+// code is picked up fast (a fresh process imports the latest disk
+// state under --stop-after-init). The `--update` flag opts into the
+// `-u <mods>` reload for when views/schema changed. The `--tags`
+// flag overrides the auto-generated filter with a user-supplied
+// spec (e.g. `:TestClass.test_method`).
+//
 // Returns the resolved module list so the REPL layer can build the
 // hierarchical logger name (echo.test.module.<mod>).
 func RunTest(ctx context.Context, opts ModulesOpts) ([]string, error) {
@@ -162,6 +169,7 @@ func RunTest(ctx context.Context, opts ModulesOpts) ([]string, error) {
 	var (
 		modules []string
 		tags    string
+		update  bool
 	)
 	args := opts.Args
 	for i := 0; i < len(args); i++ {
@@ -175,6 +183,8 @@ func RunTest(ctx context.Context, opts ModulesOpts) ([]string, error) {
 			i++
 		case strings.HasPrefix(a, "--tags="):
 			tags = strings.TrimPrefix(a, "--tags=")
+		case a == "--update":
+			update = true
 		case strings.HasPrefix(a, "-"):
 			// forward-compat: ignore unknown flags instead of failing
 		default:
@@ -189,7 +199,11 @@ func RunTest(ctx context.Context, opts ModulesOpts) ([]string, error) {
 		}
 		modules = picked
 	}
-	return modules, runOdoo(ctx, opts, odoo.Test(buildConn(opts), modules, tags))
+	return modules, runOdoo(ctx, opts, odoo.Test(buildConn(opts), odoo.TestOpts{
+		Modules: modules,
+		Tags:    tags,
+		Update:  update,
+	}))
 }
 
 // pickModulesInteractive opens an fzf-style fuzzy picker with always-on

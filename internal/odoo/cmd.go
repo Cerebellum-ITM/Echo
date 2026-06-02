@@ -83,12 +83,40 @@ func Uninstall(c Conn, modules []string) Cmd {
 // else running in the Odoo container.
 const TestHTTPPort = "8189"
 
+// TestOpts gathers the variations of how `test` is invoked.
+//
+//   - Modules: target module names (always at least one after picker).
+//   - Tags:    optional --test-tags spec. If empty, Test auto-builds
+//              `--test-tags /<mod1>,/<mod2>` to filter execution to
+//              just those modules' tests.
+//   - Update:  when true, also pass `-u <mods>` so the modules are
+//              reloaded before tests run (needed when views/schema
+//              changed; not needed for Python-only test iteration
+//              because --stop-after-init spawns a fresh process that
+//              imports the latest code from disk).
+type TestOpts struct {
+	Modules []string
+	Tags    string
+	Update  bool
+}
+
 // Test builds the argv to run unit tests for one or more modules.
-// Uses `-u` (update) so an already-installed module picks up code
-// changes before running its suite, then toggles --test-enable. When
-// tags is non-empty we pass --test-tags <spec> instead, which already
-// implies --test-enable per Odoo's CLI behavior — emitting both would
-// be redundant.
+//
+// Default mode runs the tests against the already-installed modules
+// without a reload (no `-u`), which is the fast path for iterating on
+// Python test code. Passing `--update` (Opts.Update = true) adds
+// `-u <mods>` so XML / model changes are picked up before the suite
+// runs.
+//
+// `--test-tags` implies `--test-enable` per the Odoo CLI docs, and we
+// always emit one or the other so the test framework is active. When
+// the caller does not supply Tags, we auto-construct
+// `--test-tags /<mod1>,/<mod2>` so only the target modules' tests run.
+//
+// `--log-level=test` is legacy in Odoo 19 (the dedicated TEST level
+// was replaced by the `openerp.tests` logger at INFO), but the flag
+// is still accepted in 17 / 18 / 19 without warning. Emitting it
+// gives consistent, focused test output across versions.
 //
 // Defensive HTTP isolation: the test process runs in the same
 // container as the live Odoo server already bound to 8069. We pass
@@ -101,15 +129,24 @@ const TestHTTPPort = "8189"
 // server independently of these flags.
 //
 // Flag set is identical across Odoo 17, 18 and 19.
-func Test(c Conn, modules []string, tags string) Cmd {
+func Test(c Conn, opts TestOpts) Cmd {
 	args := append(Cmd{"odoo"}, c.flags()...)
 	args = append(args, "--no-http", "--http-port="+TestHTTPPort)
-	if tags != "" {
-		args = append(args, "--test-tags", tags)
-	} else {
-		args = append(args, "--test-enable")
+
+	tags := opts.Tags
+	if tags == "" {
+		parts := make([]string, len(opts.Modules))
+		for i, m := range opts.Modules {
+			parts[i] = "/" + m
+		}
+		tags = strings.Join(parts, ",")
 	}
-	return append(args, "-u", strings.Join(modules, ","), "--stop-after-init")
+	args = append(args, "--test-tags", tags)
+
+	if opts.Update {
+		args = append(args, "-u", strings.Join(opts.Modules, ","))
+	}
+	return append(args, "--stop-after-init", "--log-level=test")
 }
 
 // ExportI18n builds the argv to extract a module's translations to a
