@@ -421,6 +421,12 @@ func (sess *session) runDocker(ctx context.Context, name string, args []string) 
 		Args:    args,
 		Palette: sess.palette,
 		StreamOut: stats.wrap(func(line string) {
+			if cl, ok := parseComposeProgress(line); ok {
+				emitOdooLog(cl.level, "docker."+cl.resource, cl.state,
+					[]logField{{"name", cl.name}},
+					sess.styles, sess.palette, sess.cfg.DBName)
+				return
+			}
 			sess.print(Line{Kind: lc.classify(line), Text: line})
 		}),
 	}

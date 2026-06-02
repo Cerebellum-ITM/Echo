@@ -8,6 +8,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Docker container log alignment (Unit 20). The per-resource progress
+  lines `docker compose` prints during `up` / `down` / `restart` /
+  `stop` (e.g. `Container dvz_ny_odoo_19-db-1  Restarting`) are now
+  reformatted into Echo's Odoo-style log line — `… INFO <db>
+  docker.container: started name=dvz_ny_odoo_19-db-1` — instead of
+  passing through raw and standing out as the only unaligned output.
+  The logger is `docker.<resource>` (`container` / `network` /
+  `volume` / `image`), the compose state becomes the message verb, and
+  the resource name rides along as a `name=` field. Transitional states
+  (`restarting`, `creating`, …) render faint (DEBUG) so the eye lands
+  on the terminal state; compose `Error` / `Warning` states map to
+  ERROR / WARNING and feed the run-stats counters so a failed container
+  surfaces in the finalize summary. Closes the compose-output gap that
+  Unit 08 explicitly deferred. Implements Unit 20.
 - Loguru log format support (Unit 19). Lines emitted by `loguru`
   (`YYYY-MM-DD HH:MM:SS.mmm | LEVEL | module:func:line - msg`) are now
   classified, colored, and rendered with the same per-segment styling as

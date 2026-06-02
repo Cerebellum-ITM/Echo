@@ -83,6 +83,8 @@ func (s *runStats) wrap(inner func(string)) func(string) {
 			countLevel(m[1])
 		} else if m := loguruLogPrefix.FindStringSubmatch(line); m != nil {
 			countLevel(m[1])
+		} else if cl, ok := parseComposeProgress(line); ok {
+			countLevel(cl.level)
 		}
 		inner(line)
 	}
