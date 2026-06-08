@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- The version shown in the header now always carries the build's commit
+  (`+<shortsha>`), not only when the tree is dirty — clean builds used to
+  drop the suffix, which made two builds between releases
+  indistinguishable. A `.dirty` marker is still appended for uncommitted
+  trees (e.g. `0.5.0+abc1234` vs `0.5.0+abc1234.dirty`). Makefile only.
+
 ## [0.5.0] — 2026-06-08
 
 ### Added

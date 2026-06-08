@@ -18,10 +18,13 @@ import (
 // Version is the Echo binary version shown in the header. Bumped in
 // the same commit that promotes the [Unreleased] section of
 // CHANGELOG.md to a new [X.Y.Z] block. VersionMeta is a build-time
-// suffix injected via `-ldflags` from the Makefile — empty for clean
-// builds, `+<shortsha>.dirty` when the working tree had uncommitted or
-// untracked changes at build time. Together they form a semver string
-// (`0.4.0` or `0.4.0+abc1234.dirty`).
+// suffix injected via `-ldflags` from the Makefile: always the build's
+// commit (`+<shortsha>`), plus a `.dirty` marker when the working tree
+// had uncommitted or untracked changes at build time. Showing the
+// commit even on a clean build is deliberate — it pins exactly which
+// revision a moved binary came from. Together they form a string like
+// `0.5.0+abc1234` or `0.5.0+abc1234.dirty`. A plain `go build` without
+// the Makefile leaves VersionMeta empty (bare semver).
 var (
 	Version     = "0.5.0"
 	VersionMeta = ""

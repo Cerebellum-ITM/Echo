@@ -2,18 +2,14 @@ BINARY_NAME = echo_cli
 CMD_PATH    = .
 VERSION_PKG = github.com/pascualchavez/echo/internal/repl
 
-# Build metadata: empty on a clean tree, `+<shortsha>.dirty` when there
-# are uncommitted or untracked changes. Lets `echo version` make it
-# obvious that the running binary is ahead of the last release commit
-# (version bumps land with their release commit, so any dirty build is
-# by definition between releases).
+# Build metadata: always `+<shortsha>`, plus a `.dirty` marker when the
+# working tree has uncommitted or untracked changes. The commit is shown
+# even on a clean build so you can always tell exactly which revision a
+# moved binary was built from — a bare semver alone can't disambiguate
+# two builds made between releases.
 GIT_SHA   := $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
-GIT_DIRTY := $(shell test -z "$$(git status --porcelain 2>/dev/null)" || echo dirty)
-ifeq ($(GIT_DIRTY),dirty)
-VERSION_META := +$(GIT_SHA).dirty
-else
-VERSION_META :=
-endif
+GIT_DIRTY := $(shell test -z "$$(git status --porcelain 2>/dev/null)" || echo .dirty)
+VERSION_META := +$(GIT_SHA)$(GIT_DIRTY)
 LDFLAGS := -ldflags "-X '$(VERSION_PKG).VersionMeta=$(VERSION_META)'"
 
 .PHONY: build build_release clean
