@@ -1,6 +1,7 @@
 BINARY_NAME = echo_cli
 CMD_PATH    = .
 VERSION_PKG = github.com/pascualchavez/echo/internal/repl
+INSTALL_DIR = $(HOME)/.local/bin
 
 # Build metadata: always `+<shortsha>`, plus a `.dirty` marker when the
 # working tree has uncommitted or untracked changes. The commit is shown
@@ -15,10 +16,10 @@ LDFLAGS := -ldflags "-X '$(VERSION_PKG).VersionMeta=$(VERSION_META)'"
 .PHONY: build build_release clean
 
 build:
-	@echo "Building binary (meta: $(if $(VERSION_META),$(VERSION_META),clean))..."
-	@mkdir -p ./bin
-	@go build -trimpath $(LDFLAGS) -o ./bin/$(BINARY_NAME) $(CMD_PATH)
-	@echo "Binary created at ./bin/$(BINARY_NAME)"
+	@echo "Building and installing binary (meta: $(if $(VERSION_META),$(VERSION_META),clean))..."
+	@mkdir -p $(INSTALL_DIR)
+	@go build -trimpath $(LDFLAGS) -o $(INSTALL_DIR)/$(BINARY_NAME) $(CMD_PATH)
+	@echo "Installed at $(INSTALL_DIR)/$(BINARY_NAME)"
 
 build_release:
 	@echo "Building release binaries (meta: $(if $(VERSION_META),$(VERSION_META),clean))..."
