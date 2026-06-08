@@ -263,6 +263,16 @@ mirrors the scheme: `https` → `secure:true`; `http://localhost:8069` →
 `secure:false`. This single switch makes the same path serve local and
 remote.
 
+### HTTPS preference
+
+Before landing the cookie, `RunConnect` calls `preferHTTPS(ctx, base)`:
+if `web.base.url` is `http://` but the same host answers on `https://`
+(probed with a short-timeout HEAD), the base is upgraded to `https://` so
+the session lands securely (and the cookie is set `secure`). Hosts with
+no working HTTPS — a bad cert, or a local `http://localhost:8069` — keep
+their original scheme. This means a deployment can leave `web.base.url`
+as `http` and connect will still use `https` when it's actually served.
+
 ## `RunConnect` (rewritten)
 
 ```go

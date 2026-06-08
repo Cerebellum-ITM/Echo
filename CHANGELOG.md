@@ -23,9 +23,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   **read from the server's own Echo profile** over SSH (located by hashing
   `remote_path` with the same key function Echo uses locally) — nothing is
   re-declared on the laptop; only `ssh_host` + `remote_path` are needed.
-  Reuses `runSingleFuzzyPicker` and the standard `startLog` / `finalize` /
-  `connectFailureLog` frame. New per-project `[connect]` config section
-  (`ssh_host`, `remote_path`, `chrome_path`). Implements Unit 18.
+  When `web.base.url` is `http://` but the same host also serves HTTPS,
+  connect probes and upgrades to `https://` (secure cookie + navigation),
+  falling back to the original scheme for hosts without HTTPS (e.g. a
+  local `http://localhost:8069`). Reuses `runSingleFuzzyPicker` and the
+  standard `startLog` / `finalize` / `connectFailureLog` frame. New
+  per-project `[connect]` config section (`ssh_host`, `remote_path`,
+  `chrome_path`). Implements Unit 18.
 - `echo connect [<name>] [<login>] [--add] [--all] [--force]` — projectless
   direct mode that runs from anywhere (no local `docker-compose.yml`),
   using **named remote targets** stored in global config. Registering a

@@ -43,6 +43,36 @@ func landSessionCookie(ctx context.Context, cfg *config.Config, baseURL, sid str
 	return c.navigate(dialCtx, baseURL+"/odoo")
 }
 
+// preferHTTPS upgrades an `http://` base URL to `https://` on the same
+// host when that HTTPS endpoint is actually reachable, so connect lands
+// on a secure session whenever the deployment supports it. An `https://`
+// base is returned untouched, and a host with no working HTTPS (e.g. a
+// local `http://localhost:8069`) keeps its original scheme.
+func preferHTTPS(ctx context.Context, baseURL string) string {
+	u, err := url.Parse(baseURL)
+	if err != nil || u.Scheme != "http" {
+		return baseURL
+	}
+	httpsURL := "https://" + u.Host + u.Path
+
+	probeCtx, cancel := context.WithTimeout(ctx, 4*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(probeCtx, http.MethodHead, httpsURL, nil)
+	if err != nil {
+		return baseURL
+	}
+	client := &http.Client{
+		Timeout:       5 * time.Second,
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return baseURL // no HTTPS / bad cert / unreachable → keep http
+	}
+	_ = resp.Body.Close()
+	return httpsURL
+}
+
 // chromeBinary resolves a Chrome/Chromium executable: the config override
 // first, then OS-specific defaults, then a $PATH lookup.
 func chromeBinary(cfg *config.Config) (string, error) {

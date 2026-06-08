@@ -112,6 +112,9 @@ func RunConnect(ctx context.Context, opts ConnectOpts) (ConnectResult, error) {
 		return res, fmt.Errorf(
 			"web.base.url is empty — set it in Odoo (Settings → Technical → Parameters → System Parameters) before using connect")
 	}
+	// Prefer HTTPS on the same host when it's actually served, so the
+	// session lands securely; falls back to web.base.url's own scheme.
+	base = preferHTTPS(ctx, base)
 
 	if err := landSessionCookie(ctx, opts.Cfg, base, minted.Sid); err != nil {
 		return res, fmt.Errorf("open browser: %w", err)
