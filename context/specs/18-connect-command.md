@@ -341,6 +341,61 @@ for dev. The prod-confirmation guard (`--force`) is the only friction.
   it defers to the dev's SSH config/agent.
 - The temp Chrome profile isolates the impersonation session.
 
+## Direct mode (projectless `echo connect`)
+
+The REPL `connect` requires being inside a local project. For a laptop
+that has **no local Odoo checkout** (the Odoo lives only on a server),
+that is a dead end. The direct mode fixes it: `echo connect …` is a CLI
+subcommand dispatched in `main.go` **before** the `project.FindRoot`
+check, so it never needs a local `docker-compose.yml`.
+
+```
+echo connect [<name>] [<login>] [--add] [--all] [--force]
+```
+
+### Named targets in global config
+
+Remote destinations are stored globally (`global.toml`), not per-project:
+
+```toml
+[connect_targets.erp]
+ssh_host    = "erp-prod"        # an alias from ~/.ssh/config
+remote_path = "/opt/odoo/erp"   # the project dir on that server
+db_name     = "erp_prod"        # display only
+```
+
+- `config.ConnectTarget{Name, SSHHost, RemotePath, ChromePath, DBName}` +
+  `config.LoadGlobal`, `SaveConnectTarget`, `sortedConnectTargets`.
+- `RunDirectConnect` (in `internal/cmd/connect_direct.go`) resolves a
+  target by name, by a picker of registered targets, or by registering a
+  new one, then builds a minimal `config.Config` carrying only
+  `ConnectSSHHost`/`ConnectRemotePath`/`ConnectChromePath` and calls the
+  normal `RunConnect` (remote path). Output is one-shot to stdout; no REPL.
+
+### Registering a target (SSH-config driven)
+
+Echo never manages SSH — it only references aliases:
+
+1. `sshConfigHosts()` parses `~/.ssh/config` for concrete `Host` aliases
+   (wildcard/negated patterns skipped) → fuzzy picker.
+2. `remoteEchoProjects(host)` reads the server's **own Echo profiles**
+   over SSH (`for f in ~/.config/echo/projects/*.toml; do … cat … done`)
+   and keeps those that recorded a `project_path`. No docker scanning —
+   only Echo config. If none qualify → error telling the dev to run/update
+   Echo on the server so profiles store their path.
+3. Picker of `<db_name>  <project_path>` → `huh` input for the target
+   name → `SaveConnectTarget`.
+
+### `project_path` persistence + self-migration
+
+To locate a server's projects by something other than the opaque
+`sha256(path)` filename, the project profile now persists `project_path`
+(`projectFile.ProjectPath`). Existing profiles predating the field
+self-heal: on every normal startup `main.go` calls
+`config.BackfillProjectPath(cfg)`, which rewrites a pathless profile once
+with the known path. So a server's projects become discoverable just by
+launching Echo there once — no new migration command, no forced re-init.
+
 ## Dependencies
 
 - **New:** `github.com/coder/websocket` (minimal CDP transport).

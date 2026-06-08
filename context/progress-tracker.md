@@ -10,7 +10,7 @@ Unit 11 (test-command: `test <mod>...` con flags version-specific).
 
 ## In Progress
 
-_(Unit 18 connect-command modo CDP: Echo local → mint local o por SSH → Chrome/CDP aterriza la cookie. Remoto hereda el mapping del perfil de Echo del server (lee `global.toml` + `projects/<sha256(remote_path)>.toml` por SSH); en local solo se configura `ssh_host` + `remote_path`. Build/vet/tests verdes; falta verificación end-to-end contra Odoo real, local y remoto.)_
+_(Unit 18 connect-command modo CDP: Echo local → mint local o por SSH → Chrome/CDP aterriza la cookie. Remoto hereda el mapping del perfil de Echo del server (lee `global.toml` + `projects/<sha256(remote_path)>.toml` por SSH); en local solo se configura `ssh_host` + `remote_path`. **Nuevo modo directo sin proyecto**: `echo connect [<name>]` corre desde cualquier lado usando targets nombrados en global; registrar un target elige un host de `~/.ssh/config` y un proyecto Echo del server (auto-detect leyendo sus perfiles, no dockers). Los perfiles ahora guardan `project_path` y se auto-migran al arrancar. Build/vet/tests verdes; falta verificación end-to-end contra Odoo real, local y remoto.)_
 
 
 

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"sort"
 	"time"
 
 	"github.com/BurntSushi/toml"
@@ -37,6 +38,11 @@ type Config struct {
 	ConnectRemotePath string
 	ConnectChromePath string
 
+	// ConnectTargets are named remote `connect` destinations stored
+	// globally (in global.toml), used by the projectless `echo connect
+	// <name>` direct mode. Sorted by Name.
+	ConnectTargets []ConnectTarget
+
 	// Prompt segmentation (global).
 	PromptSegments []string
 	PromptNameMax  int
@@ -44,10 +50,18 @@ type Config struct {
 }
 
 type globalFile struct {
-	Theme      string      `toml:"theme"`
-	Logo       string      `toml:"logo"`
-	ComposeCmd string      `toml:"compose_cmd"`
-	Prompt     *promptFile `toml:"prompt"`
+	Theme          string                        `toml:"theme"`
+	Logo           string                        `toml:"logo"`
+	ComposeCmd     string                        `toml:"compose_cmd"`
+	Prompt         *promptFile                   `toml:"prompt"`
+	ConnectTargets map[string]*connectTargetFile `toml:"connect_targets"`
+}
+
+type connectTargetFile struct {
+	SSHHost    string `toml:"ssh_host"`
+	RemotePath string `toml:"remote_path"`
+	ChromePath string `toml:"chrome_path"`
+	DBName     string `toml:"db_name"`
 }
 
 type promptFile struct {
@@ -64,6 +78,7 @@ type projectFile struct {
 	Stage          string       `toml:"stage"`
 	AddonsPaths    []string     `toml:"addons_paths"`
 	ComposeProject string       `toml:"compose_project"`
+	ProjectPath    string       `toml:"project_path"`
 	Connect        *connectFile `toml:"connect"`
 }
 
@@ -71,6 +86,44 @@ type connectFile struct {
 	SSHHost    string `toml:"ssh_host"`
 	RemotePath string `toml:"remote_path"`
 	ChromePath string `toml:"chrome_path"`
+}
+
+// ConnectTarget is a named remote destination for the projectless
+// `connect` direct mode. SSHHost is an alias from the user's
+// ~/.ssh/config; RemotePath is the project dir on that server (used to
+// locate its Echo profile and to `cd` before minting).
+type ConnectTarget struct {
+	Name       string
+	SSHHost    string
+	RemotePath string
+	ChromePath string
+	DBName     string // display only
+}
+
+// ProjectInfo is the subset of a project profile needed to present a
+// server's Echo projects in the target-registration picker. Decoded
+// from a single `projects/<key>.toml` read over SSH.
+type ProjectInfo struct {
+	ProjectPath   string
+	DBName        string
+	OdooContainer string
+	Stage         string
+}
+
+// ParseProjectInfo decodes one project profile's TOML bytes. A profile
+// without `project_path` (written by an older Echo) yields an empty
+// ProjectPath and is unusable as a connect target.
+func ParseProjectInfo(projectTOML []byte) ProjectInfo {
+	var p projectFile
+	if len(projectTOML) > 0 {
+		_ = toml.Unmarshal(projectTOML, &p)
+	}
+	return ProjectInfo{
+		ProjectPath:   p.ProjectPath,
+		DBName:        p.DBName,
+		OdooContainer: p.OdooContainer,
+		Stage:         p.Stage,
+	}
 }
 
 // Load reads global + per-project config for the given project path.
@@ -93,6 +146,7 @@ func Load(projectPath string) (*Config, error) {
 	cfg.Theme = g.Theme
 	cfg.Logo = g.Logo
 	cfg.ComposeCmd = g.ComposeCmd
+	cfg.ConnectTargets = sortedConnectTargets(g.ConnectTargets)
 	if g.Prompt != nil {
 		cfg.PromptSegments = g.Prompt.Segments
 		cfg.PromptNameMax = g.Prompt.NameMax
@@ -117,6 +171,9 @@ func Load(projectPath string) (*Config, error) {
 	cfg.Stage = p.Stage
 	cfg.AddonsPaths = p.AddonsPaths
 	cfg.ComposeProject = p.ComposeProject
+	if p.ProjectPath != "" {
+		cfg.ProjectPath = p.ProjectPath
+	}
 	if p.Connect != nil {
 		cfg.ConnectSSHHost = p.Connect.SSHHost
 		cfg.ConnectRemotePath = p.Connect.RemotePath
@@ -177,9 +234,10 @@ func SaveGlobal(cfg *Config) error {
 	}
 
 	g := globalFile{
-		Theme:      cfg.Theme,
-		Logo:       cfg.Logo,
-		ComposeCmd: cfg.ComposeCmd,
+		Theme:          cfg.Theme,
+		Logo:           cfg.Logo,
+		ComposeCmd:     cfg.ComposeCmd,
+		ConnectTargets: connectTargetsToFile(cfg.ConnectTargets),
 	}
 	if len(cfg.PromptSegments) > 0 || cfg.PromptNameMax > 0 || cfg.HealthTTL > 0 {
 		g.Prompt = &promptFile{
@@ -217,6 +275,7 @@ func SaveProject(cfg *Config) error {
 		Stage:          cfg.Stage,
 		AddonsPaths:    cfg.AddonsPaths,
 		ComposeProject: cfg.ComposeProject,
+		ProjectPath:    cfg.ProjectPath,
 	}
 	if cfg.ConnectSSHHost != "" || cfg.ConnectRemotePath != "" ||
 		cfg.ConnectChromePath != "" {
@@ -239,4 +298,112 @@ func writeAtomic(path string, data []byte) error {
 		return err
 	}
 	return os.Rename(tmp, path)
+}
+
+// sortedConnectTargets converts the global file's target map into a
+// name-sorted slice for stable display.
+func sortedConnectTargets(m map[string]*connectTargetFile) []ConnectTarget {
+	if len(m) == 0 {
+		return nil
+	}
+	out := make([]ConnectTarget, 0, len(m))
+	for name, t := range m {
+		if t == nil {
+			continue
+		}
+		out = append(out, ConnectTarget{
+			Name:       name,
+			SSHHost:    t.SSHHost,
+			RemotePath: t.RemotePath,
+			ChromePath: t.ChromePath,
+			DBName:     t.DBName,
+		})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out
+}
+
+func connectTargetsToFile(targets []ConnectTarget) map[string]*connectTargetFile {
+	if len(targets) == 0 {
+		return nil
+	}
+	m := make(map[string]*connectTargetFile, len(targets))
+	for _, t := range targets {
+		m[t.Name] = &connectTargetFile{
+			SSHHost:    t.SSHHost,
+			RemotePath: t.RemotePath,
+			ChromePath: t.ChromePath,
+			DBName:     t.DBName,
+		}
+	}
+	return m
+}
+
+// LoadGlobal reads only the global config (no project), for the
+// projectless `connect` direct mode. Missing file → defaults.
+func LoadGlobal() (*Config, error) {
+	root, err := configRoot()
+	if err != nil {
+		return nil, err
+	}
+	cfg := &Config{}
+	var g globalFile
+	if data, err := os.ReadFile(filepath.Join(root, "global.toml")); err == nil {
+		_ = toml.Unmarshal(data, &g)
+	}
+	cfg.Theme = g.Theme
+	cfg.Logo = g.Logo
+	cfg.ComposeCmd = g.ComposeCmd
+	cfg.ConnectTargets = sortedConnectTargets(g.ConnectTargets)
+	applyDefaults(cfg)
+	return cfg, nil
+}
+
+// SaveConnectTarget inserts or replaces a named connect target in the
+// global config, preserving every other global field.
+func SaveConnectTarget(t ConnectTarget) error {
+	cfg, err := LoadGlobal()
+	if err != nil {
+		return err
+	}
+	replaced := false
+	for i := range cfg.ConnectTargets {
+		if cfg.ConnectTargets[i].Name == t.Name {
+			cfg.ConnectTargets[i] = t
+			replaced = true
+			break
+		}
+	}
+	if !replaced {
+		cfg.ConnectTargets = append(cfg.ConnectTargets, t)
+	}
+	return SaveGlobal(cfg)
+}
+
+// BackfillProjectPath silently migrates a pre-existing project profile
+// that predates the `project_path` field: if a profile file exists but
+// stored no path, it rewrites it with cfg.ProjectPath so the project
+// becomes discoverable as a remote connect target. No-op when the
+// profile is absent or already carries a path. Returns true if it wrote.
+func BackfillProjectPath(cfg *Config) (bool, error) {
+	root, err := configRoot()
+	if err != nil {
+		return false, err
+	}
+	path := filepath.Join(root, "projects", cfg.ProjectKey+".toml")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return false, nil // no profile yet → nothing to migrate
+	}
+	var p projectFile
+	if err := toml.Unmarshal(data, &p); err != nil {
+		return false, nil
+	}
+	if p.ProjectPath != "" {
+		return false, nil // already migrated
+	}
+	if err := SaveProject(cfg); err != nil {
+		return false, err
+	}
+	return true, nil
 }

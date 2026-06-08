@@ -26,6 +26,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Reuses `runSingleFuzzyPicker` and the standard `startLog` / `finalize` /
   `connectFailureLog` frame. New per-project `[connect]` config section
   (`ssh_host`, `remote_path`, `chrome_path`). Implements Unit 18.
+- `echo connect [<name>] [<login>] [--add] [--all] [--force]` — projectless
+  direct mode that runs from anywhere (no local `docker-compose.yml`),
+  using **named remote targets** stored in global config. Registering a
+  target picks an SSH host from the user's `~/.ssh/config` (Echo only
+  references the alias, never edits the file), then lists that server's
+  own Echo projects over SSH and lets you choose one and name it; next
+  time `echo connect <name>` (or a picker of registered targets) connects
+  straight away. Project profiles now persist `project_path`, and existing
+  profiles self-migrate on next launch (`BackfillProjectPath`) so they
+  become discoverable as targets — no manual re-init needed.
 
 ## [0.4.0] — 2026-05-19
 
