@@ -29,12 +29,13 @@ type Config struct {
 
 	// Connect (`connect` command, per project). When ConnectSSHHost is
 	// empty the session is minted locally; otherwise minting runs over
-	// SSH against the remote host. ConnectChromePath overrides Chrome
+	// SSH against the remote host and the container/db mapping is read
+	// from the server's own Echo profile at ConnectRemotePath — nothing
+	// is re-declared locally. ConnectChromePath overrides Chrome
 	// auto-detection for the local cookie injection.
-	ConnectSSHHost       string
-	ConnectRemotePath    string
-	ConnectRemoteCompose string
-	ConnectChromePath    string
+	ConnectSSHHost    string
+	ConnectRemotePath string
+	ConnectChromePath string
 
 	// Prompt segmentation (global).
 	PromptSegments []string
@@ -67,10 +68,9 @@ type projectFile struct {
 }
 
 type connectFile struct {
-	SSHHost       string `toml:"ssh_host"`
-	RemotePath    string `toml:"remote_path"`
-	RemoteCompose string `toml:"remote_compose"`
-	ChromePath    string `toml:"chrome_path"`
+	SSHHost    string `toml:"ssh_host"`
+	RemotePath string `toml:"remote_path"`
+	ChromePath string `toml:"chrome_path"`
 }
 
 // Load reads global + per-project config for the given project path.
@@ -120,12 +120,50 @@ func Load(projectPath string) (*Config, error) {
 	if p.Connect != nil {
 		cfg.ConnectSSHHost = p.Connect.SSHHost
 		cfg.ConnectRemotePath = p.Connect.RemotePath
-		cfg.ConnectRemoteCompose = p.Connect.RemoteCompose
 		cfg.ConnectChromePath = p.Connect.ChromePath
 	}
 
 	applyDefaults(cfg)
 	return cfg, nil
+}
+
+// RemoteProfile is the subset of a server-side Echo configuration the
+// `connect` command needs to mint a session on that host: the global
+// compose command plus the per-project container/db mapping. It is
+// assembled from the remote `global.toml` and `projects/<key>.toml`
+// read over SSH, so nothing has to be re-declared on the local side.
+type RemoteProfile struct {
+	ComposeCmd    string
+	OdooContainer string
+	DBContainer   string
+	DBName        string
+	Stage         string
+}
+
+// ParseRemoteProfile decodes a remote host's `global.toml` and
+// `projects/<key>.toml` bytes into a RemoteProfile. Either input may be
+// empty (missing file); ComposeCmd falls back to the same default as a
+// local config when the global file is absent or omits it.
+func ParseRemoteProfile(globalTOML, projectTOML []byte) RemoteProfile {
+	var g globalFile
+	if len(globalTOML) > 0 {
+		_ = toml.Unmarshal(globalTOML, &g)
+	}
+	var p projectFile
+	if len(projectTOML) > 0 {
+		_ = toml.Unmarshal(projectTOML, &p)
+	}
+	compose := g.ComposeCmd
+	if compose == "" {
+		compose = "docker compose"
+	}
+	return RemoteProfile{
+		ComposeCmd:    compose,
+		OdooContainer: p.OdooContainer,
+		DBContainer:   p.DBContainer,
+		DBName:        p.DBName,
+		Stage:         p.Stage,
+	}
 }
 
 // SaveGlobal writes theme and logo to global.toml atomically.
@@ -181,12 +219,11 @@ func SaveProject(cfg *Config) error {
 		ComposeProject: cfg.ComposeProject,
 	}
 	if cfg.ConnectSSHHost != "" || cfg.ConnectRemotePath != "" ||
-		cfg.ConnectRemoteCompose != "" || cfg.ConnectChromePath != "" {
+		cfg.ConnectChromePath != "" {
 		p.Connect = &connectFile{
-			SSHHost:       cfg.ConnectSSHHost,
-			RemotePath:    cfg.ConnectRemotePath,
-			RemoteCompose: cfg.ConnectRemoteCompose,
-			ChromePath:    cfg.ConnectChromePath,
+			SSHHost:    cfg.ConnectSSHHost,
+			RemotePath: cfg.ConnectRemotePath,
+			ChromePath: cfg.ConnectChromePath,
 		}
 	}
 	var buf bytes.Buffer

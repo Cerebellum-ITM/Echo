@@ -18,12 +18,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   + `Page.navigate` to `<web.base.url>/odoo`) — CDP can set the HttpOnly
   cookie that JavaScript cannot. Minting runs locally via
   `docker compose exec` or, when `[connect].ssh_host` is configured, over
-  SSH against the remote host (DB creds read from the remote `.env`), so
-  the same command works for local and public-domain deployments. Reuses
-  `requireOdooConfig`, `maybeConfirmProd`, `runSingleFuzzyPicker`, and the
-  standard `startLog` / `finalize` / `connectFailureLog` frame. New
-  per-project `[connect]` config section (`ssh_host`, `remote_path`,
-  `remote_compose`, `chrome_path`). Implements Unit 18.
+  SSH against the remote host, so the same command works for local and
+  public-domain deployments. In remote mode the container/db mapping is
+  **read from the server's own Echo profile** over SSH (located by hashing
+  `remote_path` with the same key function Echo uses locally) — nothing is
+  re-declared on the laptop; only `ssh_host` + `remote_path` are needed.
+  Reuses `runSingleFuzzyPicker` and the standard `startLog` / `finalize` /
+  `connectFailureLog` frame. New per-project `[connect]` config section
+  (`ssh_host`, `remote_path`, `chrome_path`). Implements Unit 18.
 
 ## [0.4.0] — 2026-05-19
 

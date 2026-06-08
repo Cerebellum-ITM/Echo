@@ -96,48 +96,79 @@ A new per-project `[connect]` config section decides where the mint runs:
 ```toml
 # <project>.toml
 [connect]
-ssh_host       = "deploy@erp.example.com"  # empty/absent → mint locally
-remote_path    = "/opt/odoo/erp"           # dir on the server holding the compose file
-remote_compose = "docker compose"          # optional; defaults to cfg.ComposeCmd
-chrome_path    = ""                          # optional Chrome/Chromium override
+ssh_host    = "deploy@erp.example.com"  # empty/absent → mint locally
+remote_path = "/opt/odoo/erp"           # the project dir on the server (as Echo knows it there)
+chrome_path = ""                          # optional Chrome/Chromium override
 ```
 
-Resolution rule in `RunConnect`:
+Resolution rule in `RunConnect` (`resolveConnectTarget`):
 
-- `ssh_host == ""` → **local mode**: existing `execPythonInOdoo`,
-  passing `ECHO_DB_*` from the local `.env` (current behavior).
-- `ssh_host != ""` → **remote mode**: run the script over SSH; DB creds
-  come from the **remote** `.env`, read once over SSH.
+- `ssh_host == ""` → **local mode**: container/db mapping from the local
+  config; `execPythonInOdoo`; `ECHO_DB_*` from the local `.env`.
+- `ssh_host != ""` → **remote mode**: the mapping is **read from the
+  server's own Echo profile** over SSH — nothing is re-declared locally.
+  The mint runs over SSH; DB creds come from the **remote** `.env`.
 
 If `ssh_host` is set without `remote_path`: `connect: [connect].remote_path
 is required when ssh_host is set`.
 
+#### Reusing the server's Echo profile (remote mode)
+
+The key idea: the server already runs Echo with the project mapped
+(`odoo_container`, `db_container`, `db_name`, and the global
+`compose_cmd`). Re-typing all that locally is duplication. Instead, Echo
+locates the server's profile by hashing `remote_path` with the **same**
+`projectKey` function it uses locally (`sha256(absPath)`), then reads it
+over SSH:
+
+```
+ssh <host> cat ~/.config/echo/global.toml                    # → compose_cmd
+ssh <host> cat ~/.config/echo/projects/<sha256(remote_path)>.toml   # → containers + db + stage
+```
+
+`config.ParseRemoteProfile(globalTOML, projectTOML)` decodes the pair
+into a `RemoteProfile{ComposeCmd, OdooContainer, DBContainer, DBName,
+Stage}`. `RunConnect` folds that (or the local config) into a single
+`connectTarget` that the rest of the flow uses uniformly. The only local
+input the remote path needs is `remote_path` itself (for the `cd` and the
+profile hash); everything else is inherited. If the profile is missing,
+`connect` fails with a hint to run `init` on the server. The prod-confirm
+guard reads `stage` from the resolved target (the server's, in remote
+mode).
+
 ### Config additions
 
 - `config.Config` gains: `ConnectSSHHost`, `ConnectRemotePath`,
-  `ConnectRemoteCompose`, `ConnectChromePath string`.
+  `ConnectChromePath string`.
 - `projectFile` gains a nested `Connect *connectFile` with toml keys
-  `ssh_host`, `remote_path`, `remote_compose`, `chrome_path`.
+  `ssh_host`, `remote_path`, `chrome_path`.
+- `config` exports `ProjectKey(absPath)` and
+  `ParseRemoteProfile(globalTOML, projectTOML)` + the `RemoteProfile`
+  type for the remote-profile fetch.
 - `Load` maps them through; all optional, all default empty.
 - No new global config; no `init` form changes in v1 (dev edits the
   project TOML by hand — documented in verify). A future unit can add a
-  `connect --config` form.
+  `connect --config` form, and storing `project_path` in the profile
+  would let remote mode drop `remote_path` and list profiles directly.
 
 ## Minting over SSH
 
 New in `internal/cmd/connect.go`:
 
+All exec paths take the resolved `connectTarget` (compose cmd + odoo
+container come from there, not from `cfg` — so a remote run uses the
+server's values):
+
 ```go
 // execPythonRemote runs the embedded script inside the Odoo container on
 // a remote host over SSH:
-//   ssh -o BatchMode=yes <host> 'cd <remote_path> && <compose> exec -T [-e K=V ...] <odoo> python3 -'
-// The script is piped through ssh's stdin. Returns combined stdout.
-func execPythonRemote(ctx context.Context, opts ConnectOpts, script []byte, env map[string]string) ([]byte, error)
+//   ssh -o BatchMode=yes <host> 'cd <remote_path> && <target.composeCmd> exec -T [-e K=V ...] <target.odooContainer> python3 -'
+func execPythonRemote(ctx context.Context, opts ConnectOpts, target connectTarget, script []byte, env map[string]string) ([]byte, error)
 ```
 
-- Remote command string: `cd <remote_path> && <remote_compose> exec -T
-  <-e K=V …> <odoo> python3 -`; each `-e K=V` shell-quoted;
-  `remote_compose` defaults to `cfg.ComposeCmd`.
+- Remote command string: `cd <remote_path> && <target.composeCmd> exec
+  -T <-e K=V …> <target.odooContainer> python3 -`; `remote_path` and the
+  container are shell-quoted.
 - `ssh -o BatchMode=yes <host> <remote-cmd>` with `cmd.Stdin =
   bytes.NewReader(script)`. BatchMode → fail fast, never hang on a
   password prompt.
@@ -146,22 +177,22 @@ func execPythonRemote(ctx context.Context, opts ConnectOpts, script []byte, env 
 Dispatcher used by `mintConnectSession` / `listConnectUsers`:
 
 ```go
-func execConnectScript(ctx, opts, script, env) ([]byte, error) {
-    if opts.Cfg.ConnectSSHHost != "" {
-        return execPythonRemote(ctx, opts, script, env)
+func execConnectScript(ctx, opts, target, script, env) ([]byte, error) {
+    if target.remote {
+        return execPythonRemote(ctx, opts, target, script, env)
     }
-    return execPythonInOdoo(ctx, opts, script, env)
+    return execPythonInOdoo(ctx, opts, target, script, env)
 }
 ```
 
 ### Remote DB env
 
-Add `connectDBEnvRemote(ctx, opts)`: `ssh -o BatchMode=yes <host> cat
-<remote_path>/.env`, parse with the existing `env` parser, build the same
-`ECHO_DB_*` map. `ECHO_DB_HOST` still comes from `cfg.DBContainer` (the
-compose service name resolves on the remote docker network). If the
-remote `.env` is unreadable, pass **no** `ECHO_DB_*` and let the
-container's `ODOO_RC` resolve the DB (emit a `dim` note).
+`connectDBEnvFor(ctx, opts, target)` reads the remote `.env` over SSH
+(`ssh -o BatchMode=yes <host> cat <remote_path>/.env`), parses it with the
+existing `env` parser, and builds the `ECHO_DB_*` map. `ECHO_DB_HOST` is
+`target.dbContainer` (from the server's profile; resolves on the remote
+docker network). If the remote `.env` is unreadable, it passes **no**
+`ECHO_DB_*` and lets the container's `ODOO_RC` resolve the DB.
 
 ## Landing the cookie via CDP
 
@@ -236,15 +267,16 @@ remote.
 
 ```go
 func RunConnect(ctx context.Context, opts ConnectOpts) (ConnectResult, error) {
-    // 1. requireOdooConfig + maybeConfirmProd("connect")
-    // 2. login, includeInactive := parseConnectArgs(args)   (drop tunnel)
-    // 3. users := listConnectUsers(...)        (execConnectScript)
-    // 4. target := pickConnectUser(...)
-    // 5. minted := mintConnectSession(...)     (execConnectScript)
+    // 1. target := resolveConnectTarget(...)   (local cfg OR remote profile via SSH)
+    //    validate target.odooContainer/dbName; maybeConfirmConnectProd(target.stage)
+    // 2. login, includeInactive := parseConnectArgs(args)
+    // 3. users := listConnectUsers(..., target)        (execConnectScript)
+    // 4. picked := pickConnectUser(...)
+    // 5. minted := mintConnectSession(..., target)     (execConnectScript)
     // 6. base := trim(minted.BaseURL); if "" → error (no fallback)
     // 7. port := launchChrome(ctx, opts.Cfg)
     // 8. c := dialCDP(ctx, port); c.setSessionCookie(base, sid); c.navigate(base+"/odoo"); c.close()
-    // 9. return ConnectResult{Login, UID, BaseURL: base, Remote: ssh != ""}
+    // 9. return ConnectResult{Login, UID, BaseURL: base, Remote: target.remote}
 }
 ```
 
@@ -317,9 +349,12 @@ for dev. The prod-confirmation guard (`--force`) is the only friction.
 
 ## Implementation order
 
-1. Config: `[connect]` fields + `Load` wiring + config test.
-2. Remote mint: `execPythonRemote`, `execConnectScript`,
-   `connectDBEnvRemote`. Keep the local path intact.
+1. Config: `[connect]` fields (`ssh_host`, `remote_path`, `chrome_path`)
+   + `Load` wiring + exported `ProjectKey` + `ParseRemoteProfile`/`RemoteProfile`
+   + config tests.
+2. Remote target + mint: `resolveConnectTarget`, `fetchRemoteProfile`,
+   `execPythonRemote`, `execConnectScript`, `connectDBEnvFor`. Keep the
+   local path intact.
 3. CDP: `connect_cdp.go` (chrome discovery, launch, DevToolsActivePort,
    minimal CDP client). Add `coder/websocket` to `go.mod`.
 4. Rewrite `RunConnect`; shrink `ConnectResult`; drop `--tunnel`,
