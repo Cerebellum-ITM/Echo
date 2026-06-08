@@ -7,13 +7,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Changed
-- The version shown in the header now always carries the build's commit
-  (`+<shortsha>`), not only when the tree is dirty — clean builds used to
-  drop the suffix, which made two builds between releases
-  indistinguishable. A `.dirty` marker is still appended for uncommitted
-  trees (e.g. `0.5.0+abc1234` vs `0.5.0+abc1234.dirty`). Makefile only.
-
 ## [0.5.0] — 2026-06-08
 
 ### Added
@@ -93,16 +86,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   become discoverable as targets — no manual re-init needed.
 
 ### Changed
-- The Echo binary version shown in the header now includes a
-  build-metadata suffix (`+<shortsha>.dirty`) whenever the working
-  tree had uncommitted or untracked changes at build time. Clean
-  builds keep the bare semver (e.g. `0.4.0`). The version constant
-  in `internal/repl/repl.go` remains the single source of truth — it
-  is bumped together with the `[Unreleased]` → `[X.Y.Z]` promotion
-  in the same release commit — and the Makefile decorates it via
-  `-ldflags` from `git status --porcelain` + `git rev-parse --short
-  HEAD`. Makes it obvious that a locally moved binary is ahead of
-  the last release commit.
+- The Echo binary version shown in the header now carries a build
+  metadata suffix: always the build's commit (`+<shortsha>`), plus a
+  `.dirty` marker when the working tree had uncommitted or untracked
+  changes at build time (e.g. `0.5.0+abc1234` or `0.5.0+abc1234.dirty`).
+  Showing the commit even on a clean build pins exactly which revision
+  a moved binary came from. The version constant in
+  `internal/repl/repl.go` remains the single source of truth, bumped
+  together with the `[Unreleased]` → `[X.Y.Z]` promotion in the same
+  release commit; the Makefile decorates it via `-ldflags` from
+  `git rev-parse --short HEAD` + `git status --porcelain`.
+- `make build` now installs the binary straight to `~/.local/bin/echo_cli`
+  (commonly on `PATH`) instead of leaving it under `./bin`. `make
+  build_release` still emits the multi-platform binaries under `./bin`.
 
 ### Fixed
 - `test` now passes both `--no-http` and `--http-port=8189` so the
