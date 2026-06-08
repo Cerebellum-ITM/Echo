@@ -113,7 +113,7 @@ var dispatchNames = []string{
 	"install", "update", "uninstall", "modules",
 	"i18n-export", "i18n-update",
 	"db-backup", "db-restore", "db-drop", "db-list",
-	"shell", "bash", "psql",
+	"shell", "bash", "psql", "connect",
 }
 
 // isMetaCommand returns true for commands whose output should not be
@@ -161,6 +161,8 @@ func (sess *session) dispatch(ctx context.Context, input string) {
 		sess.runDB(ctx, cmd, args)
 	case "shell", "bash", "psql":
 		sess.runShell(ctx, cmd, args)
+	case "connect":
+		sess.runConnect(ctx, args)
 	default:
 		sess.print(Line{Kind: "warn", Text: "unknown command: " + cmd + " — try help"})
 	}
@@ -206,6 +208,8 @@ func helpSections() []helpSection {
 			{"bash", "Bash session inside the Odoo container"},
 			{"psql", "PostgreSQL client against the configured DB"},
 			{"shell", "Odoo Python shell against the configured DB"},
+			{"connect [<login>]", "Impersonate a user (mint session, open Chrome logged in)"},
+			{"  --all", "Include inactive users in the picker"},
 			{"  --force", "Skip the prod-stage confirmation prompt"},
 		}},
 		{"Docker", []helpEntry{
@@ -537,6 +541,34 @@ func (sess *session) runShell(ctx context.Context, name string, args []string) {
 	default:
 		sess.shellExitLog(name)
 	}
+}
+
+func (sess *session) runConnect(ctx context.Context, args []string) {
+	sess.startLog("connect", args)
+
+	res, err := cmd.RunConnect(ctx, cmd.ConnectOpts{
+		Cfg:     sess.cfg,
+		Root:    sess.projectDir,
+		Args:    args,
+		Palette: sess.palette,
+	})
+	switch {
+	case errors.Is(err, cmd.ErrCancelled), errors.Is(err, huh.ErrUserAborted):
+		sess.finalize("connect", 0, 0, err)
+		return
+	case err != nil:
+		sess.connectFailureLog(err)
+		return
+	}
+
+	where := "local"
+	if res.Remote {
+		where = "remote (ssh)"
+	}
+	sess.print(Line{Kind: "info", Text: fmt.Sprintf("Session minted for %q (uid=%d) — %s", res.Login, res.UID, where)})
+	sess.print(Line{Kind: "info", Text: "Opening Chrome at " + res.BaseURL + "/odoo (logged in)"})
+	sess.print(Line{Kind: "dim", Text: "MFA bypassed — dev only"})
+	sess.finalize("connect", 0, 0, nil)
 }
 
 func (sess *session) clearAndRenderHeader() {

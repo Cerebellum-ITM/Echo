@@ -10,7 +10,7 @@ var Registry = []string{
 	"install", "update", "uninstall", "modules",
 	"i18n-export", "i18n-update",
 	"db-backup", "db-restore", "db-drop", "db-list",
-	"bash", "psql", "shell",
+	"bash", "psql", "shell", "connect",
 	"up", "down", "stop", "restart", "ps", "logs",
 	"copy-last",
 	"clear", "help", "exit", "quit",

@@ -27,6 +27,15 @@ type Config struct {
 	// derives the name from COMPOSE_PROJECT_NAME or the project dir basename.
 	ComposeProject string
 
+	// Connect (`connect` command, per project). When ConnectSSHHost is
+	// empty the session is minted locally; otherwise minting runs over
+	// SSH against the remote host. ConnectChromePath overrides Chrome
+	// auto-detection for the local cookie injection.
+	ConnectSSHHost       string
+	ConnectRemotePath    string
+	ConnectRemoteCompose string
+	ConnectChromePath    string
+
 	// Prompt segmentation (global).
 	PromptSegments []string
 	PromptNameMax  int
@@ -47,13 +56,21 @@ type promptFile struct {
 }
 
 type projectFile struct {
-	OdooVersion    string   `toml:"odoo_version"`
-	OdooContainer  string   `toml:"odoo_container"`
-	DBContainer    string   `toml:"db_container"`
-	DBName         string   `toml:"db_name"`
-	Stage          string   `toml:"stage"`
-	AddonsPaths    []string `toml:"addons_paths"`
-	ComposeProject string   `toml:"compose_project"`
+	OdooVersion    string       `toml:"odoo_version"`
+	OdooContainer  string       `toml:"odoo_container"`
+	DBContainer    string       `toml:"db_container"`
+	DBName         string       `toml:"db_name"`
+	Stage          string       `toml:"stage"`
+	AddonsPaths    []string     `toml:"addons_paths"`
+	ComposeProject string       `toml:"compose_project"`
+	Connect        *connectFile `toml:"connect"`
+}
+
+type connectFile struct {
+	SSHHost       string `toml:"ssh_host"`
+	RemotePath    string `toml:"remote_path"`
+	RemoteCompose string `toml:"remote_compose"`
+	ChromePath    string `toml:"chrome_path"`
 }
 
 // Load reads global + per-project config for the given project path.
@@ -100,6 +117,12 @@ func Load(projectPath string) (*Config, error) {
 	cfg.Stage = p.Stage
 	cfg.AddonsPaths = p.AddonsPaths
 	cfg.ComposeProject = p.ComposeProject
+	if p.Connect != nil {
+		cfg.ConnectSSHHost = p.Connect.SSHHost
+		cfg.ConnectRemotePath = p.Connect.RemotePath
+		cfg.ConnectRemoteCompose = p.Connect.RemoteCompose
+		cfg.ConnectChromePath = p.Connect.ChromePath
+	}
 
 	applyDefaults(cfg)
 	return cfg, nil
@@ -156,6 +179,15 @@ func SaveProject(cfg *Config) error {
 		Stage:          cfg.Stage,
 		AddonsPaths:    cfg.AddonsPaths,
 		ComposeProject: cfg.ComposeProject,
+	}
+	if cfg.ConnectSSHHost != "" || cfg.ConnectRemotePath != "" ||
+		cfg.ConnectRemoteCompose != "" || cfg.ConnectChromePath != "" {
+		p.Connect = &connectFile{
+			SSHHost:       cfg.ConnectSSHHost,
+			RemotePath:    cfg.ConnectRemotePath,
+			RemoteCompose: cfg.ConnectRemoteCompose,
+			ChromePath:    cfg.ConnectChromePath,
+		}
 	}
 	var buf bytes.Buffer
 	if err := toml.NewEncoder(&buf).Encode(p); err != nil {

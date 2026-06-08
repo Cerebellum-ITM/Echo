@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `connect [<login>] [--all] [--force]` command — opens Chrome already
+  logged in as any user of the configured DB, without their password,
+  without opening any port, and without installing anything into Odoo.
+  Mints a valid web session by running two embedded Python scripts inside
+  the Odoo container (list users + mint via `root.session_store.new()` and
+  `_compute_session_token`), then lands the `session_id` cookie into a
+  throwaway-profile Chrome through the DevTools Protocol (`Network.setCookie`
+  + `Page.navigate` to `<web.base.url>/odoo`) — CDP can set the HttpOnly
+  cookie that JavaScript cannot. Minting runs locally via
+  `docker compose exec` or, when `[connect].ssh_host` is configured, over
+  SSH against the remote host (DB creds read from the remote `.env`), so
+  the same command works for local and public-domain deployments. Reuses
+  `requireOdooConfig`, `maybeConfirmProd`, `runSingleFuzzyPicker`, and the
+  standard `startLog` / `finalize` / `connectFailureLog` frame. New
+  per-project `[connect]` config section (`ssh_host`, `remote_path`,
+  `remote_compose`, `chrome_path`). Implements Unit 18.
+
 ## [0.4.0] — 2026-05-19
 
 ### Added

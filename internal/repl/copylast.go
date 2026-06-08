@@ -108,6 +108,37 @@ func (sess *session) copyFailureLog(name string, resolved []string, runErr error
 	}
 }
 
+// connectFailureLog auto-copies failures from `connect`. The error
+// returned by cmd.RunConnect (wrapping the Python script's stderr) is
+// the only useful payload — the REPL stream above it only contains the
+// start INFO and the picker view, neither of which helps debug. So we
+// copy `<header>\nerr: <message>` and let the user paste it as-is.
+func (sess *session) connectFailureLog(runErr error) {
+	sess.print(Line{Kind: "out", Text: ""})
+
+	logger := failureLogger("connect", nil)
+	header := plainOdooLog("ERROR", logger, "connect failed", sess.cfg.DBName)
+	payload := header + "\nerr: " + runErr.Error() + "\n"
+
+	copyErr := clipboard.WriteAll(payload)
+	copied := copyErr == nil
+
+	fields := []logField{
+		{"err", runErr.Error()},
+		{"copied", strconv.FormatBool(copied)},
+	}
+	emitOdooLog("ERROR", logger, "connect failed",
+		fields, sess.styles, sess.palette, sess.cfg.DBName)
+
+	if !copied && copyErr != nil {
+		if errors.Is(copyErr, clipboard.ErrUnavailable) {
+			sess.print(Line{Kind: "info", Text: copyErr.Error()})
+		} else {
+			sess.print(Line{Kind: "warn", Text: "copy failed: " + copyErr.Error()})
+		}
+	}
+}
+
 // shellFailureLog auto-copies failures from interactive shell-style
 // commands (bash, psql, shell). They bypass sess.print and write
 // directly to the TTY, so we can't read from lastOutputBuffer; the

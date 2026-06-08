@@ -46,7 +46,7 @@ func ExecInteractive(ctx context.Context, composeCmd, dir, container string, arg
 		}
 	}()
 
-	full := append(splitCompose(composeCmd), "exec", container)
+	full := append(SplitCompose(composeCmd), "exec", container)
 	full = append(full, argv...)
 	cmd := exec.CommandContext(ctx, full[0], full[1:]...)
 	cmd.Dir = dir
