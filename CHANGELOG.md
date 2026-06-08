@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] — 2026-06-08
+
 ### Added
 - Docker container log alignment (Unit 20). The per-resource progress
   lines `docker compose` prints during `up` / `down` / `restart` /
@@ -50,6 +52,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   finalize frame, same auto-copy on failure (logger
   `echo.test.module.<mod>.error`). CLI flag set is identical across
   Odoo 17, 18 and 19. Implements Unit 11.
+- `connect [<login>] [--all] [--force]` command — opens Chrome already
+  logged in as any user of the configured DB, without their password,
+  without opening any port, and without installing anything into Odoo.
+  Mints a valid web session by running two embedded Python scripts inside
+  the Odoo container (list users + mint via `root.session_store.new()` and
+  `_compute_session_token`), then lands the `session_id` cookie into a
+  throwaway-profile Chrome through the DevTools Protocol (`Network.setCookie`
+  + `Page.navigate` to `<web.base.url>/odoo`) — CDP can set the HttpOnly
+  cookie that JavaScript cannot. Minting runs locally via
+  `docker compose exec` or, when `[connect].ssh_host` is configured, over
+  SSH against the remote host, so the same command works for local and
+  public-domain deployments. In remote mode the container/db mapping is
+  **read from the server's own Echo profile** over SSH (located by hashing
+  `remote_path` with the same key function Echo uses locally) — nothing is
+  re-declared on the laptop; only `ssh_host` + `remote_path` are needed.
+  When `web.base.url` is `http://` but the same host also serves HTTPS,
+  connect probes and upgrades to `https://` (secure cookie + navigation),
+  falling back to the original scheme for hosts without HTTPS (e.g. a
+  local `http://localhost:8069`). Reuses `runSingleFuzzyPicker` and the
+  standard `startLog` / `finalize` / `connectFailureLog` frame. New
+  per-project `[connect]` config section (`ssh_host`, `remote_path`,
+  `chrome_path`). Implements Unit 18.
+- `echo connect [<name>] [<login>] [--add] [--all] [--force]` — projectless
+  direct mode that runs from anywhere (no local `docker-compose.yml`),
+  using **named remote targets** stored in global config. Registering a
+  target picks an SSH host from the user's `~/.ssh/config` (Echo only
+  references the alias, never edits the file), then lists that server's
+  own Echo projects over SSH and lets you choose one and name it; next
+  time `echo connect <name>` (or a picker of registered targets) connects
+  straight away. Project profiles now persist `project_path`, and existing
+  profiles self-migrate on next launch (`BackfillProjectPath`) so they
+  become discoverable as targets — no manual re-init needed.
 
 ### Changed
 - The Echo binary version shown in the header now includes a

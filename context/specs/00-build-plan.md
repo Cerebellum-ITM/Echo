@@ -30,6 +30,7 @@ Decomposition of Echo into ordered, scoped, verifiable units.
 | 15 | banner-ascii                | All 4 ASCII logos with per-segment token coloring                              | 01         |
 | 16 | copy-output                 | `copy-last` + auto-copy on module failure (charm/log line); OSC 52 priority when remote | 04, 05     |
 | 17 | cli-prompt-odoo-info        | Odoo-aware REPL prompt: compose project name + version/db bracket + colored stage chip + live container health (configurable via `[prompt]` in global.toml, TTL-cached) | 02, 04     |
+| 18 | connect-command             | `connect [<login>] [--all] [--force]` + projectless `echo connect <name>` — mint Odoo web session for any user without password (Python in container, local or SSH) and land the cookie in local Chrome via CDP | 04, 06, 10 |
 | 20 | docker-container-log-style   | Reformat `docker compose` lifecycle progress lines (`Container … Restarting`) into Odoo-style `docker.<resource>` log lines with `name=` field; closes the compose-output gap deferred in Unit 08 | 04, 08     |
 
 ## Notes

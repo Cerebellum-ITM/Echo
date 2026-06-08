@@ -84,6 +84,77 @@ func TestSaveAndReload(t *testing.T) {
 	}
 }
 
+func TestConnectSectionRoundTrip(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
+
+	cfg, _ := Load("/test/project")
+	cfg.ConnectSSHHost = "deploy@erp.example.com"
+	cfg.ConnectRemotePath = "/opt/odoo/erp"
+	cfg.ConnectChromePath = "/usr/bin/chromium"
+	if err := SaveProject(cfg); err != nil {
+		t.Fatal(err)
+	}
+
+	reloaded, err := Load("/test/project")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reloaded.ConnectSSHHost != "deploy@erp.example.com" {
+		t.Errorf("ConnectSSHHost = %q", reloaded.ConnectSSHHost)
+	}
+	if reloaded.ConnectRemotePath != "/opt/odoo/erp" {
+		t.Errorf("ConnectRemotePath = %q", reloaded.ConnectRemotePath)
+	}
+	if reloaded.ConnectChromePath != "/usr/bin/chromium" {
+		t.Errorf("ConnectChromePath = %q", reloaded.ConnectChromePath)
+	}
+}
+
+func TestParseRemoteProfile(t *testing.T) {
+	global := []byte("compose_cmd = \"docker-compose\"\n")
+	project := []byte("odoo_container = \"web\"\ndb_container = \"postgres\"\ndb_name = \"erp_prod\"\nstage = \"prod\"\n")
+	prof := ParseRemoteProfile(global, project)
+	if prof.ComposeCmd != "docker-compose" {
+		t.Errorf("ComposeCmd = %q", prof.ComposeCmd)
+	}
+	if prof.OdooContainer != "web" {
+		t.Errorf("OdooContainer = %q", prof.OdooContainer)
+	}
+	if prof.DBContainer != "postgres" {
+		t.Errorf("DBContainer = %q", prof.DBContainer)
+	}
+	if prof.DBName != "erp_prod" {
+		t.Errorf("DBName = %q", prof.DBName)
+	}
+	if prof.Stage != "prod" {
+		t.Errorf("Stage = %q", prof.Stage)
+	}
+	// Missing global → compose falls back to a sane default.
+	if got := ParseRemoteProfile(nil, project).ComposeCmd; got != "docker compose" {
+		t.Errorf("fallback ComposeCmd = %q", got)
+	}
+}
+
+func TestConnectSectionAbsentByDefault(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
+
+	cfg, _ := Load("/test/project")
+	cfg.Stage = "dev"
+	if err := SaveProject(cfg); err != nil {
+		t.Fatal(err)
+	}
+	reloaded, err := Load("/test/project")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reloaded.ConnectSSHHost != "" || reloaded.ConnectRemotePath != "" {
+		t.Errorf("expected empty connect config, got ssh=%q path=%q",
+			reloaded.ConnectSSHHost, reloaded.ConnectRemotePath)
+	}
+}
+
 func TestNoFilesInProject(t *testing.T) {
 	projectPath := "/test/my/odoo/project"
 	tmp := t.TempDir()

@@ -15,7 +15,7 @@ func Dump(ctx context.Context, composeCmd, dir, dbContainer, user, db, outPath s
 	if user == "" {
 		user = "postgres"
 	}
-	args := append(splitCompose(composeCmd),
+	args := append(SplitCompose(composeCmd),
 		"exec", "-T", dbContainer,
 		"pg_dump", "-U", user, "-Fc", db,
 	)
@@ -44,7 +44,7 @@ func Restore(ctx context.Context, composeCmd, dir, dbContainer, user, db, inPath
 	if user == "" {
 		user = "postgres"
 	}
-	args := append(splitCompose(composeCmd),
+	args := append(SplitCompose(composeCmd),
 		"exec", "-T", dbContainer,
 		"pg_restore", "-U", user, "-d", db, "--no-owner", "--role="+user,
 	)

@@ -21,7 +21,7 @@ func ListDatabases(ctx context.Context, composeCmd, dir, dbContainer, user strin
 	if user == "" {
 		user = "postgres"
 	}
-	args := append(splitCompose(composeCmd),
+	args := append(SplitCompose(composeCmd),
 		"exec", "-T", dbContainer,
 		"psql", "-U", user, "-lqt",
 	)
@@ -67,7 +67,7 @@ func ListDatabasesDetailed(ctx context.Context, composeCmd, dir, dbContainer, us
           FROM pg_database d
           WHERE NOT d.datistemplate AND d.datname <> 'postgres'
           ORDER BY d.datname;`
-	args := append(splitCompose(composeCmd),
+	args := append(SplitCompose(composeCmd),
 		"exec", "-T", dbContainer,
 		"psql", "-U", user, "-d", "postgres", "-At", "-F", "|", "-c", query,
 	)
@@ -89,7 +89,7 @@ func listDatabasesSizeOnly(ctx context.Context, composeCmd, dir, dbContainer, us
           FROM pg_database
           WHERE NOT datistemplate AND datname <> 'postgres'
           ORDER BY datname;`
-	args := append(splitCompose(composeCmd),
+	args := append(SplitCompose(composeCmd),
 		"exec", "-T", dbContainer,
 		"psql", "-U", user, "-d", "postgres", "-At", "-F", "|", "-c", query,
 	)
@@ -184,7 +184,7 @@ func DropDatabase(ctx context.Context, composeCmd, dir, dbContainer, user, db st
 }
 
 func psqlScalar(ctx context.Context, composeCmd, dir, dbContainer, user, db, query string) (string, error) {
-	args := append(splitCompose(composeCmd),
+	args := append(SplitCompose(composeCmd),
 		"exec", "-T", dbContainer,
 		"psql", "-U", user, "-d", db, "-At", "-c", query,
 	)
@@ -195,7 +195,7 @@ func psqlScalar(ctx context.Context, composeCmd, dir, dbContainer, user, db, que
 }
 
 func psqlExec(ctx context.Context, composeCmd, dir, dbContainer, user, db, stmt string) error {
-	args := append(splitCompose(composeCmd),
+	args := append(SplitCompose(composeCmd),
 		"exec", "-T", dbContainer,
 		"psql", "-U", user, "-d", db, "-v", "ON_ERROR_STOP=1", "-c", stmt,
 	)

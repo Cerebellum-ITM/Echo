@@ -15,7 +15,7 @@ var ErrServiceNotRunning = errors.New("compose service is not running")
 // ContainerID resolves a compose service to its docker container ID via
 // `<compose> ps -q <service>`. Returns the trimmed first non-empty line.
 func ContainerID(ctx context.Context, composeCmd, dir, service string) (string, error) {
-	args := append(splitCompose(composeCmd), "ps", "-q", service)
+	args := append(SplitCompose(composeCmd), "ps", "-q", service)
 	cmd := exec.CommandContext(ctx, args[0], args[1:]...)
 	cmd.Dir = dir
 	out, err := cmd.Output()

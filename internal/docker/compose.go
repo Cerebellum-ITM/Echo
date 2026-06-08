@@ -36,7 +36,7 @@ func (c Container) Label() string { return c.Name + " - " + c.Service }
 // ListContainers returns running services with both their compose service
 // name and the actual container name.
 func ListContainers(ctx context.Context, composeCmd, dir string) ([]Container, error) {
-	args := append(splitCompose(composeCmd),
+	args := append(SplitCompose(composeCmd),
 		"ps", "--status=running",
 		"--format", "{{.Service}}\t{{.Name}}",
 	)
@@ -122,7 +122,7 @@ func LogsFollow(ctx context.Context, composeCmd, dir, tail string, services []st
 		}
 	}()
 
-	full := append(splitCompose(composeCmd), "logs", "-f")
+	full := append(SplitCompose(composeCmd), "logs", "-f")
 	if tail != "" {
 		full = append(full, "--tail", tail)
 	}
@@ -138,7 +138,7 @@ func LogsFollow(ctx context.Context, composeCmd, dir, tail string, services []st
 // runStreamed is the shared pattern: pipe combined stdout/stderr, scan
 // line-by-line, deliver each line to onLine.
 func runStreamed(ctx context.Context, composeCmd, dir string, onLine func(string), subcommand ...string) error {
-	full := append(splitCompose(composeCmd), subcommand...)
+	full := append(SplitCompose(composeCmd), subcommand...)
 	cmd := exec.CommandContext(ctx, full[0], full[1:]...)
 	cmd.Dir = dir
 
@@ -164,6 +164,6 @@ func streamLines(r io.Reader, onLine func(string)) {
 	}
 }
 
-func splitCompose(cmd string) []string {
+func SplitCompose(cmd string) []string {
 	return strings.Fields(cmd)
 }
