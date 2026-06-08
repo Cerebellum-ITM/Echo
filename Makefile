@@ -28,6 +28,9 @@ build_release:
 	@GOOS=linux GOARCH=amd64 go build -trimpath $(LDFLAGS) -o ./bin/$(BINARY_NAME)_linux_amd64 $(CMD_PATH)
 	@GOOS=linux GOARCH=arm64 go build -trimpath $(LDFLAGS) -o ./bin/$(BINARY_NAME)_linux_arm64 $(CMD_PATH)
 	@echo "Release binaries created in ./bin/"
+## ship: [interactive]
+ship:
+	teleport ship
 
 clean:
 	@rm -rf ./bin
