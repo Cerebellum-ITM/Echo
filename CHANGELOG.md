@@ -36,6 +36,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   hit / validation / reuse / re-mint, the mint, and opening Chrome each
   emit a structured `echo.connect[.cache|.mint]` line — matching the rest
   of the CLI's log stream — closed by the usual `connect completed`.
+- Module discovery now falls back to the instance's `odoo.conf` (Unit 26).
+  When the host-side addons scan finds no modules — e.g. an instance whose
+  addons live only inside the container, declared via `addons_path` in
+  `/etc/odoo/odoo.conf` — `modules` / `install` / `update` / `uninstall` /
+  `test` no longer fail with `no modules found`. Echo reads the conf inside
+  the Odoo container (`conf_path`, default `/etc/odoo/odoo.conf`), parses
+  `addons_path`, lists the modules in those container directories, and
+  persists `addons_mode = conf` plus the discovered paths to the project
+  config. In conf mode the conf is re-read live on each run, so edits to
+  `addons_path` are picked up automatically. `modules --config` (the host
+  folder picker) is unchanged and always pins `addons_mode = host`, so it
+  remains the explicit escape hatch back to host scanning.
+- The fuzzy picker now scrolls: long lists (e.g. a full module catalog)
+  render in a viewport sized to the terminal height instead of spilling
+  past the screen and hiding rows. The window follows the cursor, `pgup` /
+  `pgdn` page through it, and `↑ N more` / `↓ N more` hints show how much
+  is off-screen. Applies to every picker (modules, db-restore, connect,
+  i18n).
+- Flag highlighting and flag autocomplete in the REPL (Unit 24), building
+  on the command highlighting. Flag tokens are now colored too: a known
+  flag of the typed command shows in the accent color (bold), an unknown
+  or forwarded flag shows faint — never red, so passthrough commands like
+  `down`/`logs`/`connect` don't get falsely flagged. Tab now also completes
+  flags: when the token under the cursor starts with `-` and a command
+  precedes it, Tab fills the command's flags (single match completes,
+  several share a common prefix then list on a second Tab), exactly like
+  command completion. Backed by a new per-command flag registry
+  (`commandFlags`) kept consistent with `Registry` by an init guard.
 
 ### Fixed
 - The filestore is now read from and written to the **Odoo container**,
@@ -56,18 +84,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   without manually running `down odoo` first. Without `--force`, `db-drop`
   still guards against active connections (now pointing at `--force` in
   the error) so a live DB isn't dropped by accident.
-
-### Added
-- Flag highlighting and flag autocomplete in the REPL (Unit 24), building
-  on the command highlighting. Flag tokens are now colored too: a known
-  flag of the typed command shows in the accent color (bold), an unknown
-  or forwarded flag shows faint — never red, so passthrough commands like
-  `down`/`logs`/`connect` don't get falsely flagged. Tab now also completes
-  flags: when the token under the cursor starts with `-` and a command
-  precedes it, Tab fills the command's flags (single match completes,
-  several share a common prefix then list on a second Tab), exactly like
-  command completion. Backed by a new per-command flag registry
-  (`commandFlags`) kept consistent with `Registry` by an init guard.
+- `addons_path` entries whose base name starts with `enterprise` (e.g.
+  `enterprise`, `enterprise-addons`) are now skipped by default when
+  discovering modules from `odoo.conf`, keeping the Enterprise addons out
+  of the update/install picker.
 - Live command highlighting in the REPL (Unit 21). As you type, the first
   token (the command) is colored fish-style: green/bold when it's an exact
   command, red when it can no longer become one, and the default color

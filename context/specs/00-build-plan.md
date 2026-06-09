@@ -39,6 +39,7 @@ Decomposition of Echo into ordered, scoped, verifiable units.
 | 25 | filestore-in-container      | Read/write the filestore inside the Odoo container (`/var/lib/odoo/filestore/<db>`, configurable) via `docker cp` for both `db-restore` and `db-backup --with-filestore`, fixing the host-path mismatch that left restored attachments invisible to Odoo | 09, 22     |
 | 28 | connect-session-cache       | Cache the minted Odoo session locally (`~/.config/echo/connect-sessions/<key>.toml`) and reuse the cookie on a repeat `connect <login>` — validated by one HTTP probe, re-minted only when stale/invalid — skipping the user query and the mint; interactive `connect` offers recent logins first; `--fresh` forces a re-mint | 18         |
 | 29 | connect-chrome-window-modes | Reuse a persistent Echo-dedicated Chrome instead of spawning a new window + temp profile every connect: browser-level CDP opens a new tab by default; `--new-window` opens an isolated incognito window (own cookie jar → multiple users at once) | 18         |
+| 26 | addons-paths-from-conf      | Discover modules from the instance's `odoo.conf` (`addons_path`, read inside the container) when the host scan finds none: parse the conf, `ls` each container path, persist `addons_mode=conf` + paths, auto-refresh live. Falls back automatically; `modules --config` still pins host mode | 05         |
 
 ## Notes
 
