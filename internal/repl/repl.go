@@ -356,7 +356,7 @@ func (sess *session) runHelp() {
 		{"echo run <file>", "Run a recipe (one command per line); - reads stdin"},
 		{"  --pick", "Pick a .echo recipe from the current directory"},
 		{"  --continue-on-error", "Run every step instead of stopping at the first failure"},
-		{"  --log[=<path>]", "Save a plain transcript (default: ~/.config/echo/run-logs/)"},
+		{"  --log[=<path>]", "Save a plain transcript (default dir, a file, or --log=. for ./<recipe>.log)"},
 		{"echo -C <dir> <cmd>", "Run from outside the project directory"},
 	} {
 		label := lipgloss.NewStyle().Width(22).Render(it.cmd)

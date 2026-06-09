@@ -105,12 +105,30 @@ func RunRecipe(s theme.Styles, p theme.Palette, project, id string, stage theme.
 	return code
 }
 
+// resolveLogDest turns a `--log=` value into a concrete file path. An
+// empty value yields "" (the caller falls back to the default location). A
+// value that is an existing directory — e.g. `--log=.` for the current
+// directory — becomes `<dir>/<recipe>.log`, named after the recipe, so you
+// can drop a result file next to the recipe without spelling out the name.
+// Any other value is taken as an explicit file path, unchanged.
+func resolveLogDest(dest, recipePath string) string {
+	if dest == "" {
+		return ""
+	}
+	if info, err := os.Stat(dest); err == nil && info.IsDir() {
+		return filepath.Join(dest, recipeLabel(recipePath)+".log")
+	}
+	return dest
+}
+
 // openRunLog resolves the log destination, creates the file, sets the
 // package-level run-log sink, and returns (dest, closer, ok). When ok is
 // false the caller proceeds without logging. The closer flushes, closes,
 // and clears the sink. `dest` empty means the default location under
-// ~/.config/echo/run-logs/.
+// ~/.config/echo/run-logs/; a directory (e.g. `.`) means a `<recipe>.log`
+// in that directory.
 func (sess *session) openRunLog(dest, recipePath string) (string, func(), bool) {
+	dest = resolveLogDest(dest, recipePath)
 	if dest == "" {
 		dir, err := config.RunLogsDir()
 		if err != nil {
@@ -307,10 +325,12 @@ func fmtDur(d time.Duration) string {
 // means stdin), the --continue-on-error flag, the --log destination, and
 // --pick (open a picker of *.echo recipes instead of taking a path).
 // `--log` (bare) enables logging to the default location (logDest == "");
-// `--log=<path>` enables it to an explicit path. The space form
-// `--log <path>` is intentionally NOT supported so it can't be confused
-// with the recipe positional. Unknown flags error. `--pick` is mutually
-// exclusive with a positional path / stdin.
+// `--log=<path>` enables it to an explicit path, or — when the value is a
+// directory like `.` — to a `<recipe>.log` file in it (resolved later in
+// openRunLog). The space form `--log <path>` is intentionally NOT
+// supported so it can't be confused with the recipe positional. Unknown
+// flags error. `--pick` is mutually exclusive with a positional path /
+// stdin.
 func parseRecipeArgs(args []string) (path string, continueOnError bool, logDest string, logEnabled bool, pick bool, err error) {
 	for _, a := range args {
 		switch {

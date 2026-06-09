@@ -7,8 +7,11 @@ output plus the per-step result and the final verdict — into a plain-text
 `.log` file, so an update routine leaves an auditable record (Odoo
 warnings/errors included). The log is opt-in via `--log`: bare `--log`
 writes to a timestamped file under `~/.config/echo/run-logs/`; `--log=<path>`
-writes to an explicit path. Without the flag, `echo run` behaves exactly
-as today (no file written).
+writes to an explicit path; and `--log=<dir>` (e.g. `--log=.`) writes a
+`<recipe>.log` named after the recipe into that directory (`resolveLogDest`
+in `openRunLog` detects an existing directory). Without the flag, `echo
+run` behaves exactly as today (no file written). This is independent of the
+`report` command (Unit 40), which reads `last-run.json`, not the transcript.
 
 ## Design
 

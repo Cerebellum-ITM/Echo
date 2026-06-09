@@ -132,6 +132,27 @@ func TestEchoRecipesIn(t *testing.T) {
 	}
 }
 
+func TestResolveLogDest(t *testing.T) {
+	tmp := t.TempDir()
+
+	// Empty → default location (caller resolves).
+	if got := resolveLogDest("", "deploy.echo"); got != "" {
+		t.Errorf("empty dest = %q, want \"\"", got)
+	}
+	// An existing directory → <dir>/<recipe>.log.
+	if got, want := resolveLogDest(tmp, "/x/deploy.echo"), filepath.Join(tmp, "deploy.log"); got != want {
+		t.Errorf("dir dest = %q, want %q", got, want)
+	}
+	// "." (current dir) → ./<recipe>.log (relative).
+	if got := resolveLogDest(".", "deploy.echo"); got != "deploy.log" {
+		t.Errorf("dot dest = %q, want %q", got, "deploy.log")
+	}
+	// A non-directory value is an explicit file path, unchanged.
+	if got := resolveLogDest("out.log", "deploy.echo"); got != "out.log" {
+		t.Errorf("file dest = %q, want %q", got, "out.log")
+	}
+}
+
 func TestEchoRecipesInEmpty(t *testing.T) {
 	got, err := echoRecipesIn(t.TempDir())
 	if err != nil {
