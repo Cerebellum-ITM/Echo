@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0] — 2026-06-09
+
 ### Added
 - Per-step `--silent` in `echo run` (Unit 41): append `--silent` to a
   recipe step to suppress its output on screen **and** in the `--log`
