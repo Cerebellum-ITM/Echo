@@ -3,14 +3,17 @@ package repl
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/pascualchavez/echo/internal/cmd"
 	"github.com/pascualchavez/echo/internal/config"
 	"github.com/pascualchavez/echo/internal/theme"
 )
@@ -22,10 +25,22 @@ import (
 // process exit code: the failing step's code under fail-fast, exitError
 // if any step failed under --continue-on-error, else exitOK.
 func RunRecipe(s theme.Styles, p theme.Palette, project, id string, stage theme.Stage, version, themeName, username, cwd string, cfg *config.Config, args []string) int {
-	path, continueOnError, logDest, logEnabled, err := parseRecipeArgs(args)
+	path, continueOnError, logDest, logEnabled, pick, err := parseRecipeArgs(args)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "echo run: "+err.Error())
 		return exitUsage
+	}
+
+	if pick {
+		selected, perr := pickRecipeFile(cwd, p)
+		if perr != nil {
+			fmt.Fprintln(os.Stderr, "echo run: "+perr.Error())
+			if errors.Is(perr, cmd.ErrCancelled) {
+				return exitCancelled
+			}
+			return exitUsage
+		}
+		path = selected
 	}
 
 	steps, err := readRecipe(path)
@@ -258,16 +273,20 @@ func fmtDur(d time.Duration) string {
 }
 
 // parseRecipeArgs extracts the recipe path (first positional; empty or `-`
-// means stdin), the --continue-on-error flag, and the --log destination.
+// means stdin), the --continue-on-error flag, the --log destination, and
+// --pick (open a picker of *.echo recipes instead of taking a path).
 // `--log` (bare) enables logging to the default location (logDest == "");
 // `--log=<path>` enables it to an explicit path. The space form
 // `--log <path>` is intentionally NOT supported so it can't be confused
-// with the recipe positional. Unknown flags error.
-func parseRecipeArgs(args []string) (path string, continueOnError bool, logDest string, logEnabled bool, err error) {
+// with the recipe positional. Unknown flags error. `--pick` is mutually
+// exclusive with a positional path / stdin.
+func parseRecipeArgs(args []string) (path string, continueOnError bool, logDest string, logEnabled bool, pick bool, err error) {
 	for _, a := range args {
 		switch {
 		case a == "--continue-on-error":
 			continueOnError = true
+		case a == "--pick":
+			pick = true
 		case a == "--log":
 			logEnabled = true
 		case strings.HasPrefix(a, "--log="):
@@ -276,15 +295,54 @@ func parseRecipeArgs(args []string) (path string, continueOnError bool, logDest 
 		case a == "-":
 			path = a
 		case strings.HasPrefix(a, "-"):
-			return "", false, "", false, fmt.Errorf("unknown flag: %s", a)
+			return "", false, "", false, false, fmt.Errorf("unknown flag: %s", a)
 		default:
 			if path != "" && path != "-" {
-				return "", false, "", false, fmt.Errorf("multiple recipe files given")
+				return "", false, "", false, false, fmt.Errorf("multiple recipe files given")
 			}
 			path = a
 		}
 	}
-	return path, continueOnError, logDest, logEnabled, nil
+	if pick && path != "" {
+		return "", false, "", false, false, fmt.Errorf("--pick takes no recipe path")
+	}
+	return path, continueOnError, logDest, logEnabled, pick, nil
+}
+
+// echoRecipesIn returns the names of the *.echo recipe files directly in
+// dir (top-level, no recursion), sorted. Subdirectories and non-.echo
+// files are skipped. Pure over the filesystem so it's unit-testable.
+func echoRecipesIn(dir string) ([]string, error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, err
+	}
+	var names []string
+	for _, e := range entries {
+		if !e.IsDir() && strings.HasSuffix(e.Name(), ".echo") {
+			names = append(names, e.Name())
+		}
+	}
+	sort.Strings(names)
+	return names, nil
+}
+
+// pickRecipeFile lists the *.echo recipes in dir and opens a single-select
+// picker, returning the absolute path of the chosen recipe. Returns a
+// clear error when none are found, or ErrCancelled on Esc.
+func pickRecipeFile(dir string, p theme.Palette) (string, error) {
+	names, err := echoRecipesIn(dir)
+	if err != nil {
+		return "", err
+	}
+	if len(names) == 0 {
+		return "", fmt.Errorf("no .echo recipes found in %s", dir)
+	}
+	name, err := cmd.PickOne("Recipe to run", names, p)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, name), nil
 }
 
 // readRecipe opens the recipe (stdin when path is empty or `-`) and parses

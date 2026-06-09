@@ -321,3 +321,11 @@ func runSingleFuzzyPicker(title string, available []string, palette theme.Palett
 	}
 	return fm.items[fm.visible[fm.cursor]].name, nil
 }
+
+// PickOne opens a single-select fuzzy picker over options and returns the
+// chosen value. Esc / empty list → ErrCancelled; a non-TTY caller →
+// ErrNonInteractive. Exported for callers outside the cmd package (the
+// recipe runner's `--pick` selector).
+func PickOne(title string, options []string, palette theme.Palette) (string, error) {
+	return runSingleFuzzyPicker(title, options, palette)
+}

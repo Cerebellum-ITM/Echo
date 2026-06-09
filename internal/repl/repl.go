@@ -347,6 +347,7 @@ func (sess *session) runHelp() {
 	for _, it := range []helpEntry{
 		{"echo <cmd> [args]", "Run one command and exit with a status code"},
 		{"echo run <file>", "Run a recipe (one command per line); - reads stdin"},
+		{"  --pick", "Pick a .echo recipe from the current directory"},
 		{"  --continue-on-error", "Run every step instead of stopping at the first failure"},
 		{"  --log[=<path>]", "Save a plain transcript (default: ~/.config/echo/run-logs/)"},
 		{"echo -C <dir> <cmd>", "Run from outside the project directory"},

@@ -1,6 +1,8 @@
 package repl
 
 import (
+	"os"
+	"path/filepath"
 	"reflect"
 	"strconv"
 	"strings"
@@ -74,21 +76,26 @@ func TestParseRecipeArgs(t *testing.T) {
 		cont       bool
 		logDest    string
 		logEnabled bool
+		pick       bool
 		wantErr    bool
 	}{
-		{[]string{"update.echo"}, "update.echo", false, "", false, false},
-		{[]string{"-"}, "-", false, "", false, false},
-		{[]string{}, "", false, "", false, false},
-		{[]string{"r.echo", "--continue-on-error"}, "r.echo", true, "", false, false},
-		{[]string{"--continue-on-error", "r.echo"}, "r.echo", true, "", false, false},
-		{[]string{"r.echo", "--log"}, "r.echo", false, "", true, false},
-		{[]string{"--log=/tmp/x.log", "r.echo"}, "r.echo", false, "/tmp/x.log", true, false},
-		{[]string{"r.echo", "--log", "--continue-on-error"}, "r.echo", true, "", true, false},
-		{[]string{"--bogus"}, "", false, "", false, true},
-		{[]string{"a.echo", "b.echo"}, "", false, "", false, true},
+		{[]string{"update.echo"}, "update.echo", false, "", false, false, false},
+		{[]string{"-"}, "-", false, "", false, false, false},
+		{[]string{}, "", false, "", false, false, false},
+		{[]string{"r.echo", "--continue-on-error"}, "r.echo", true, "", false, false, false},
+		{[]string{"--continue-on-error", "r.echo"}, "r.echo", true, "", false, false, false},
+		{[]string{"r.echo", "--log"}, "r.echo", false, "", true, false, false},
+		{[]string{"--log=/tmp/x.log", "r.echo"}, "r.echo", false, "/tmp/x.log", true, false, false},
+		{[]string{"r.echo", "--log", "--continue-on-error"}, "r.echo", true, "", true, false, false},
+		{[]string{"--pick"}, "", false, "", false, true, false},
+		{[]string{"--pick", "--log"}, "", false, "", true, true, false},
+		{[]string{"--pick", "--continue-on-error"}, "", true, "", false, true, false},
+		{[]string{"--pick", "r.echo"}, "", false, "", false, false, true},
+		{[]string{"--bogus"}, "", false, "", false, false, true},
+		{[]string{"a.echo", "b.echo"}, "", false, "", false, false, true},
 	}
 	for _, c := range cases {
-		path, cont, logDest, logEnabled, err := parseRecipeArgs(c.args)
+		path, cont, logDest, logEnabled, pick, err := parseRecipeArgs(c.args)
 		if (err != nil) != c.wantErr {
 			t.Errorf("parseRecipeArgs(%v) err = %v, wantErr %v", c.args, err, c.wantErr)
 			continue
@@ -96,10 +103,42 @@ func TestParseRecipeArgs(t *testing.T) {
 		if err != nil {
 			continue
 		}
-		if path != c.path || cont != c.cont || logDest != c.logDest || logEnabled != c.logEnabled {
-			t.Errorf("parseRecipeArgs(%v) = (%q, %v, %q, %v), want (%q, %v, %q, %v)",
-				c.args, path, cont, logDest, logEnabled, c.path, c.cont, c.logDest, c.logEnabled)
+		if path != c.path || cont != c.cont || logDest != c.logDest || logEnabled != c.logEnabled || pick != c.pick {
+			t.Errorf("parseRecipeArgs(%v) = (%q, %v, %q, %v, %v), want (%q, %v, %q, %v, %v)",
+				c.args, path, cont, logDest, logEnabled, pick, c.path, c.cont, c.logDest, c.logEnabled, c.pick)
 		}
+	}
+}
+
+func TestEchoRecipesIn(t *testing.T) {
+	dir := t.TempDir()
+	// Two .echo recipes, plus noise that must be ignored.
+	for _, f := range []string{"deploy.echo", "backup.echo", "notes.txt", "README"} {
+		if err := os.WriteFile(filepath.Join(dir, f), []byte("up\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Mkdir(filepath.Join(dir, "sub.echo"), 0o700); err != nil {
+		t.Fatal(err) // a directory named *.echo must not be listed
+	}
+
+	got, err := echoRecipesIn(dir)
+	if err != nil {
+		t.Fatalf("echoRecipesIn: %v", err)
+	}
+	want := []string{"backup.echo", "deploy.echo"} // sorted, files only
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("echoRecipesIn = %v, want %v", got, want)
+	}
+}
+
+func TestEchoRecipesInEmpty(t *testing.T) {
+	got, err := echoRecipesIn(t.TempDir())
+	if err != nil {
+		t.Fatalf("echoRecipesIn: %v", err)
+	}
+	if len(got) != 0 {
+		t.Errorf("want no recipes, got %v", got)
 	}
 }
 

@@ -8,6 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `echo run --pick` (Unit 39) opens a single-select picker of the `*.echo`
+  recipe files in the current directory and runs the chosen one — so you
+  can launch a recipe without typing its path. Top-level only (no
+  recursion); composes with `--continue-on-error` and `--log`. With no
+  matches it prints `no .echo recipes found in <dir>`; `--pick` plus a path
+  is a usage error; a non-TTY invocation fails closed (exit 2).
 - `echo run <file>` now ends with a per-step run summary (Unit 37): one
   `echo.run` line per step with its status (`ok` / `failed` / `cancelled`
   / `skipped`), warning count, and duration (`took`), plus a final
