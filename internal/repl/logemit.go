@@ -1,6 +1,7 @@
 package repl
 
 import (
+	"io"
 	"os"
 	"strconv"
 	"strings"
@@ -9,6 +10,22 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/pascualchavez/echo/internal/theme"
 )
+
+// runLogSink, when non-nil, receives a plain-text (ANSI-free) copy of
+// every line emitted by sess.print and emitOdooLog. It is set only for
+// the duration of an `echo run … --log` run (see recipe.go) so the whole
+// transcript can be captured to a file; nil in the REPL and in a plain
+// `echo run`, where the tee is skipped. A run is sequential, so no
+// locking is needed beyond what sess.print already assumes.
+var runLogSink io.Writer
+
+// teeRunLog writes a plain line (plus newline) to the run-log sink when
+// one is active. No-op otherwise.
+func teeRunLog(plain string) {
+	if runLogSink != nil {
+		io.WriteString(runLogSink, plain+"\n")
+	}
+}
 
 // logField is one structured key/value pair for emitOdooLog. Order is
 // preserved when rendering.
@@ -53,6 +70,7 @@ func emitOdooLog(level, logger, msg string, fields []logField, s theme.Styles, p
 	}
 
 	os.Stdout.WriteString(line + "\n")
+	teeRunLog(plainOdooLogFields(level, logger, msg, fields, db))
 }
 
 // keyColor returns the lipgloss style for a known structured-field
@@ -99,6 +117,16 @@ func plainOdooLog(level, logger, msg, db string) string {
 	}
 	return ts + " " + pid + " " + shortLevelName(level) + " " +
 		db + " " + logger + ": " + msg
+}
+
+// plainOdooLogFields is plainOdooLog plus the ` key=val` tail, used to
+// tee a structured emitOdooLog line into the run-log sink without ANSI.
+func plainOdooLogFields(level, logger, msg string, fields []logField, db string) string {
+	line := plainOdooLog(level, logger, msg, db)
+	for _, f := range fields {
+		line += " " + f.key + "=" + quoteIfNeeded(f.value)
+	}
+	return line
 }
 
 // shortLevelName returns the 4-char display label for an Odoo level

@@ -8,6 +8,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `echo run <file> --log[=<path>]` writes the whole recipe run to a
+  plain-text transcript (Unit 34) — every step's streamed output plus the
+  `echo.run` step/summary lines, ANSI-stripped — so an update routine
+  leaves an auditable record. Opt-in: bare `--log` writes a timestamped
+  file under `~/.config/echo/run-logs/`; `--log=<path>` writes to an
+  explicit path. Without the flag, nothing is written. A log-file error
+  warns but never aborts the run, and the final line reports the path.
 - `--level <lvl>` flag on `update` / `install` / `uninstall` (Unit 33),
   mapping to Odoo's native `--log-level` so a developer can raise or lower
   the verbosity of a module operation (e.g. `update sale --level debug_sql`

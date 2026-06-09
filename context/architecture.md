@@ -38,6 +38,7 @@
   - `db_name` — database name inside PostgreSQL
   - `stage` — `"dev"`, `"staging"`, or `"prod"`
   Written by `echo init` and the `version` / `stage` meta-commands.
+- **`~/.config/echo/run-logs/`**: plain-text recipe transcripts written by `echo run … --log` (default location; `--log=<path>` overrides). Opt-in only — nothing is written without the flag.
 - **`./backups/`**: db dumps produced by `db-backup`. Never read at startup; only written on demand.
 - **No files in the user's project repos**: Echo writes nothing to the project directory — all state lives in `~/.config/echo/`.
 

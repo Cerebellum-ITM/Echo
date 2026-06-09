@@ -6,8 +6,10 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/pascualchavez/echo/internal/config"
 	"github.com/pascualchavez/echo/internal/theme"
@@ -20,7 +22,7 @@ import (
 // process exit code: the failing step's code under fail-fast, exitError
 // if any step failed under --continue-on-error, else exitOK.
 func RunRecipe(s theme.Styles, p theme.Palette, project, id string, stage theme.Stage, version, themeName, username, cwd string, cfg *config.Config, args []string) int {
-	path, continueOnError, err := parseRecipeArgs(args)
+	path, continueOnError, logDest, logEnabled, err := parseRecipeArgs(args)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "echo run: "+err.Error())
 		return exitUsage
@@ -35,11 +37,70 @@ func RunRecipe(s theme.Styles, p theme.Palette, project, id string, stage theme.
 	sess, _ := newSession(s, p, project, id, stage, version, themeName, username, cwd, cfg)
 	ctx := context.Background()
 
+	// Capture the transcript to a file when --log is given. A failure to
+	// open the log must not abort the run — warn and carry on without it.
+	if logEnabled {
+		if dest, closeLog, ok := sess.openRunLog(logDest, path); ok {
+			defer closeLog()
+			defer func() { sess.runLog("INFO", "log written", logField{"path", dest}) }()
+		}
+	}
+
 	runStep := func(name string, sargs []string) int {
 		sess.dispatchParsed(ctx, name, sargs)
 		return sess.exitCode
 	}
 	return runRecipeSteps(steps, continueOnError, runStep, sess.runLog)
+}
+
+// openRunLog resolves the log destination, creates the file, sets the
+// package-level run-log sink, and returns (dest, closer, ok). When ok is
+// false the caller proceeds without logging. The closer flushes, closes,
+// and clears the sink. `dest` empty means the default location under
+// ~/.config/echo/run-logs/.
+func (sess *session) openRunLog(dest, recipePath string) (string, func(), bool) {
+	if dest == "" {
+		dir, err := config.RunLogsDir()
+		if err != nil {
+			sess.runLog("WARNING", "could not resolve run-logs dir", logField{"err", err.Error()})
+			return "", nil, false
+		}
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			sess.runLog("WARNING", "could not create run-logs dir", logField{"err", err.Error()})
+			return "", nil, false
+		}
+		dest = filepath.Join(dir, runLogName(recipePath))
+	}
+
+	f, err := os.Create(dest)
+	if err != nil {
+		sess.runLog("WARNING", "could not open log file", logField{"path", dest}, logField{"err", err.Error()})
+		return "", nil, false
+	}
+	w := bufio.NewWriter(f)
+	io.WriteString(w, "# echo run "+recipeLabel(recipePath)+" — "+time.Now().Format(time.RFC3339)+"\n")
+	runLogSink = w
+	closer := func() {
+		w.Flush()
+		f.Close()
+		runLogSink = nil
+	}
+	return dest, closer, true
+}
+
+// runLogName builds the default log filename: <timestamp>-<recipe>.log.
+func runLogName(recipePath string) string {
+	return time.Now().Format("20060102-150405") + "-" + recipeLabel(recipePath) + ".log"
+}
+
+// recipeLabel is the recipe's basename without extension, or "stdin" when
+// reading from stdin (`-` or empty path).
+func recipeLabel(recipePath string) string {
+	if recipePath == "" || recipePath == "-" {
+		return "stdin"
+	}
+	base := filepath.Base(recipePath)
+	return strings.TrimSuffix(base, filepath.Ext(base))
 }
 
 // runLog emits an `echo.run` orchestration line in Echo's Odoo log style.
@@ -83,24 +144,33 @@ func runRecipeSteps(steps []string, continueOnError bool, runStep func(name stri
 }
 
 // parseRecipeArgs extracts the recipe path (first positional; empty or `-`
-// means stdin) and the --continue-on-error flag. Unknown flags error.
-func parseRecipeArgs(args []string) (path string, continueOnError bool, err error) {
+// means stdin), the --continue-on-error flag, and the --log destination.
+// `--log` (bare) enables logging to the default location (logDest == "");
+// `--log=<path>` enables it to an explicit path. The space form
+// `--log <path>` is intentionally NOT supported so it can't be confused
+// with the recipe positional. Unknown flags error.
+func parseRecipeArgs(args []string) (path string, continueOnError bool, logDest string, logEnabled bool, err error) {
 	for _, a := range args {
 		switch {
 		case a == "--continue-on-error":
 			continueOnError = true
+		case a == "--log":
+			logEnabled = true
+		case strings.HasPrefix(a, "--log="):
+			logEnabled = true
+			logDest = strings.TrimPrefix(a, "--log=")
 		case a == "-":
 			path = a
 		case strings.HasPrefix(a, "-"):
-			return "", false, fmt.Errorf("unknown flag: %s", a)
+			return "", false, "", false, fmt.Errorf("unknown flag: %s", a)
 		default:
 			if path != "" && path != "-" {
-				return "", false, fmt.Errorf("multiple recipe files given")
+				return "", false, "", false, fmt.Errorf("multiple recipe files given")
 			}
 			path = a
 		}
 	}
-	return path, continueOnError, nil
+	return path, continueOnError, logDest, logEnabled, nil
 }
 
 // readRecipe opens the recipe (stdin when path is empty or `-`) and parses
