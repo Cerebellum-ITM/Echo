@@ -231,6 +231,8 @@ func helpSections() []helpSection {
 			{"shell", "Odoo Python shell against the configured DB"},
 			{"connect [<login>]", "Impersonate a user (mint session, open Chrome logged in)"},
 			{"  --all", "Include inactive users in the picker"},
+			{"  --fresh", "Ignore the cached session and mint a new one"},
+			{"  --new-window", "Open an isolated incognito window (default: reuse a tab)"},
 			{"  --force", "Skip the prod-stage confirmation prompt"},
 		}},
 		{"Docker", []helpEntry{
@@ -332,9 +334,9 @@ func (sess *session) runInit() {
 // column widths regardless of nerd-font glyph cell width.
 func confLine(icon, label, value string) string {
 	const (
-		indent      = "    "
-		iconCol     = 3
-		labelCol    = 10
+		indent   = "    "
+		iconCol  = 3
+		labelCol = 10
 	)
 	iconCell := lipgloss.NewStyle().Width(iconCol).Render(icon)
 	labelCell := lipgloss.NewStyle().Width(labelCol).Render(label)
@@ -580,6 +582,7 @@ func (sess *session) runConnect(ctx context.Context, args []string) {
 		Root:    sess.projectDir,
 		Args:    args,
 		Palette: sess.palette,
+		Log:     sess.connectLogger(),
 	})
 	switch {
 	case errors.Is(err, cmd.ErrCancelled), errors.Is(err, huh.ErrUserAborted):
@@ -590,14 +593,56 @@ func (sess *session) runConnect(ctx context.Context, args []string) {
 		return
 	}
 
-	where := "local"
-	if res.Remote {
-		where = "remote (ssh)"
+	verb := "session minted"
+	if res.Reused {
+		verb = "session reused (cached)"
 	}
-	sess.print(Line{Kind: "info", Text: fmt.Sprintf("Session minted for %q (uid=%d) — %s", res.Login, res.UID, where)})
-	sess.print(Line{Kind: "info", Text: "Opening Chrome at " + res.BaseURL + "/odoo (logged in)"})
-	sess.print(Line{Kind: "dim", Text: "MFA bypassed — dev only"})
+	emitOdooLog("INFO", "echo.connect", verb,
+		[]logField{
+			{"login", res.Login},
+			{"uid", strconv.Itoa(res.UID)},
+			{"mode", connectModeLabel(res.Remote)},
+			{"mfa", "bypassed"},
+		},
+		sess.styles, sess.palette, connectDB(res, sess.cfg.DBName))
 	sess.finalize("connect", 0, 0, nil)
+}
+
+// connectModeLabel describes where the session was minted for the summary.
+func connectModeLabel(remote bool) string {
+	if remote {
+		return "remote-ssh"
+	}
+	return "local"
+}
+
+// connectDB prefers the db the connect target resolved to (which, for a
+// remote run, comes from the server's profile, not the local config).
+func connectDB(res cmd.ConnectResult, fallback string) string {
+	if res.DBName != "" {
+		return res.DBName
+	}
+	return fallback
+}
+
+// connectLogger wires cmd.RunConnect's progress events into the REPL's
+// Odoo-style log stream so every step (target, user query, cache
+// validation, mint, chrome) renders like the rest of the CLI.
+func (sess *session) connectLogger() cmd.ConnectLogger {
+	return func(level, sub, msg, db string, fields ...[2]string) {
+		logger := "echo.connect"
+		if sub != "" {
+			logger += "." + sub
+		}
+		if db == "" {
+			db = sess.cfg.DBName
+		}
+		lf := make([]logField, 0, len(fields))
+		for _, f := range fields {
+			lf = append(lf, logField{f[0], f[1]})
+		}
+		emitOdooLog(level, logger, msg, lf, sess.styles, sess.palette, db)
+	}
 }
 
 func (sess *session) clearAndRenderHeader() {

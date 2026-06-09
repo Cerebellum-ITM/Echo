@@ -32,7 +32,7 @@ var commandFlags = map[string][]string{
 	"db-drop":     {"--force"},
 	"down":        {"--force"},
 	"logs":        {"-t", "--no-follow", "-c", "--copy", "--all"},
-	"connect":     {"--all", "--force"},
+	"connect":     {"--all", "--force", "--fresh", "--new-window"},
 	"copy-last":   {"--errors"},
 }
 
