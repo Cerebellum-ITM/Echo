@@ -266,12 +266,15 @@ func cleanupContainerTmp(ctx context.Context, opts I18nOpts, path string) {
 
 // confirmI18nProd renders the red prod confirm specific to i18n-update.
 func confirmI18nProd(palette theme.Palette, db, lang string) error {
+	if err := requireTTY("pass --force to import into prod"); err != nil {
+		return err
+	}
 	red := lipgloss.NewStyle().Foreground(palette.Error).Bold(true).Render(db)
 	confirmed := false
 	form := huh.NewForm(huh.NewGroup(
 		huh.NewConfirm().
-			Title("⚠  Importing "+lang+" translations into prod database "+red).
-			Description("Existing "+lang+" translations in the DB will be replaced (--i18n-overwrite).").
+			Title("⚠  Importing " + lang + " translations into prod database " + red).
+			Description("Existing " + lang + " translations in the DB will be replaced (--i18n-overwrite).").
 			Affirmative("Import").
 			Negative("Cancel").
 			Value(&confirmed),

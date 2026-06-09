@@ -94,11 +94,14 @@ func maybeConfirmProd(opts ShellOpts, action string) error {
 }
 
 func confirmProd(palette theme.Palette, action, db string) error {
+	if err := requireTTY("pass --force to proceed against prod"); err != nil {
+		return err
+	}
 	red := lipgloss.NewStyle().Foreground(palette.Error).Bold(true).Render(db)
 	confirmed := false
 	form := huh.NewForm(huh.NewGroup(
 		huh.NewConfirm().
-			Title("⚠  Opening "+action+" against prod database "+red).
+			Title("⚠  Opening " + action + " against prod database " + red).
 			Description("This will run against production data.").
 			Affirmative("Open").
 			Negative("Cancel").

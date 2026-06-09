@@ -2,8 +2,10 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/user"
+	"strings"
 
 	"github.com/charmbracelet/log"
 	"github.com/pascualchavez/echo/internal/cmd"
@@ -14,25 +16,54 @@ import (
 	"github.com/pascualchavez/echo/internal/theme"
 )
 
+// One-shot (script mode) exit codes, mirroring the unexported constants
+// in internal/repl. `echo <cmd>` resolves the project, runs the single
+// command, and exits with repl.RunOnce's code; the usage failures below
+// (no project / unknown command) are the main-side equivalents.
+const (
+	exitUsage = 2
+)
+
 func main() {
+	args := os.Args[1:]
+
+	projectDir, args, err := extractProjectDir(args)
+	if err != nil {
+		log.Error(err.Error())
+		os.Exit(exitUsage)
+	}
+
 	// `echo connect …` is a projectless direct mode: it talks to a named
 	// remote target from the global config and never needs a local
 	// docker-compose.yml, so it runs before the project-root check.
-	if len(os.Args) > 1 && os.Args[1] == "connect" {
-		if err := cmd.RunDirectConnect(context.Background(), os.Args[2:]); err != nil {
+	if len(args) > 0 && args[0] == "connect" {
+		if err := cmd.RunDirectConnect(context.Background(), args[1:]); err != nil {
 			log.Fatal("connect", "err", err)
 		}
 		return
 	}
 
-	cwd, err := os.Getwd()
-	if err != nil {
-		log.Fatal("could not determine current directory", "err", err)
+	// Any leading argument means a one-shot, non-interactive invocation
+	// (`echo <cmd> [args]`). No arguments → the interactive REPL.
+	oneShot := len(args) > 0
+
+	cwd := projectDir
+	if cwd == "" {
+		cwd, err = os.Getwd()
+		if err != nil {
+			log.Fatal("could not determine current directory", "err", err)
+		}
 	}
 
 	root, err := project.FindRoot(cwd)
 	if err != nil {
-		log.Fatal("not inside a project", "cwd", cwd, "hint", "run echo from a directory containing docker-compose.yml")
+		if oneShot {
+			log.Error("not inside a project", "cwd", cwd,
+				"hint", "run echo from a directory containing docker-compose.yml, or pass -C <dir>")
+			os.Exit(exitUsage)
+		}
+		log.Fatal("not inside a project", "cwd", cwd,
+			"hint", "run echo from a directory containing docker-compose.yml")
 	}
 
 	cfg, err := config.Load(root)
@@ -69,5 +100,39 @@ func main() {
 		username = u.Username
 	}
 
+	if oneShot {
+		name := args[0]
+		if !repl.IsScriptCommand(name) {
+			log.Error("unknown command", "cmd", name,
+				"hint", "start `echo` and type `help` for the command list")
+			os.Exit(exitUsage)
+		}
+		code := repl.RunOnce(styles, palette, cfg.Logo, "01", stage,
+			cfg.OdooVersion, cfg.Theme, username, root, cfg, name, args[1:])
+		os.Exit(code)
+	}
+
 	repl.Start(styles, palette, cfg.Logo, "01", stage, cfg.OdooVersion, cfg.Theme, username, root, cfg)
+}
+
+// extractProjectDir pulls a leading `-C <dir>` / `--project-dir <dir>`
+// (or the `=`-joined forms) out of the argument list so a one-shot command
+// can run from outside the project directory. It only looks at the first
+// token: the flag must come before the command, mirroring `git -C`.
+func extractProjectDir(args []string) (dir string, rest []string, err error) {
+	if len(args) == 0 {
+		return "", args, nil
+	}
+	switch a := args[0]; {
+	case a == "-C" || a == "--project-dir":
+		if len(args) < 2 {
+			return "", nil, fmt.Errorf("%s requires a directory", a)
+		}
+		return args[1], args[2:], nil
+	case strings.HasPrefix(a, "-C="):
+		return strings.TrimPrefix(a, "-C="), args[1:], nil
+	case strings.HasPrefix(a, "--project-dir="):
+		return strings.TrimPrefix(a, "--project-dir="), args[1:], nil
+	}
+	return "", args, nil
 }

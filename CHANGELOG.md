@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Non-interactive **script mode** (Unit 31). `echo <command> [args]` now
+  runs a single command and exits, so Echo can be driven from shell
+  scripts and CI (e.g. an update routine that chains `echo stop`,
+  `echo up`, `echo update ventas`, `echo restart`). Bare `echo` still
+  opens the interactive REPL. One-shot output streams through the exact
+  same Odoo-style render and start/finalize frame the REPL uses. The
+  process exits with a meaningful code: `0` success, `1` execution error
+  (or ERROR/CRITICAL lines counted), `2` usage error (unknown command,
+  bad args, or a command that would need a prompt), `3` cancelled. Any
+  command that would otherwise block on a confirmation or a fuzzy picker
+  **fails closed** when stdin is not a TTY — it returns a clear error and
+  a non-zero exit instead of hanging a script, naming the escape hatch
+  (pass the missing argument, or `--force`). A human running the same
+  command at a real terminal still gets the prompt. New `-C` /
+  `--project-dir <dir>` flag runs a one-shot command from outside the
+  project directory (like `git -C`).
+
 ## [0.6.0] — 2026-06-09
 
 ### Added

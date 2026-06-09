@@ -24,7 +24,8 @@
 - `internal/repl/` — the interactive prompt loop: reads input, dispatches to cmd/, streams Line output, manages history
 - `internal/banner/` — ASCII art logos (echo, planet, python, anchor) with per-segment color tokens
 - `internal/config/` — load/save global and per-project config under `~/.config/echo/`
-- `main.go` — entry point: locate project root, detect compose flavor, load config, render header, start REPL
+- `main.go` — entry point: parse a leading `-C/--project-dir`, locate project root, detect compose flavor, load config. With no command argument it renders the header and starts the REPL; with a command argument (`echo <cmd> [args]`) it runs that single command once via `repl.RunOnce` and exits with the resulting status code (one-shot / script mode). `echo connect …` keeps its own projectless path before the root check.
+- `internal/repl/script.go` — non-interactive one-shot dispatch: `RunOnce` builds a headless `session` (via the shared `newSession`, no prompt loop) and runs one command, returning a process exit code; `IsScriptCommand` gates which commands are one-shot-eligible.
 
 ## Storage Model
 
@@ -55,3 +56,5 @@
 6. Theme switching must take effect immediately on the next rendered line — no restart required.
 7. Echo only runs inside a project root — a directory containing `docker-compose.yml` or `docker-compose.yaml`. If no root is found walking up from cwd, the binary fails fast with `charmbracelet/log` and exits non-zero. The project root (not the cwd) is the basis for the SHA-256 project key, the working directory of every docker subprocess, and the path shown in the header.
 8. The compose command flavor (`docker compose` vs `docker-compose`) is auto-detected on first run and persisted in `global.toml`. All docker invocations must read it from config — never hardcode either form.
+9. No command may block on interactive input (a `huh` confirm/form or the fuzzy picker) when stdin is not a TTY. Every such call site guards on the terminal and returns `cmd.ErrNonInteractive` instead — so a one-shot/script invocation fails closed rather than hanging. The escape hatch is always an explicit argument or `--force`, never a silent default.
+10. One-shot (`echo <cmd>`) exit codes are fixed: `0` success, `1` execution error, `2` usage / non-interactive guard, `3` cancelled. The REPL records the same code on the session but never exits the process with it.
