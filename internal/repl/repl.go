@@ -89,7 +89,7 @@ func Start(s theme.Styles, p theme.Palette, project, id string, stage theme.Stag
 	history := loadHistory()
 
 	for {
-		res, err := readLine(sess.renderPrompt(), history, s.Info)
+		res, err := readLine(sess.renderPrompt(), history, s.Info, sess.palette)
 		if err != nil {
 			sess.print(Line{Kind: "err", Text: "read error: " + err.Error()})
 			break

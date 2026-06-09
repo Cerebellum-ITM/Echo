@@ -8,6 +8,8 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"golang.org/x/term"
+
+	"github.com/pascualchavez/echo/internal/theme"
 )
 
 // lineResult is the outcome of one line read.
@@ -26,14 +28,15 @@ type lineModel struct {
 	done       bool
 	lastWasTab bool
 	infoStyle  lipgloss.Style
+	palette    theme.Palette
 }
 
-func newLineModel(prompt string, history []string, info lipgloss.Style) lineModel {
+func newLineModel(prompt string, history []string, info lipgloss.Style, palette theme.Palette) lineModel {
 	ti := textinput.New()
 	ti.Prompt = prompt
 	ti.Focus()
 	ti.CharLimit = 0
-	return lineModel{input: ti, history: history, infoStyle: info}
+	return lineModel{input: ti, history: history, infoStyle: info, palette: palette}
 }
 
 func (m lineModel) Init() tea.Cmd { return textinput.Blink }
@@ -92,7 +95,46 @@ func (m lineModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
-func (m lineModel) View() string { return m.input.View() }
+// View renders the input line with the first token (the command) colored
+// by validity — green when it's an exact command, red when it can't become
+// one, default otherwise (fish-style). Only the command word is recolored;
+// arguments keep the default text style. The embedded textinput keeps
+// owning the cursor (and its blink), which is spliced back in at the
+// caret position. Echo never sets textinput.Width, so the whole value is
+// always shown — no horizontal scroll window to reproduce.
+func (m lineModel) View() string {
+	val := m.input.Value()
+	if val == "" {
+		return m.input.View() // placeholder + cursor, unchanged
+	}
+
+	token, _ := firstToken(val)
+	style, recolor := commandStyle(classifyCommand(token), m.palette)
+	tokenLen := len([]rune(token))
+	textStyle := m.input.TextStyle.Inline(true)
+	cur := m.input.Cursor
+	pos := m.input.Position()
+
+	var b strings.Builder
+	b.WriteString(m.input.Prompt)
+	for i, r := range []rune(val) {
+		if i == pos {
+			cur.SetChar(string(r))
+			b.WriteString(cur.View())
+			continue
+		}
+		if recolor && i < tokenLen {
+			b.WriteString(style.Render(string(r)))
+		} else {
+			b.WriteString(textStyle.Render(string(r)))
+		}
+	}
+	if pos >= len([]rune(val)) {
+		cur.SetChar(" ")
+		b.WriteString(cur.View())
+	}
+	return b.String()
+}
 
 // handleTab implements bash-style prefix completion against Registry,
 // limited to the first token of the buffer.
@@ -171,8 +213,8 @@ func terminalWidth() int {
 
 // readLine reads a single line, supporting up/down history navigation
 // and Tab completion against Registry.
-func readLine(prompt string, history []string, info lipgloss.Style) (lineResult, error) {
-	m := newLineModel(prompt, history, info)
+func readLine(prompt string, history []string, info lipgloss.Style, palette theme.Palette) (lineResult, error) {
+	m := newLineModel(prompt, history, info, palette)
 	final, err := tea.NewProgram(m).Run()
 	if err != nil {
 		return lineResult{}, err

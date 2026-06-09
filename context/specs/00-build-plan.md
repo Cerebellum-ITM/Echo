@@ -32,6 +32,7 @@ Decomposition of Echo into ordered, scoped, verifiable units.
 | 17 | cli-prompt-odoo-info        | Odoo-aware REPL prompt: compose project name + version/db bracket + colored stage chip + live container health (configurable via `[prompt]` in global.toml, TTL-cached) | 02, 04     |
 | 18 | connect-command             | `connect [<login>] [--all] [--force]` + projectless `echo connect <name>` — mint Odoo web session for any user without password (Python in container, local or SSH) and land the cookie in local Chrome via CDP | 04, 06, 10 |
 | 20 | docker-container-log-style   | Reformat `docker compose` lifecycle progress lines (`Container … Restarting`) into Odoo-style `docker.<resource>` log lines with `name=` field; closes the compose-output gap deferred in Unit 08 | 04, 08     |
+| 21 | command-highlight           | Live fish-style highlight of the first REPL token: green when it's an exact command, red when it can't become one, neutral while it's still a valid prefix (reuses Registry/matchPrefix; custom `lineModel.View()`) | 01, 13     |
 
 ## Notes
 

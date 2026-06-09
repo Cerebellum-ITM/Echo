@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Live command highlighting in the REPL (Unit 21). As you type, the first
+  token (the command) is colored fish-style: green/bold when it's an exact
+  command, red when it can no longer become one, and the default color
+  while it's still a valid prefix (e.g. `ins` toward `install`). Only the
+  command word is recolored — arguments keep the default style. Validity
+  is driven by the existing command `Registry` (plus `exit`/`quit`), so it
+  stays in sync automatically; `lineModel.View()` now renders the line
+  itself while the embedded `textinput` keeps owning the (still-blinking)
+  cursor. Colors come from `palette.Success` / `palette.Error`, so all four
+  themes are covered.
+
 ## [0.5.0] — 2026-06-08
 
 ### Added
