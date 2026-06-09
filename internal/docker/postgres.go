@@ -196,6 +196,29 @@ func TerminateConnections(ctx context.Context, composeCmd, dir, dbContainer, use
 	return psqlExec(ctx, composeCmd, dir, dbContainer, user, "postgres", query)
 }
 
+// ModuleVersion returns the name, latest_version and state recorded in
+// ir_module_module for a module, or found=false when there is no row.
+// latest_version may be empty (NULL) for a never-installed module.
+func ModuleVersion(ctx context.Context, composeCmd, dir, dbContainer, user, db, module string) (name, version, state string, found bool, err error) {
+	q := fmt.Sprintf(
+		"SELECT name, latest_version, state FROM ir_module_module WHERE name = '%s'",
+		strings.ReplaceAll(module, "'", "''"))
+	out, err := psqlScalar(ctx, composeCmd, dir, dbContainer, user, db, q)
+	if err != nil {
+		return "", "", "", false, err
+	}
+	out = strings.TrimSpace(out)
+	if out == "" {
+		return "", "", "", false, nil
+	}
+	// psql -At joins columns with '|'.
+	parts := strings.SplitN(out, "|", 3)
+	if len(parts) < 3 {
+		return "", "", "", false, nil
+	}
+	return parts[0], parts[1], parts[2], true, nil
+}
+
 func psqlScalar(ctx context.Context, composeCmd, dir, dbContainer, user, db, query string) (string, error) {
 	args := append(SplitCompose(composeCmd),
 		"exec", "-T", dbContainer,

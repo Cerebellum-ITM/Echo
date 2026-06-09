@@ -66,6 +66,11 @@ type session struct {
 	// and read by RunRecipe to build the per-step run summary (Unit 37).
 	lastErrors   int
 	lastWarnings int
+	// lastModinfoModule remembers the last `modinfo` target so `--last`
+	// can replay it without the picker (e.g. to copy a result first
+	// reached interactively). Lives only for the session — never
+	// persisted to disk.
+	lastModinfoModule string
 }
 
 // Exit codes returned by one-shot (script) dispatch. The interactive REPL
@@ -182,7 +187,7 @@ var dispatchNames = []string{
 	"help", "clear", "copy-last", "report",
 	"init", "reset",
 	"up", "down", "stop", "restart", "ps", "logs",
-	"install", "update", "uninstall", "test", "modules",
+	"install", "update", "uninstall", "test", "modules", "modinfo",
 	"i18n-export", "i18n-update",
 	"db-backup", "db-restore", "db-drop", "db-neutralize", "db-list",
 	"shell", "bash", "psql", "connect",
@@ -236,6 +241,8 @@ func (sess *session) dispatchParsed(ctx context.Context, cmd string, args []stri
 		sess.runDocker(ctx, cmd, args)
 	case "install", "update", "uninstall", "test", "modules":
 		sess.runModules(ctx, cmd, args)
+	case "modinfo":
+		sess.runModinfo(ctx, args)
 	case "i18n-export", "i18n-update":
 		sess.runI18n(ctx, cmd, args)
 	case "db-backup", "db-restore", "db-drop", "db-neutralize", "db-list":
@@ -277,6 +284,9 @@ func helpSections() []helpSection {
 			{"  --tags <spec>", "Override --test-tags (e.g. :TestX.test_y, -external)"},
 			{"modules", "List modules from configured addons paths"},
 			{"  --config", "Pick which folders are addons paths (form)"},
+			{"modinfo [<mod>]", "Compare DB-installed version vs manifest version"},
+			{"  --copy", "Copy the report to the clipboard"},
+			{"  --last", "Re-show this session's last modinfo (skips the picker)"},
 		}},
 		{"i18n", []helpEntry{
 			{"i18n-export <mod> [lang]", "Export <mod>/i18n/<lang>.po (default es_MX)"},

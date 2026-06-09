@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- New `modinfo [<mod>]` command (Unit 42): compare the version Odoo
+  recorded as installed in the database (`ir_module_module.latest_version`
+  + `state`) against the version declared in the module's
+  `__manifest__.py`, printing a one-line verdict as an `echo.modinfo` log
+  line — `in sync`, `update pending` (code newer than the DB), `db ahead`,
+  or `not installed`. The manifest version is normalized the way Odoo's
+  `adapt_version` does (prepends the `17.0` series to a short version)
+  before comparing, so `1.3.0` matches the DB's stored `17.0.1.3.0`. With
+  no module a single-select picker chooses one; `--copy` copies the report;
+  reads the manifest from the host (host mode) or the container (conf
+  mode). One-shot eligible (`echo modinfo sale_goals_management`).
+  `--last` re-shows the session's last `modinfo` target without the picker
+  (in-memory only, per session) — so a result first reached via the picker
+  can be copied with `modinfo --last --copy`.
+
 ## [0.7.0] — 2026-06-09
 
 ### Added
