@@ -489,8 +489,15 @@ func modulesFromConf(ctx context.Context, opts ModulesOpts) (paths, modules []st
 // readContainerFile cats a file inside the Odoo container and returns its
 // full contents. A missing file (non-zero exit) surfaces as an error.
 func readContainerFile(ctx context.Context, opts ModulesOpts, path string) (string, error) {
+	return catContainer(ctx, opts.Cfg, opts.Root, path)
+}
+
+// catContainer cats a file inside the Odoo container and returns its full
+// contents. A missing file (non-zero exit) surfaces as an error. Shared by
+// the module listing, modinfo, and view commands.
+func catContainer(ctx context.Context, cfg *config.Config, root, path string) (string, error) {
 	var b strings.Builder
-	err := docker.Exec(ctx, opts.Cfg.ComposeCmd, opts.Root, opts.Cfg.OdooContainer,
+	err := docker.Exec(ctx, cfg.ComposeCmd, root, cfg.OdooContainer,
 		[]string{"cat", path}, func(line string) {
 			b.WriteString(line)
 			b.WriteByte('\n')
