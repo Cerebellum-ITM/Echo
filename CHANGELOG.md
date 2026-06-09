@@ -8,6 +8,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `--level <lvl>` flag on `update` / `install` / `uninstall` (Unit 33),
+  mapping to Odoo's native `--log-level` so a developer can raise or lower
+  the verbosity of a module operation (e.g. `update sale --level debug_sql`
+  to see the SQL, `--level warn` to quiet it). Both `--level <lvl>` and
+  `--level=<lvl>` forms work. The value is validated against Odoo's level
+  set (`debug_rpc_answer` … `critical`, `test`, `notset`) — an invalid
+  level is rejected with the list of valid ones before Odoo is invoked.
+  Without the flag, behavior is unchanged (Odoo's `info` default).
 - `echo run <file>` **recipe runner** (Unit 32). Runs a whole update
   routine from a single file — one Echo command per line — instead of N
   separate invocations. Blank lines and `#` comments are ignored; the

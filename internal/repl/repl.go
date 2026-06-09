@@ -251,9 +251,12 @@ func helpSections() []helpSection {
 		{"Modules", []helpEntry{
 			{"install <mod...>", "Install modules in the current DB"},
 			{"  --with-demo", "Include demo data"},
+			{"  --level <lvl>", "Odoo --log-level (debug…critical; default info)"},
 			{"update <mod...>", "Update modules"},
 			{"  --all", "Update every installed module"},
+			{"  --level <lvl>", "Odoo --log-level (debug…critical; default info)"},
 			{"uninstall <mod...>", "Uninstall modules"},
+			{"  --level <lvl>", "Odoo --log-level (debug…critical; default info)"},
 			{"test <mod...>", "Run tests for installed modules (filters to /<mod>)"},
 			{"  --update", "Reload modules first (adds -u; needed for XML/schema changes)"},
 			{"  --tags <spec>", "Override --test-tags (e.g. :TestX.test_y, -external)"},

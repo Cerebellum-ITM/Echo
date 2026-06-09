@@ -72,7 +72,47 @@ var (
 	ErrNoDB               = errors.New("no database configured — run `init` first")
 	ErrNoModulesGiven     = errors.New("no module names given")
 	ErrNoModulesAvailable = errors.New("no modules found — configure addons paths with `modules --config`")
+	ErrInvalidLogLevel    = errors.New("invalid --level")
 )
+
+// validLogLevel reports whether lvl is one of Odoo's accepted --log-level
+// values.
+func validLogLevel(lvl string) bool {
+	for _, v := range odoo.LogLevels {
+		if v == lvl {
+			return true
+		}
+	}
+	return false
+}
+
+// extractLevel pulls `--level <lvl>` / `--level=<lvl>` out of args,
+// returning the (validated) level and the remaining args. A bare
+// `--level` with no value, or a value outside odoo.LogLevels, is an
+// error. Shared by the install / update / uninstall parsers so the flag
+// behaves identically across them.
+func extractLevel(args []string) (level string, rest []string, err error) {
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		switch {
+		case a == "--level":
+			if i+1 >= len(args) {
+				return "", nil, fmt.Errorf("--level requires a value")
+			}
+			level = args[i+1]
+			i++
+		case strings.HasPrefix(a, "--level="):
+			level = strings.TrimPrefix(a, "--level=")
+		default:
+			rest = append(rest, a)
+		}
+	}
+	if level != "" && !validLogLevel(level) {
+		return "", nil, fmt.Errorf("%w %q; valid: %s",
+			ErrInvalidLogLevel, level, strings.Join(odoo.LogLevels, ", "))
+	}
+	return level, rest, nil
+}
 
 // RunInstall returns the modules that were actually targeted (after
 // flag stripping and picker resolution) along with any error from the
@@ -83,9 +123,13 @@ func RunInstall(ctx context.Context, opts ModulesOpts) ([]string, error) {
 	if err := requireOdooConfig(opts.Cfg); err != nil {
 		return nil, err
 	}
+	level, rest, err := extractLevel(opts.Args)
+	if err != nil {
+		return nil, err
+	}
 	withDemo := false
-	modules := make([]string, 0, len(opts.Args))
-	for _, a := range opts.Args {
+	modules := make([]string, 0, len(rest))
+	for _, a := range rest {
 		switch a {
 		case "--with-demo":
 			withDemo = true
@@ -100,7 +144,7 @@ func RunInstall(ctx context.Context, opts ModulesOpts) ([]string, error) {
 		}
 		modules = picked
 	}
-	return modules, runOdoo(ctx, opts, odoo.Install(buildConn(opts), modules, withDemo))
+	return modules, runOdoo(ctx, opts, odoo.WithLogLevel(odoo.Install(buildConn(opts), modules, withDemo), level))
 }
 
 // RunUpdate returns the resolved modules along with the run error.
@@ -110,9 +154,13 @@ func RunUpdate(ctx context.Context, opts ModulesOpts) ([]string, error) {
 	if err := requireOdooConfig(opts.Cfg); err != nil {
 		return nil, err
 	}
+	level, rest, err := extractLevel(opts.Args)
+	if err != nil {
+		return nil, err
+	}
 	all := false
-	modules := make([]string, 0, len(opts.Args))
-	for _, a := range opts.Args {
+	modules := make([]string, 0, len(rest))
+	for _, a := range rest {
 		switch a {
 		case "--all":
 			all = true
@@ -121,7 +169,7 @@ func RunUpdate(ctx context.Context, opts ModulesOpts) ([]string, error) {
 		}
 	}
 	if all {
-		return []string{"--all"}, runOdoo(ctx, opts, odoo.UpdateAll(buildConn(opts)))
+		return []string{"--all"}, runOdoo(ctx, opts, odoo.WithLogLevel(odoo.UpdateAll(buildConn(opts)), level))
 	}
 	if len(modules) == 0 {
 		picked, err := pickModulesInteractive(ctx, opts, "Modules to update")
@@ -130,7 +178,7 @@ func RunUpdate(ctx context.Context, opts ModulesOpts) ([]string, error) {
 		}
 		modules = picked
 	}
-	return modules, runOdoo(ctx, opts, odoo.Update(buildConn(opts), modules))
+	return modules, runOdoo(ctx, opts, odoo.WithLogLevel(odoo.Update(buildConn(opts), modules), level))
 }
 
 // RunUninstall returns the resolved modules along with the run error.
@@ -138,7 +186,10 @@ func RunUninstall(ctx context.Context, opts ModulesOpts) ([]string, error) {
 	if err := requireOdooConfig(opts.Cfg); err != nil {
 		return nil, err
 	}
-	modules := opts.Args
+	level, modules, err := extractLevel(opts.Args)
+	if err != nil {
+		return nil, err
+	}
 	if len(modules) == 0 {
 		picked, err := pickModulesInteractive(ctx, opts, "Modules to uninstall")
 		if err != nil {
@@ -146,7 +197,7 @@ func RunUninstall(ctx context.Context, opts ModulesOpts) ([]string, error) {
 		}
 		modules = picked
 	}
-	return modules, runOdoo(ctx, opts, odoo.Uninstall(buildConn(opts), modules))
+	return modules, runOdoo(ctx, opts, odoo.WithLogLevel(odoo.Uninstall(buildConn(opts), modules), level))
 }
 
 // RunTest runs the Odoo test suite for the given modules.
