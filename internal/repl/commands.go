@@ -22,7 +22,7 @@ var Registry = []string{
 // no known flags. Powers flag highlighting and Tab flag completion.
 var commandFlags = map[string][]string{
 	"install":       {"--with-demo", "--level"},
-	"update":        {"--all", "--level"},
+	"update":        {"--all", "--last", "--level"},
 	"uninstall":     {"--level"},
 	"test":          {"--update", "--tags"},
 	"modules":       {"--config"},

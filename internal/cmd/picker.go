@@ -51,17 +51,22 @@ func (m fuzzyPicker) maxRows() int {
 type pickerItem struct {
 	name     string
 	selected bool
+	recent   bool // part of the previous run (e.g. last `update`); tinted
 }
 
-func newFuzzyPicker(title string, available []string, palette theme.Palette) fuzzyPicker {
+func newFuzzyPicker(title string, available, recent []string, palette theme.Palette) fuzzyPicker {
 	ti := textinput.New()
 	ti.Placeholder = "type to filter…"
 	ti.Prompt = lipgloss.NewStyle().Foreground(palette.Accent).Render("❯ ")
 	ti.Focus()
 
+	recentSet := make(map[string]bool, len(recent))
+	for _, r := range recent {
+		recentSet[r] = true
+	}
 	items := make([]pickerItem, len(available))
 	for i, n := range available {
-		items[i] = pickerItem{name: n}
+		items[i] = pickerItem{name: n, recent: recentSet[n]}
 	}
 
 	m := fuzzyPicker{
@@ -185,6 +190,9 @@ func (m fuzzyPicker) View() string {
 	if m.single {
 		helpText = "type to filter · ↑↓/pgup·pgdn navigate · enter select · esc cancel"
 	}
+	if m.hasRecent() {
+		helpText += " · highlighted = last update"
+	}
 	help := lipgloss.NewStyle().Foreground(p.Faint).Render(helpText)
 	counter := lipgloss.NewStyle().Foreground(p.Dim).Render(
 		fmt.Sprintf(" (%d/%d)", len(m.visible), len(m.items)),
@@ -218,6 +226,8 @@ func (m fuzzyPicker) View() string {
 			name := it.name
 			if i == m.cursor {
 				name = lipgloss.NewStyle().Foreground(p.Accent).Bold(true).Render(name)
+			} else if it.recent {
+				name = lipgloss.NewStyle().Foreground(p.Info).Render(name)
 			}
 			if m.single {
 				b.WriteString(cursorStr + name + "\n")
@@ -238,6 +248,17 @@ func (m fuzzyPicker) View() string {
 	return b.String()
 }
 
+// hasRecent reports whether any item is marked as part of the previous
+// run, so the picker only shows the "last update" legend when relevant.
+func (m fuzzyPicker) hasRecent() bool {
+	for _, it := range m.items {
+		if it.recent {
+			return true
+		}
+	}
+	return false
+}
+
 func (m fuzzyPicker) selectedNames() []string {
 	var out []string
 	for _, it := range m.items {
@@ -248,23 +269,35 @@ func (m fuzzyPicker) selectedNames() []string {
 	return out
 }
 
-// runFuzzyPicker shows the picker and returns the selected items. Empty
-// selection or user cancel returns ErrCancelled.
-func runFuzzyPicker(title string, available []string, palette theme.Palette) ([]string, error) {
+// runFuzzyPickerCore shows the multi-select and returns the selected
+// names, whether the user canceled (Esc / ctrl+c), and any run error. An
+// empty `picked` with `canceled == false` means Enter on an empty
+// selection — the caller decides what that means. `recent` tints the
+// previous run's items.
+func runFuzzyPickerCore(title string, available, recent []string, palette theme.Palette) (picked []string, canceled bool, err error) {
 	if err := requireTTY("pass the selection as command arguments"); err != nil {
-		return nil, err
+		return nil, false, err
 	}
-	m := newFuzzyPicker(title, available, palette)
+	m := newFuzzyPicker(title, available, recent, palette)
 	final, err := tea.NewProgram(m).Run()
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	fm := final.(fuzzyPicker)
 	if fm.canceled {
-		return nil, ErrCancelled
+		return nil, true, nil
 	}
-	picked := fm.selectedNames()
-	if len(picked) == 0 {
+	return fm.selectedNames(), false, nil
+}
+
+// runFuzzyPicker shows the picker and returns the selected items. Empty
+// selection or user cancel returns ErrCancelled.
+func runFuzzyPicker(title string, available []string, palette theme.Palette) ([]string, error) {
+	picked, canceled, err := runFuzzyPickerCore(title, available, nil, palette)
+	if err != nil {
+		return nil, err
+	}
+	if canceled || len(picked) == 0 {
 		return nil, ErrCancelled
 	}
 	return picked, nil
@@ -276,7 +309,7 @@ func runSingleFuzzyPicker(title string, available []string, palette theme.Palett
 	if err := requireTTY("pass the selection as a command argument"); err != nil {
 		return "", err
 	}
-	m := newFuzzyPicker(title, available, palette)
+	m := newFuzzyPicker(title, available, nil, palette)
 	m.single = true
 	final, err := tea.NewProgram(m).Run()
 	if err != nil {

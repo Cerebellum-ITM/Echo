@@ -51,6 +51,10 @@ type session struct {
 	projectDir string
 	lastOutput *lastOutputBuffer
 	prompt     *promptBuilder
+	// interactive is true only in the live REPL prompt loop (Start), not
+	// in one-shot (RunOnce) or recipe (RunRecipe) dispatch. Gates the
+	// `update` empty-picker "repeat last" confirmation.
+	interactive bool
 	// exitCode records the outcome of the last dispatched command for
 	// one-shot (script) mode. It is set by the terminal log helpers
 	// (finalize, *FailureLog, readonlyFinalize, …) and read by RunOnce /
@@ -122,6 +126,7 @@ func newSession(s theme.Styles, p theme.Palette, project, id string, stage theme
 // Start renders the header and enters the interactive prompt loop.
 func Start(s theme.Styles, p theme.Palette, project, id string, stage theme.Stage, version, themeName, username, cwd string, cfg *config.Config) {
 	sess, unknown := newSession(s, p, project, id, stage, version, themeName, username, cwd, cfg)
+	sess.interactive = true
 
 	sess.clearAndRenderHeader()
 	for _, u := range unknown {
@@ -254,6 +259,7 @@ func helpSections() []helpSection {
 			{"  --level <lvl>", "Odoo --log-level (debug…critical; default info)"},
 			{"update <mod...>", "Update modules"},
 			{"  --all", "Update every installed module"},
+			{"  --last", "Repeat the last update for this database"},
 			{"  --level <lvl>", "Odoo --log-level (debug…critical; default info)"},
 			{"uninstall <mod...>", "Uninstall modules"},
 			{"  --level <lvl>", "Odoo --log-level (debug…critical; default info)"},
@@ -424,10 +430,11 @@ func (sess *session) runModules(ctx context.Context, name string, args []string)
 	lc := &logColorer{}
 	stats := &runStats{}
 	opts := cmd.ModulesOpts{
-		Cfg:     sess.cfg,
-		Root:    sess.projectDir,
-		Args:    args,
-		Palette: sess.palette,
+		Cfg:         sess.cfg,
+		Root:        sess.projectDir,
+		Args:        args,
+		Palette:     sess.palette,
+		Interactive: sess.interactive,
 		StreamOut: stats.wrap(func(line string) {
 			sess.print(Line{Kind: lc.classify(line), Text: line})
 		}),

@@ -8,6 +8,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `update --last` repeats the last `update` for the current project and
+  database (Unit 35) — the resolved module list, or `--all` if that was
+  last — bypassing the picker and running directly. The target is
+  persisted on disk (`~/.config/echo/last-updates/<key>.toml`, one record
+  per database), so it survives a REPL restart, and is recorded even when
+  the update fails, so re-running after a fix just works. The previous
+  `--level` is inherited unless overridden on the repeat.
+- In the interactive REPL, the `update` fuzzy picker now highlights the
+  previous run's modules (Unit 35), and confirming the picker with nothing
+  selected offers a brief confirmation to repeat that last update —
+  listing the modules — so the empty picker and `--last` are two routes to
+  the same "repeat last". Explicit `update <mods>` and `update --all` run
+  directly with no confirmation, and script mode (`echo run <file>`,
+  `echo update …`) never prompts.
 - `echo run <file> --log[=<path>]` writes the whole recipe run to a
   plain-text transcript (Unit 34) — every step's streamed output plus the
   `echo.run` step/summary lines, ANSI-stripped — so an update routine

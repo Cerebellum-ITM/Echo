@@ -8,9 +8,11 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/huh"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/pascualchavez/echo/internal/config"
 	"github.com/pascualchavez/echo/internal/docker"
 	"github.com/pascualchavez/echo/internal/env"
@@ -65,6 +67,10 @@ type ModulesOpts struct {
 	Args      []string
 	Palette   theme.Palette
 	StreamOut func(string)
+	// Interactive is true only in the interactive REPL. It gates the
+	// `update` empty-picker "repeat last" confirmation so it never fires
+	// under `echo run <file>` / one-shot script dispatch.
+	Interactive bool
 }
 
 var (
@@ -73,6 +79,8 @@ var (
 	ErrNoModulesGiven     = errors.New("no module names given")
 	ErrNoModulesAvailable = errors.New("no modules found — configure addons paths with `modules --config`")
 	ErrInvalidLogLevel    = errors.New("invalid --level")
+	ErrNoLastUpdate       = errors.New("no previous update to repeat for this database")
+	ErrLastExclusive      = errors.New("--last takes no module names and can't combine with --all")
 )
 
 // validLogLevel reports whether lvl is one of Odoo's accepted --log-level
@@ -138,7 +146,7 @@ func RunInstall(ctx context.Context, opts ModulesOpts) ([]string, error) {
 		}
 	}
 	if len(modules) == 0 {
-		picked, err := pickModulesInteractive(ctx, opts, "Modules to install")
+		picked, err := pickModulesInteractive(ctx, opts, "Modules to install", nil)
 		if err != nil {
 			return nil, err
 		}
@@ -158,27 +166,117 @@ func RunUpdate(ctx context.Context, opts ModulesOpts) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	all := false
+	all, last := false, false
 	modules := make([]string, 0, len(rest))
 	for _, a := range rest {
 		switch a {
 		case "--all":
 			all = true
+		case "--last":
+			last = true
 		default:
 			modules = append(modules, a)
 		}
 	}
+
+	// --last: repeat the last update for this (project, database).
+	if last {
+		if all || len(modules) > 0 {
+			return nil, ErrLastExclusive
+		}
+		prev, ok := config.LoadLastUpdate(opts.Cfg.ProjectKey, opts.Cfg.DBName)
+		if !ok {
+			return nil, ErrNoLastUpdate
+		}
+		if level == "" {
+			level = prev.Level // inherit verbosity unless overridden this run
+		}
+		if prev.All {
+			saveLastUpdate(opts, nil, true, level)
+			return []string{"--all"}, runOdoo(ctx, opts, odoo.WithLogLevel(odoo.UpdateAll(buildConn(opts)), level))
+		}
+		saveLastUpdate(opts, prev.Modules, false, level)
+		return prev.Modules, runOdoo(ctx, opts, odoo.WithLogLevel(odoo.Update(buildConn(opts), prev.Modules), level))
+	}
+
 	if all {
+		saveLastUpdate(opts, nil, true, level)
 		return []string{"--all"}, runOdoo(ctx, opts, odoo.WithLogLevel(odoo.UpdateAll(buildConn(opts)), level))
 	}
+
+	prev, hasPrev := config.LoadLastUpdate(opts.Cfg.ProjectKey, opts.Cfg.DBName)
 	if len(modules) == 0 {
-		picked, err := pickModulesInteractive(ctx, opts, "Modules to update")
+		picked, canceled, err := pickModulesForUpdate(ctx, opts, prev.Modules)
 		if err != nil {
 			return nil, err
 		}
-		modules = picked
+		if canceled {
+			return nil, ErrCancelled
+		}
+		if len(picked) == 0 {
+			// Enter with nothing selected → offer to repeat the last update.
+			if !opts.Interactive || !hasPrev || prev.All || len(prev.Modules) == 0 {
+				return nil, ErrCancelled
+			}
+			if err := confirmRepeatLast(opts.Palette, prev.Modules); err != nil {
+				return nil, err
+			}
+			modules = prev.Modules
+			if level == "" {
+				level = prev.Level
+			}
+		} else {
+			modules = picked
+		}
 	}
+	saveLastUpdate(opts, modules, false, level)
 	return modules, runOdoo(ctx, opts, odoo.WithLogLevel(odoo.Update(buildConn(opts), modules), level))
+}
+
+// saveLastUpdate records the resolved target for the current
+// (project, database) so `update --last` and the empty-picker repeat can
+// reuse it. Best-effort: a save failure never aborts the update.
+func saveLastUpdate(opts ModulesOpts, modules []string, all bool, level string) {
+	_ = config.SaveLastUpdate(opts.Cfg.ProjectKey, opts.Cfg.DBName, config.LastUpdate{
+		Modules: modules,
+		All:     all,
+		Level:   level,
+		SavedAt: time.Now(),
+	})
+}
+
+// confirmRepeatLast asks whether to repeat the previous update's module
+// list. It is only reached on the interactive empty-picker path; it skips
+// silently when stdin isn't a TTY. The modules are tinted with the
+// palette's Info color to match the picker highlight.
+func confirmRepeatLast(palette theme.Palette, modules []string) error {
+	if !stdinIsTTY() {
+		return nil
+	}
+	info := lipgloss.NewStyle().Foreground(palette.Info)
+	var b strings.Builder
+	for _, m := range modules {
+		b.WriteString("  " + info.Render(m) + "\n")
+	}
+	confirmed := false
+	form := huh.NewForm(huh.NewGroup(
+		huh.NewConfirm().
+			Title(fmt.Sprintf("Repeat last update — %d module(s)?", len(modules))).
+			Description(b.String()).
+			Affirmative("Update").
+			Negative("Cancel").
+			Value(&confirmed),
+	)).
+		WithTheme(BuildHuhTheme(palette)).
+		WithInput(os.Stdin).
+		WithOutput(os.Stdout)
+	if err := form.Run(); err != nil {
+		return err
+	}
+	if !confirmed {
+		return ErrCancelled
+	}
+	return nil
 }
 
 // RunUninstall returns the resolved modules along with the run error.
@@ -191,7 +289,7 @@ func RunUninstall(ctx context.Context, opts ModulesOpts) ([]string, error) {
 		return nil, err
 	}
 	if len(modules) == 0 {
-		picked, err := pickModulesInteractive(ctx, opts, "Modules to uninstall")
+		picked, err := pickModulesInteractive(ctx, opts, "Modules to uninstall", nil)
 		if err != nil {
 			return nil, err
 		}
@@ -244,7 +342,7 @@ func RunTest(ctx context.Context, opts ModulesOpts) ([]string, error) {
 	}
 
 	if len(modules) == 0 {
-		picked, err := pickModulesInteractive(ctx, opts, "Modules to test")
+		picked, err := pickModulesInteractive(ctx, opts, "Modules to test", nil)
 		if err != nil {
 			return nil, err
 		}
@@ -259,8 +357,10 @@ func RunTest(ctx context.Context, opts ModulesOpts) ([]string, error) {
 
 // pickModulesInteractive opens an fzf-style fuzzy picker with always-on
 // filter for the available modules (resolved from host folders or, in
-// conf mode / as a fallback, from the instance's odoo.conf).
-func pickModulesInteractive(ctx context.Context, opts ModulesOpts, title string) ([]string, error) {
+// conf mode / as a fallback, from the instance's odoo.conf). `recent`
+// tints the previous run's modules; pass nil when there's nothing to
+// highlight. An empty selection or Esc returns ErrCancelled.
+func pickModulesInteractive(ctx context.Context, opts ModulesOpts, title string, recent []string) ([]string, error) {
 	available, err := resolveModules(ctx, opts)
 	if err != nil {
 		return nil, err
@@ -268,7 +368,29 @@ func pickModulesInteractive(ctx context.Context, opts ModulesOpts, title string)
 	if len(available) == 0 {
 		return nil, ErrNoModulesAvailable
 	}
-	return runFuzzyPicker(title, available, opts.Palette)
+	picked, canceled, err := runFuzzyPickerCore(title, available, recent, opts.Palette)
+	if err != nil {
+		return nil, err
+	}
+	if canceled || len(picked) == 0 {
+		return nil, ErrCancelled
+	}
+	return picked, nil
+}
+
+// pickModulesForUpdate is the `update`-specific picker: it tints the
+// previous run's modules and reports `canceled` (Esc) distinctly from an
+// empty confirm (Enter with nothing selected), so RunUpdate can fall back
+// to repeating the last update on an empty confirm.
+func pickModulesForUpdate(ctx context.Context, opts ModulesOpts, recent []string) (picked []string, canceled bool, err error) {
+	available, err := resolveModules(ctx, opts)
+	if err != nil {
+		return nil, false, err
+	}
+	if len(available) == 0 {
+		return nil, false, ErrNoModulesAvailable
+	}
+	return runFuzzyPickerCore("Modules to update", available, recent, opts.Palette)
 }
 
 // addons modes recorded in the per-project config.

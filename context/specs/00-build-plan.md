@@ -44,6 +44,7 @@ Decomposition of Echo into ordered, scoped, verifiable units.
 | 32 | recipe-runner               | `echo run <file>` (or stdin): execute a sequence of Echo commands as an update script, one per line, fail-fast on the first non-zero exit. Builds on the script-mode dispatch + exit codes | 31         |
 | 33 | module-log-level            | `--level <lvl>` on `update`/`install`/`uninstall` maps to Odoo's native `--log-level`; validated against Odoo's level set, appended via `odoo.WithLogLevel` | 05         |
 | 34 | recipe-run-log              | `echo run … --log[=<path>]` captures the full run transcript (plain) + summary to a `.log`; opt-in, default under `~/.config/echo/run-logs/`. Tees `print`/`emitOdooLog` to a sink | 32         |
+| 35 | update-last-recall          | `update --last` repeats the last update per (project, db) — persisted at `~/.config/echo/last-updates/<key>.toml`, repeats `--all` too. Without `--last`, an interactive confirmation lists the modules to update with previous-run modules highlighted (picker + confirm). REPL-only; never fires under `echo run`/script mode | 05, 06, 33 |
 
 ## Notes
 
