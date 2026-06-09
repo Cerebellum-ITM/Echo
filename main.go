@@ -102,6 +102,14 @@ func main() {
 
 	if oneShot {
 		name := args[0]
+		// `run` is a one-shot-only orchestrator (not a REPL command, not in
+		// Registry): it executes a recipe of commands. Handle it before the
+		// generic single-command dispatch.
+		if name == "run" {
+			code := repl.RunRecipe(styles, palette, cfg.Logo, "01", stage,
+				cfg.OdooVersion, cfg.Theme, username, root, cfg, args[1:])
+			os.Exit(code)
+		}
 		if !repl.IsScriptCommand(name) {
 			log.Error("unknown command", "cmd", name,
 				"hint", "start `echo` and type `help` for the command list")

@@ -26,6 +26,7 @@
 - `internal/config/` — load/save global and per-project config under `~/.config/echo/`
 - `main.go` — entry point: parse a leading `-C/--project-dir`, locate project root, detect compose flavor, load config. With no command argument it renders the header and starts the REPL; with a command argument (`echo <cmd> [args]`) it runs that single command once via `repl.RunOnce` and exits with the resulting status code (one-shot / script mode). `echo connect …` keeps its own projectless path before the root check.
 - `internal/repl/script.go` — non-interactive one-shot dispatch: `RunOnce` builds a headless `session` (via the shared `newSession`, no prompt loop) and runs one command, returning a process exit code; `IsScriptCommand` gates which commands are one-shot-eligible.
+- `internal/repl/recipe.go` — recipe runner behind `echo run <file>` (a one-shot-only orchestrator, not a `Registry` command): reads one command per line and runs each through the one-shot dispatch, fail-fast on the first non-zero exit (or `--continue-on-error`).
 
 ## Storage Model
 

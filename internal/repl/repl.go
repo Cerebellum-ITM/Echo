@@ -323,6 +323,20 @@ func (sess *session) runHelp() {
 			fmt.Println("  " + s.Info.Render(label) + s.Out.Render(it.desc))
 		}
 	}
+
+	// Script mode is one-shot only (no REPL command), so it lives outside
+	// helpSections() — which is cross-checked against the command Registry.
+	sess.print(Line{Kind: "out", Text: ""})
+	sess.print(Line{Kind: "accent", Text: "Scripting (one-shot, outside the REPL)"})
+	for _, it := range []helpEntry{
+		{"echo <cmd> [args]", "Run one command and exit with a status code"},
+		{"echo run <file>", "Run a recipe (one command per line); - reads stdin"},
+		{"  --continue-on-error", "Run every step instead of stopping at the first failure"},
+		{"echo -C <dir> <cmd>", "Run from outside the project directory"},
+	} {
+		label := lipgloss.NewStyle().Width(22).Render(it.cmd)
+		fmt.Println("  " + s.Info.Render(label) + s.Out.Render(it.desc))
+	}
 }
 
 // helpCommandNames extracts the flat set of top-level command names

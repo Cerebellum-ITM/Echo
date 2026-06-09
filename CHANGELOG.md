@@ -8,6 +8,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `echo run <file>` **recipe runner** (Unit 32). Runs a whole update
+  routine from a single file — one Echo command per line — instead of N
+  separate invocations. Blank lines and `#` comments are ignored; the
+  recipe can also be read from stdin (`echo run -` or piped input). Each
+  step streams through the same one-shot path script mode added, and the
+  run **stops at the first step that exits non-zero** (fail-fast),
+  exiting with that step's code; `--continue-on-error` runs every step
+  and exits non-zero if any failed. Progress and the final summary are
+  emitted as `echo.run` log lines in Echo's Odoo style. Because steps go
+  through the one-shot dispatch, any step that would prompt fails closed
+  without a TTY — a recipe must be explicit (module names, `--force`).
 - Non-interactive **script mode** (Unit 31). `echo <command> [args]` now
   runs a single command and exits, so Echo can be driven from shell
   scripts and CI (e.g. an update routine that chains `echo stop`,
