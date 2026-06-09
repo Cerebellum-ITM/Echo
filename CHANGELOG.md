@@ -22,6 +22,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `--last` re-shows the session's last `modinfo` target without the picker
   (in-memory only, per session) — so a result first reached via the picker
   can be copied with `modinfo --last --copy`.
+- New `view [<mod>]` command (Unit 43): open a fuzzy picker of a module's
+  files and display the chosen one through `bat`/`batcat` (syntax
+  highlight + paging) when it's on `PATH`, falling back to a themed
+  internal print otherwise. `--copy` copies the file's contents to the
+  clipboard instead. Reads files from the host (host mode) or inside the
+  Odoo container (conf mode). With no module a module picker runs first.
+  `--last` re-displays the session's last viewed file without the pickers
+  (in-memory only, per session) — handy to copy a file first reached
+  interactively with `view --last --copy`.
 
 ## [0.7.0] — 2026-06-09
 

@@ -66,11 +66,13 @@ type session struct {
 	// and read by RunRecipe to build the per-step run summary (Unit 37).
 	lastErrors   int
 	lastWarnings int
-	// lastModinfoModule remembers the last `modinfo` target so `--last`
-	// can replay it without the picker (e.g. to copy a result first
-	// reached interactively). Lives only for the session — never
-	// persisted to disk.
+	// lastModinfoModule / lastViewModule / lastViewFile remember the last
+	// `modinfo` / `view` target so `--last` can replay it without the
+	// picker (e.g. to copy a result first reached interactively). These
+	// live only for the session — never persisted to disk.
 	lastModinfoModule string
+	lastViewModule    string
+	lastViewFile      string
 }
 
 // Exit codes returned by one-shot (script) dispatch. The interactive REPL
@@ -187,7 +189,7 @@ var dispatchNames = []string{
 	"help", "clear", "copy-last", "report",
 	"init", "reset",
 	"up", "down", "stop", "restart", "ps", "logs",
-	"install", "update", "uninstall", "test", "modules", "modinfo",
+	"install", "update", "uninstall", "test", "modules", "modinfo", "view",
 	"i18n-export", "i18n-update",
 	"db-backup", "db-restore", "db-drop", "db-neutralize", "db-list",
 	"shell", "bash", "psql", "connect",
@@ -243,6 +245,8 @@ func (sess *session) dispatchParsed(ctx context.Context, cmd string, args []stri
 		sess.runModules(ctx, cmd, args)
 	case "modinfo":
 		sess.runModinfo(ctx, args)
+	case "view":
+		sess.runView(ctx, args)
 	case "i18n-export", "i18n-update":
 		sess.runI18n(ctx, cmd, args)
 	case "db-backup", "db-restore", "db-drop", "db-neutralize", "db-list":
@@ -287,6 +291,9 @@ func helpSections() []helpSection {
 			{"modinfo [<mod>]", "Compare DB-installed version vs manifest version"},
 			{"  --copy", "Copy the report to the clipboard"},
 			{"  --last", "Re-show this session's last modinfo (skips the picker)"},
+			{"view [<mod>]", "Pick a module file and view it (bat, else plain)"},
+			{"  --copy", "Copy the file to the clipboard instead"},
+			{"  --last", "Re-display this session's last viewed file (skips pickers)"},
 		}},
 		{"i18n", []helpEntry{
 			{"i18n-export <mod> [lang]", "Export <mod>/i18n/<lang>.po (default es_MX)"},
