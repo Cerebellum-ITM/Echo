@@ -153,6 +153,61 @@ func TestResolveLogDest(t *testing.T) {
 	}
 }
 
+func TestStripSilent(t *testing.T) {
+	cases := []struct {
+		args     []string
+		clean    []string
+		suppress int
+		label    string
+		bad      string
+	}{
+		{[]string{"sale"}, []string{"sale"}, -1, "", ""},
+		{[]string{"sale", "--silent"}, []string{"sale"}, silentAll, "all", ""},
+		{[]string{"--silent", "sale", "account"}, []string{"sale", "account"}, silentAll, "all", ""},
+		{[]string{"sale", "--silent=info"}, []string{"sale"}, levelRank["INFO"], "info", ""},
+		{[]string{"--silent=warn", "sale"}, []string{"sale"}, levelRank["WARNING"], "warning", ""},
+		{[]string{"sale", "--silent=bogus"}, []string{"sale"}, -1, "", "bogus"},
+	}
+	for _, c := range cases {
+		clean, suppress, label, bad := stripSilent(c.args)
+		if !reflect.DeepEqual(clean, c.clean) || suppress != c.suppress || label != c.label || bad != c.bad {
+			t.Errorf("stripSilent(%v) = (%v, %d, %q, %q), want (%v, %d, %q, %q)",
+				c.args, clean, suppress, label, bad, c.clean, c.suppress, c.label, c.bad)
+		}
+	}
+}
+
+func TestOutputSuppressed(t *testing.T) {
+	defer func() { suppressLevel = -1 }()
+
+	// Inactive: nothing is suppressed.
+	suppressLevel = -1
+	for _, lvl := range []string{"", "INFO", "WARNING", "ERROR", "CRITICAL"} {
+		if outputSuppressed(lvl) {
+			t.Errorf("inactive: %q should not be suppressed", lvl)
+		}
+	}
+	// --silent (all): everything, including plain ("") and CRITICAL.
+	suppressLevel = silentAll
+	for _, lvl := range []string{"", "INFO", "WARNING", "CRITICAL"} {
+		if !outputSuppressed(lvl) {
+			t.Errorf("silent=all: %q should be suppressed", lvl)
+		}
+	}
+	// --silent=info: DEBUG/INFO/plain suppressed, WARNING+ shown.
+	suppressLevel = levelRank["INFO"]
+	for _, lvl := range []string{"", "DEBUG", "INFO"} {
+		if !outputSuppressed(lvl) {
+			t.Errorf("silent=info: %q should be suppressed", lvl)
+		}
+	}
+	for _, lvl := range []string{"WARNING", "ERROR", "CRITICAL"} {
+		if outputSuppressed(lvl) {
+			t.Errorf("silent=info: %q should NOT be suppressed", lvl)
+		}
+	}
+}
+
 func TestEchoRecipesInEmpty(t *testing.T) {
 	got, err := echoRecipesIn(t.TempDir())
 	if err != nil {
@@ -166,7 +221,7 @@ func TestEchoRecipesInEmpty(t *testing.T) {
 func TestRunRecipeStepsFailFast(t *testing.T) {
 	steps := []string{"stop", "update bad", "restart"}
 	var ran []string
-	runStep := func(name string, args []string) stepOutcome {
+	runStep := func(name string, args []string, _ int) stepOutcome {
 		ran = append(ran, name)
 		if name == "update" {
 			return stepOutcome{code: exitError}
@@ -186,7 +241,7 @@ func TestRunRecipeStepsFailFast(t *testing.T) {
 func TestRunRecipeStepsContinueOnError(t *testing.T) {
 	steps := []string{"stop", "update bad", "restart"}
 	var ran []string
-	runStep := func(name string, args []string) stepOutcome {
+	runStep := func(name string, args []string, _ int) stepOutcome {
 		ran = append(ran, name)
 		if name == "update" {
 			return stepOutcome{code: exitError}
@@ -205,7 +260,7 @@ func TestRunRecipeStepsContinueOnError(t *testing.T) {
 
 func TestRunRecipeStepsAllPass(t *testing.T) {
 	steps := []string{"stop", "up", "restart"}
-	runStep := func(name string, args []string) stepOutcome { return stepOutcome{code: exitOK} }
+	runStep := func(name string, args []string, _ int) stepOutcome { return stepOutcome{code: exitOK} }
 	if code := runRecipeSteps(steps, false, runStep, func(string, string, ...logField) {}); code != exitOK {
 		t.Errorf("all-pass exit = %d, want %d", code, exitOK)
 	}
@@ -239,7 +294,7 @@ func findCall(calls []logCall, msg string) (logCall, bool) {
 
 func TestRunRecipeStepsSummaryFailFast(t *testing.T) {
 	steps := []string{"stop", "update bad", "restart"}
-	runStep := func(name string, args []string) stepOutcome {
+	runStep := func(name string, args []string, _ int) stepOutcome {
 		if name == "update" {
 			return stepOutcome{code: exitError, errors: 2, warnings: 1}
 		}
@@ -284,7 +339,7 @@ func TestRunRecipeStepsSummaryFailFast(t *testing.T) {
 
 func TestRunRecipeStepsSummaryAllPass(t *testing.T) {
 	steps := []string{"stop", "up"}
-	runStep := func(name string, args []string) stepOutcome { return stepOutcome{code: exitOK} }
+	runStep := func(name string, args []string, _ int) stepOutcome { return stepOutcome{code: exitOK} }
 	var calls []logCall
 	runRecipeSteps(steps, false, runStep, captureLog(&calls))
 

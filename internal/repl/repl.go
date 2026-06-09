@@ -357,6 +357,7 @@ func (sess *session) runHelp() {
 		{"  --pick", "Pick a .echo recipe from the current directory"},
 		{"  --continue-on-error", "Run every step instead of stopping at the first failure"},
 		{"  --log[=<path>]", "Save a plain transcript (default dir, a file, or --log=. for ./<recipe>.log)"},
+		{"  <step> --silent[=lvl]", "Silence a step's output (screen+log); =lvl keeps that level and above"},
 		{"echo -C <dir> <cmd>", "Run from outside the project directory"},
 	} {
 		label := lipgloss.NewStyle().Width(22).Render(it.cmd)
@@ -794,6 +795,15 @@ func (sess *session) emitStreamLine(lc *logColorer, line string) {
 }
 
 func (sess *session) print(l Line) {
+	// Capture for `report` even when the line is silenced — suppression is
+	// about live noise, not losing the data.
+	if sess.lastOutput != nil {
+		sess.lastOutput.Add(l)
+	}
+	if outputSuppressed(levelFromKind(l.Kind)) {
+		return
+	}
+
 	s := sess.styles
 	var text string
 	if rendered, ok := renderLogLine(l.Text, s, sess.palette); ok {
@@ -821,9 +831,6 @@ func (sess *session) print(l Line) {
 		default:
 			text = l.Text
 		}
-	}
-	if sess.lastOutput != nil {
-		sess.lastOutput.Add(l)
 	}
 	fmt.Println(text)
 	teeRunLog(l.Text)

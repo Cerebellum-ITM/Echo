@@ -66,10 +66,12 @@ func RunRecipe(s theme.Styles, p theme.Palette, project, id string, stage theme.
 	report := config.RunReport{Recipe: recipeLabel(path)}
 	stepNum := 0
 
-	runStep := func(name string, sargs []string) stepOutcome {
+	runStep := func(name string, sargs []string, suppress int) stepOutcome {
 		stepNum++
 		start := time.Now()
+		suppressLevel = suppress
 		sess.dispatchParsed(ctx, name, sargs)
+		suppressLevel = -1
 		out := stepOutcome{
 			code:     sess.exitCode,
 			errors:   sess.lastErrors,
@@ -194,13 +196,14 @@ type stepOutcome struct {
 // per-step recap, and the totals line. The process exit code is unchanged
 // from the bare-int era: all-pass → exitOK, fail-fast → the failing step's
 // code, continue-on-error → exitError if any step failed.
-func runRecipeSteps(steps []string, continueOnError bool, runStep func(name string, args []string) stepOutcome, log func(level, msg string, fields ...logField)) int {
+func runRecipeSteps(steps []string, continueOnError bool, runStep func(name string, args []string, suppress int) stepOutcome, log func(level, msg string, fields ...logField)) int {
 	total := len(steps)
 
 	type result struct {
 		step   string
 		out    stepOutcome
 		status string
+		silent string // suppression label ("all"/level) when --silent was used
 	}
 	var results []result
 	failed, skipped := 0, 0
@@ -210,8 +213,12 @@ func runRecipeSteps(steps []string, continueOnError bool, runStep func(name stri
 	for i, step := range steps {
 		log("INFO", fmt.Sprintf("step %d/%d → %s", i+1, total, step))
 		fields := strings.Fields(step)
-		out := runStep(fields[0], fields[1:])
-		results = append(results, result{step: step, out: out, status: stepStatus(out.code)})
+		clean, suppress, label, bad := stripSilent(fields[1:])
+		if bad != "" {
+			log("WARNING", "ignoring invalid --silent="+bad+" — running without suppression")
+		}
+		out := runStep(fields[0], clean, suppress)
+		results = append(results, result{step: step, out: out, status: stepStatus(out.code), silent: label})
 		if out.code != exitOK {
 			lastCode = out.code
 			failed++
@@ -239,7 +246,7 @@ func runRecipeSteps(steps []string, continueOnError bool, runStep func(name stri
 		durTot += r.out.duration
 		log(recapLevel(r.status),
 			fmt.Sprintf("step %d/%d %s", i+1, total, r.status),
-			stepFields(r.step, r.out, r.status)...)
+			stepFields(r.step, r.out, r.status, r.silent)...)
 	}
 
 	okN := total - failed - skipped
@@ -299,8 +306,11 @@ func recapLevel(status string) string {
 // stepFields builds the recap fields for one step: always the cmd; the
 // warning count when non-zero; on failure the error count + exit code; and
 // the duration for any step that actually ran (skipped steps have none).
-func stepFields(step string, out stepOutcome, status string) []logField {
+func stepFields(step string, out stepOutcome, status, silent string) []logField {
 	fields := []logField{{"cmd", step}}
+	if silent != "" {
+		fields = append(fields, logField{"silent", silent})
+	}
 	if out.warnings > 0 {
 		fields = append(fields, logField{"warnings", strconv.Itoa(out.warnings)})
 	}

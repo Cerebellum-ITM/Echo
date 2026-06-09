@@ -8,6 +8,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Per-step `--silent` in `echo run` (Unit 41): append `--silent` to a
+  recipe step to suppress its output on screen **and** in the `--log`
+  transcript, or `--silent=<lvl>` to drop that level and below while still
+  showing more severe lines (`stop --silent=info` hides DEBUG/INFO, keeps
+  WARNING/ERROR). The runner's `step N/M →` line and the recap stay visible
+  (the recap shows `silent=<all|lvl>`), and silenced lines are still
+  captured for `report`, so `report --step=N` can pull them up. `--silent`
+  is recipe-only — intercepted by the runner, never passed to the command —
+  so it works on any non-interactive step.
 - New `report` command (Unit 40) inspects or copies the **last run's** logs
   by step and level, across process boundaries: every `echo run` now
   persists a structured `~/.config/echo/run-logs/last-run.json` (per step:

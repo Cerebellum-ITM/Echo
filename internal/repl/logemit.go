@@ -46,6 +46,12 @@ type logField struct {
 // for Odoo loggers, message default fg, and per-key colors on the
 // structured fields.
 func emitOdooLog(level, logger, msg string, fields []logField, s theme.Styles, p theme.Palette, db string) {
+	// Silenced recipe step (--silent): drop screen + log entirely. The
+	// runner's own step/recap lines are emitted with suppression inactive,
+	// so they stay visible.
+	if outputSuppressed(level) {
+		return
+	}
 	ts := time.Now().Format("2006-01-02 15:04:05.000")
 	ts = strings.Replace(ts, ".", ",", 1)
 	pid := strconv.Itoa(os.Getpid())
