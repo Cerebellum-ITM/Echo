@@ -37,6 +37,7 @@ Decomposition of Echo into ordered, scoped, verifiable units.
 | 23 | db-drop-force-connections   | `--force` on `db-drop` (and `db-restore --force`'s replace) terminates active connections (`pg_terminate_backend`) before dropping, so an orphaned/busy DB can be removed without a manual `down odoo` | 09         |
 | 24 | flag-highlight-complete     | Extend the live REPL editing to flags: known flags of the current command render in an accent color (unknown ones faint, never red), and Tab autocompletes flags via a new per-command flag registry | 13, 21     |
 | 25 | filestore-in-container      | Read/write the filestore inside the Odoo container (`/var/lib/odoo/filestore/<db>`, configurable) via `docker cp` for both `db-restore` and `db-backup --with-filestore`, fixing the host-path mismatch that left restored attachments invisible to Odoo | 09, 22     |
+| 26 | addons-paths-from-conf      | Discover modules from the instance's `odoo.conf` (`addons_path`, read inside the container) when the host scan finds none: parse the conf, `ls` each container path, persist `addons_mode=conf` + paths, auto-refresh live. Falls back automatically; `modules --config` still pins host mode | 05         |
 
 ## Notes
 

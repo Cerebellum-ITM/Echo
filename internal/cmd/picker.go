@@ -19,10 +19,33 @@ type fuzzyPicker struct {
 	items    []pickerItem
 	visible  []int
 	cursor   int
+	offset   int // index into visible of the first rendered row (scroll)
+	height   int // terminal height; 0 until the first WindowSizeMsg
 	title    string
 	palette  theme.Palette
 	canceled bool
 	single   bool
+}
+
+// chromeLines is the number of non-list lines the picker always renders
+// (title, filter, separator, blank, help) — subtracted from the terminal
+// height to size the scrollable window.
+const chromeLines = 6
+
+// defaultListRows is the window size used before the first WindowSizeMsg
+// arrives (or when the height is unknown).
+const defaultListRows = 15
+
+// maxRows is how many list items fit in the current viewport.
+func (m fuzzyPicker) maxRows() int {
+	if m.height <= 0 {
+		return defaultListRows
+	}
+	r := m.height - chromeLines
+	if r < 3 {
+		return 3
+	}
+	return r
 }
 
 type pickerItem struct {
@@ -66,11 +89,38 @@ func (m *fuzzyPicker) recompute() {
 			m.cursor = 0
 		}
 	}
+	m.clampScroll()
+}
+
+// clampScroll keeps offset within bounds and the cursor inside the
+// visible window.
+func (m *fuzzyPicker) clampScroll() {
+	rows := m.maxRows()
+	maxOffset := len(m.visible) - rows
+	if maxOffset < 0 {
+		maxOffset = 0
+	}
+	if m.cursor < m.offset {
+		m.offset = m.cursor
+	} else if m.cursor >= m.offset+rows {
+		m.offset = m.cursor - rows + 1
+	}
+	if m.offset > maxOffset {
+		m.offset = maxOffset
+	}
+	if m.offset < 0 {
+		m.offset = 0
+	}
 }
 
 func (m fuzzyPicker) Init() tea.Cmd { return textinput.Blink }
 
 func (m fuzzyPicker) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if ws, ok := msg.(tea.WindowSizeMsg); ok {
+		m.height = ws.Height
+		m.clampScroll()
+		return m, nil
+	}
 	if k, ok := msg.(tea.KeyMsg); ok {
 		switch k.String() {
 		case "ctrl+c", "esc":
@@ -90,12 +140,31 @@ func (m fuzzyPicker) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "up", "ctrl+p":
 			if m.cursor > 0 {
 				m.cursor--
+				m.clampScroll()
 			}
 			return m, nil
 		case "down", "ctrl+n":
 			if m.cursor < len(m.visible)-1 {
 				m.cursor++
+				m.clampScroll()
 			}
+			return m, nil
+		case "pgup":
+			m.cursor -= m.maxRows()
+			if m.cursor < 0 {
+				m.cursor = 0
+			}
+			m.clampScroll()
+			return m, nil
+		case "pgdown":
+			m.cursor += m.maxRows()
+			if m.cursor > len(m.visible)-1 {
+				m.cursor = len(m.visible) - 1
+			}
+			if m.cursor < 0 {
+				m.cursor = 0
+			}
+			m.clampScroll()
 			return m, nil
 		}
 	}
@@ -112,9 +181,9 @@ func (m fuzzyPicker) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m fuzzyPicker) View() string {
 	p := m.palette
 	title := lipgloss.NewStyle().Foreground(p.Accent).Bold(true).Render(m.title)
-	helpText := "type to filter · tab toggle · ↑↓ navigate · enter confirm · esc cancel"
+	helpText := "type to filter · tab toggle · ↑↓/pgup·pgdn navigate · enter confirm · esc cancel"
 	if m.single {
-		helpText = "type to filter · ↑↓ navigate · enter select · esc cancel"
+		helpText = "type to filter · ↑↓/pgup·pgdn navigate · enter select · esc cancel"
 	}
 	help := lipgloss.NewStyle().Foreground(p.Faint).Render(helpText)
 	counter := lipgloss.NewStyle().Foreground(p.Dim).Render(
@@ -129,7 +198,18 @@ func (m fuzzyPicker) View() string {
 	if len(m.visible) == 0 {
 		b.WriteString(lipgloss.NewStyle().Foreground(p.Dim).Render("  (no matches)") + "\n")
 	} else {
-		for i, idx := range m.visible {
+		rows := m.maxRows()
+		start := m.offset
+		end := start + rows
+		if end > len(m.visible) {
+			end = len(m.visible)
+		}
+		moreStyle := lipgloss.NewStyle().Foreground(p.Dim)
+		if start > 0 {
+			b.WriteString(moreStyle.Render(fmt.Sprintf("  ↑ %d more", start)) + "\n")
+		}
+		for i := start; i < end; i++ {
+			idx := m.visible[i]
 			it := m.items[idx]
 			cursorStr := "  "
 			if i == m.cursor {
@@ -148,6 +228,9 @@ func (m fuzzyPicker) View() string {
 				checkbox = lipgloss.NewStyle().Foreground(p.Success).Render("[×]")
 			}
 			b.WriteString(cursorStr + checkbox + " " + name + "\n")
+		}
+		if end < len(m.visible) {
+			b.WriteString(moreStyle.Render(fmt.Sprintf("  ↓ %d more", len(m.visible)-end)) + "\n")
 		}
 	}
 

@@ -29,6 +29,17 @@ type Config struct {
 	// read/write the filestore via `docker cp`.
 	FilestorePath string
 
+	// AddonsMode selects how module listing resolves addons paths:
+	// "host" (default) scans folders under the project root on the host;
+	// "conf" reads `addons_path` from the instance's odoo.conf inside the
+	// container and lists modules there. AddonsPaths holds host-relative
+	// subpaths in host mode, absolute container paths in conf mode.
+	AddonsMode string
+
+	// ConfPath is the odoo.conf location inside the Odoo container, read
+	// in conf mode to discover addons paths (default /etc/odoo/odoo.conf).
+	ConfPath string
+
 	// Compose project name override (per project). When empty, the REPL
 	// derives the name from COMPOSE_PROJECT_NAME or the project dir basename.
 	ComposeProject string
@@ -82,6 +93,8 @@ type projectFile struct {
 	DBName         string       `toml:"db_name"`
 	Stage          string       `toml:"stage"`
 	AddonsPaths    []string     `toml:"addons_paths"`
+	AddonsMode     string       `toml:"addons_mode"`
+	ConfPath       string       `toml:"conf_path"`
 	ComposeProject string       `toml:"compose_project"`
 	ProjectPath    string       `toml:"project_path"`
 	FilestorePath  string       `toml:"filestore_path"`
@@ -176,6 +189,8 @@ func Load(projectPath string) (*Config, error) {
 	cfg.DBName = p.DBName
 	cfg.Stage = p.Stage
 	cfg.AddonsPaths = p.AddonsPaths
+	cfg.AddonsMode = p.AddonsMode
+	cfg.ConfPath = p.ConfPath
 	cfg.ComposeProject = p.ComposeProject
 	if p.ProjectPath != "" {
 		cfg.ProjectPath = p.ProjectPath
@@ -281,6 +296,8 @@ func SaveProject(cfg *Config) error {
 		DBName:         cfg.DBName,
 		Stage:          cfg.Stage,
 		AddonsPaths:    cfg.AddonsPaths,
+		AddonsMode:     cfg.AddonsMode,
+		ConfPath:       cfg.ConfPath,
 		ComposeProject: cfg.ComposeProject,
 		ProjectPath:    cfg.ProjectPath,
 		FilestorePath:  cfg.FilestorePath,
