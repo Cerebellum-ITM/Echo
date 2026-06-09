@@ -211,11 +211,13 @@ func TestRunRecipeStepsSummaryFailFast(t *testing.T) {
 	} else if _, has := c.fields["took"]; has {
 		t.Error("skipped step must not carry a took field")
 	}
-	// Totals line: failed=1, skipped=1, warnings total = 3 (only ok+failed counted), ERROR.
+	// Totals line: failed=1, skipped=1, errors=2 (from the failed step),
+	// warnings total = 4 (3 on step 1 + 1 on step 2), ERROR.
 	if c, ok := findCall(calls, "run summary"); !ok {
 		t.Error("missing run summary")
 	} else if c.level != "ERROR" || c.fields["steps"] != "3" || c.fields["failed"] != "1" ||
-		c.fields["skipped"] != "1" || c.fields["ok"] != "1" || c.fields["warnings"] != "4" {
+		c.fields["skipped"] != "1" || c.fields["ok"] != "1" ||
+		c.fields["errors"] != "2" || c.fields["warnings"] != "4" {
 		t.Errorf("totals = %+v", c)
 	}
 }
@@ -230,7 +232,8 @@ func TestRunRecipeStepsSummaryAllPass(t *testing.T) {
 	if !ok {
 		t.Fatal("missing run summary")
 	}
-	if c.level != "INFO" || c.fields["steps"] != "2" || c.fields["ok"] != "2" {
+	if c.level != "INFO" || c.fields["steps"] != "2" || c.fields["ok"] != "2" ||
+		c.fields["errors"] != "0" || c.fields["warnings"] != "0" {
 		t.Errorf("totals = %+v", c)
 	}
 	if _, has := c.fields["failed"]; has {

@@ -167,9 +167,10 @@ func runRecipeSteps(steps []string, continueOnError bool, runStep func(name stri
 	}
 
 	// Per-step recap + running totals.
-	var warnTot int
+	var errTot, warnTot int
 	var durTot time.Duration
 	for i, r := range results {
+		errTot += r.out.errors
 		warnTot += r.out.warnings
 		durTot += r.out.duration
 		log(recapLevel(r.status),
@@ -185,9 +186,11 @@ func runRecipeSteps(steps []string, continueOnError bool, runStep func(name stri
 	if skipped > 0 {
 		totFields = append(totFields, logField{"skipped", strconv.Itoa(skipped)})
 	}
-	if warnTot > 0 {
-		totFields = append(totFields, logField{"warnings", strconv.Itoa(warnTot)})
-	}
+	// Always report the error/warning totals so the summary states the
+	// counts even when they're zero.
+	totFields = append(totFields,
+		logField{"errors", strconv.Itoa(errTot)},
+		logField{"warnings", strconv.Itoa(warnTot)})
 	totFields = append(totFields, logField{"took", fmtDur(durTot)})
 	totLevel := "INFO"
 	if failed > 0 {

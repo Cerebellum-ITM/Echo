@@ -161,9 +161,11 @@ func runRecipeSteps(steps []string, continueOnError bool,
     if skipped > 0 {
         totFields = append(totFields, logField{"skipped", strconv.Itoa(skipped)})
     }
-    if warnTot > 0 {
-        totFields = append(totFields, logField{"warnings", strconv.Itoa(warnTot)})
-    }
+    // Always report the error/warning totals so the summary states the
+    // counts even when they're zero.
+    totFields = append(totFields,
+        logField{"errors", strconv.Itoa(errTot)},
+        logField{"warnings", strconv.Itoa(warnTot)})
     totFields = append(totFields, logField{"took", fmtDur(durTot)})
     totLevel := "INFO"
     if failed > 0 {
@@ -259,7 +261,8 @@ None new. Reuses `emitOdooLog` via `sess.runLog`, `runStats`, and the
 ## Verify when done
 
 - [ ] A clean 3-step recipe ends with three `step i/3 ok` recap lines
-      (each with `took=…`) and a `run summary steps=3 ok=3 took=…` line.
+      (each with `took=…`) and a `run summary steps=3 ok=3 errors=0
+      warnings=0 took=…` line — `errors`/`warnings` are always present.
 - [ ] A step that raised warnings shows `warnings=N` on its recap line and
       contributes to the totals `warnings=…`.
 - [ ] Under fail-fast, the failing step shows `failed exit=<code>` and the

@@ -12,7 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `echo.run` line per step with its status (`ok` / `failed` / `cancelled`
   / `skipped`), warning count, and duration (`took`), plus a final
   `run summary` totals line (`steps` / `ok` / `failed` / `skipped` /
-  `warnings` / `took`). Under fail-fast the steps after the failure are
+  `errors` / `warnings` / `took`; `errors` and `warnings` are always
+  reported, even at zero). Under fail-fast the steps after the failure are
   reported as `skipped`. The recap is captured by `--log` like the rest of
   the run. Process exit codes are unchanged.
 - Loose-severity stderr lines now reformat into Echo's Odoo log style
