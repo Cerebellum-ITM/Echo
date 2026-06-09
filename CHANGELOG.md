@@ -8,6 +8,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `connect` no longer spawns a fresh Chrome window (and a throwaway temp
+  profile) on every run (Unit 29). It now reuses a persistent,
+  Echo-dedicated Chrome instance (`~/.local/share/echo/connect-chrome`,
+  override `$ECHO_CONNECT_CHROME_PROFILE`) and opens the session in a new
+  **tab** by default — driving Chrome at the browser level over CDP so it
+  never hijacks a tab you already had open. New `--new-window` flag opens
+  the session in an isolated **incognito** window instead (its own cookie
+  jar), so multiple users can be impersonated at the same time. The
+  projectless `echo connect <name>` also honors `--new-window` and
+  `--fresh`. The `opening chrome` log line shows `window=tab|incognito`.
+- `connect` now caches the minted session locally and reuses it instead of
+  re-querying users and re-minting on every run (Unit 28). On a repeated
+  `connect <login>`, Echo loads the cached cookie, validates it with a
+  single HTTP probe against `<base>/odoo` (a logged-out session redirects to
+  the login page), and — if still valid — lands it straight into Chrome,
+  skipping both the `res.users` query and the session mint. A stale or
+  invalid cookie (past the 5-day TTL or rejected by the probe) is
+  transparently re-minted. The interactive `connect` (no login) now offers
+  the recently used logins first, with a "↻ Fetch all users…" row to fall
+  back to the full list. New `--fresh` flag forces a re-mint, ignoring the
+  cache. Sessions are stored per target+db at
+  `~/.config/echo/connect-sessions/<key>.toml`.
+- `connect` now narrates each step in Echo's Odoo-style log format
+  (Unit 28), instead of running silently and printing a couple of plain
+  lines at the end. Target resolution, the user query (with count), cache
+  hit / validation / reuse / re-mint, the mint, and opening Chrome each
+  emit a structured `echo.connect[.cache|.mint]` line — matching the rest
+  of the CLI's log stream — closed by the usual `connect completed`.
 - Module discovery now falls back to the instance's `odoo.conf` (Unit 26).
   When the host-side addons scan finds no modules — e.g. an instance whose
   addons live only inside the container, declared via `addons_path` in

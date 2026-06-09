@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os/exec"
 	"strings"
+	"time"
 
 	"github.com/pascualchavez/echo/internal/config"
 	"github.com/pascualchavez/echo/internal/docker"
@@ -26,6 +27,22 @@ type ConnectOpts struct {
 	Root    string
 	Args    []string
 	Palette theme.Palette
+	// Log, when set, receives Odoo-style progress events during a run so
+	// the REPL can render them in its own log stream. `sub` is the logger
+	// suffix under `echo.connect` ("" for the base logger, "cache" →
+	// `echo.connect.cache`, "mint" → `echo.connect.mint`). Nil is a no-op,
+	// so non-REPL callers (and tests) don't need to supply one.
+	Log ConnectLogger
+}
+
+// ConnectLogger emits one Odoo-style progress line during RunConnect.
+type ConnectLogger func(level, sub, msg, db string, fields ...[2]string)
+
+// log is a nil-safe shortcut for emitting a progress event.
+func (o ConnectOpts) log(level, sub, msg, db string, fields ...[2]string) {
+	if o.Log != nil {
+		o.Log(level, sub, msg, db, fields...)
+	}
 }
 
 // ConnectResult carries the outcome of a successful `connect` run. The
@@ -34,8 +51,10 @@ type ConnectOpts struct {
 type ConnectResult struct {
 	Login   string
 	UID     int
+	DBName  string
 	BaseURL string
 	Remote  bool // true when the session was minted over SSH
+	Reused  bool // true when a cached cookie was reused (no re-mint)
 }
 
 // connectTarget is the resolved container/db mapping the mint runs
@@ -86,26 +105,67 @@ func RunConnect(ctx context.Context, opts ConnectOpts) (ConnectResult, error) {
 		return res, fmt.Errorf("incomplete Odoo config (container/db) — run `init`%s",
 			map[bool]string{true: " on the remote host", false: ""}[target.remote])
 	}
+	db := target.dbName
+	opts.log("INFO", "", "target resolved", db,
+		[2]string{"mode", connectMode(target.remote)},
+		[2]string{"container", target.odooContainer})
+
 	if err := maybeConfirmConnectProd(opts, target); err != nil {
 		return res, err
 	}
 
-	login, includeInactive := parseConnectArgs(opts.Args)
+	login, includeInactive, fresh, newWindow := parseConnectArgs(opts.Args)
+	windowMode := connectWindowMode(newWindow)
 
-	users, err := listConnectUsers(ctx, opts, target, includeInactive)
-	if err != nil {
-		return res, fmt.Errorf("list users: %w", err)
-	}
+	cacheKey := connectCacheKey(opts, target)
+	cache := config.LoadConnectSessions(cacheKey)
+	opts.log("DEBUG", "cache", fmt.Sprintf("loaded %d cached session(s)", len(cache)), db)
 
-	picked, err := pickConnectUser(users, login, opts.Palette)
+	// Resolve which user to connect as. When a login is cached (or the
+	// user picks one from the recent list) the selection carries the
+	// cached session, so we skip both the user query and the mint.
+	sel, err := resolveConnectSelection(ctx, opts, target, login, includeInactive, cache)
 	if err != nil {
 		return res, err
 	}
 
-	minted, err := mintConnectSession(ctx, opts, target, picked.ID)
+	// Fast path: reuse the cached cookie if it's within the TTL and still
+	// authenticates. `--fresh` forces a re-mint.
+	if fresh && sel.cached != nil {
+		opts.log("INFO", "cache", "--fresh: ignoring cached session", db, [2]string{"login", sel.login})
+	}
+	if !fresh && sel.cached != nil {
+		if connectSessionExpired(*sel.cached) {
+			opts.log("WARNING", "cache", "cached session past TTL — re-minting", db, [2]string{"login", sel.login})
+		} else {
+			opts.log("INFO", "cache", "validating cached session", db, [2]string{"login", sel.login})
+			if probeSession(ctx, sel.cached.BaseURL, sel.cached.SID) {
+				opts.log("INFO", "cache", "cached session valid — reusing cookie", db, [2]string{"login", sel.login})
+				opts.log("INFO", "", "opening chrome", db,
+					[2]string{"url", sel.cached.BaseURL + "/odoo"}, [2]string{"window", windowMode})
+				if err := landSessionCookie(ctx, opts.Cfg, sel.cached.BaseURL, sel.cached.SID, newWindow); err != nil {
+					return res, fmt.Errorf("open browser: %w", err)
+				}
+				return ConnectResult{
+					Login:   sel.cached.Login,
+					UID:     sel.cached.UID,
+					DBName:  db,
+					BaseURL: sel.cached.BaseURL,
+					Remote:  target.remote,
+					Reused:  true,
+				}, nil
+			}
+			opts.log("WARNING", "cache", "cached session invalid — re-minting", db, [2]string{"login", sel.login})
+		}
+	}
+
+	opts.log("INFO", "mint", "minting session", db,
+		[2]string{"login", sel.login}, [2]string{"uid", fmt.Sprintf("%d", sel.uid)})
+	minted, err := mintConnectSession(ctx, opts, target, sel.uid)
 	if err != nil {
 		return res, fmt.Errorf("mint session: %w", err)
 	}
+	opts.log("INFO", "mint", "session minted", db, [2]string{"login", minted.Login})
 
 	base := strings.TrimRight(minted.BaseURL, "/")
 	if base == "" {
@@ -114,18 +174,120 @@ func RunConnect(ctx context.Context, opts ConnectOpts) (ConnectResult, error) {
 	}
 	// Prefer HTTPS on the same host when it's actually served, so the
 	// session lands securely; falls back to web.base.url's own scheme.
-	base = preferHTTPS(ctx, base)
+	upgraded := preferHTTPS(ctx, base)
+	if upgraded != base {
+		opts.log("DEBUG", "", "upgraded to https", db, [2]string{"base", upgraded})
+	}
+	base = upgraded
 
-	if err := landSessionCookie(ctx, opts.Cfg, base, minted.Sid); err != nil {
+	opts.log("INFO", "", "opening chrome", db,
+		[2]string{"url", base + "/odoo"}, [2]string{"window", windowMode})
+	if err := landSessionCookie(ctx, opts.Cfg, base, minted.Sid, newWindow); err != nil {
 		return res, fmt.Errorf("open browser: %w", err)
+	}
+
+	// Cache the fresh session for next time (best-effort: a cache write
+	// failure must not fail an otherwise successful connect).
+	if err := config.SaveConnectSession(cacheKey, config.ConnectSession{
+		Login:    minted.Login,
+		UID:      minted.UID,
+		SID:      minted.Sid,
+		BaseURL:  base,
+		MintedAt: time.Now(),
+	}); err != nil {
+		opts.log("DEBUG", "cache", "could not write session cache", db, [2]string{"err", err.Error()})
+	} else {
+		opts.log("DEBUG", "cache", "session cached", db, [2]string{"login", minted.Login})
 	}
 
 	return ConnectResult{
 		Login:   minted.Login,
 		UID:     minted.UID,
+		DBName:  db,
 		BaseURL: base,
 		Remote:  target.remote,
 	}, nil
+}
+
+// connectMode labels the resolved target for log output.
+func connectMode(remote bool) string {
+	if remote {
+		return "remote"
+	}
+	return "local"
+}
+
+// connectSelection is the resolved user to connect as: login + uid, plus
+// the cached session when one is available for reuse.
+type connectSelection struct {
+	login  string
+	uid    int
+	cached *config.ConnectSession
+}
+
+// resolveConnectSelection decides who to connect as while querying Odoo as
+// little as possible:
+//
+//   - explicit `connect <login>` with a cache hit → reuse the cached uid,
+//     no user query;
+//   - explicit login with no cache → query users to resolve login→uid;
+//   - interactive with cached sessions → offer the recent logins first,
+//     querying the full list only if the user asks for it;
+//   - interactive with no cache → the original query + picker.
+func resolveConnectSelection(ctx context.Context, opts ConnectOpts, target connectTarget, login string, includeInactive bool, cache map[string]config.ConnectSession) (connectSelection, error) {
+	db := target.dbName
+	if login != "" {
+		if e, ok := cache[login]; ok {
+			opts.log("INFO", "cache", "cache hit — skipping user query", db,
+				[2]string{"login", login}, [2]string{"uid", fmt.Sprintf("%d", e.UID)})
+			entry := e
+			return connectSelection{login: login, uid: e.UID, cached: &entry}, nil
+		}
+		users, err := opts.listUsersLogged(ctx, target, includeInactive)
+		if err != nil {
+			return connectSelection{}, err
+		}
+		u, err := pickConnectUser(users, login, opts.Palette)
+		if err != nil {
+			return connectSelection{}, err
+		}
+		return connectSelection{login: u.Login, uid: u.ID}, nil
+	}
+
+	if len(cache) > 0 {
+		opts.log("INFO", "cache", fmt.Sprintf("%d recent session(s) — pick one or fetch all", len(cache)), db)
+		chosen, fetchAll, err := pickRecentSessions(cache, opts.Palette)
+		if err != nil {
+			return connectSelection{}, err
+		}
+		if !fetchAll {
+			opts.log("INFO", "cache", "reusing recent login", db, [2]string{"login", chosen})
+			e := cache[chosen]
+			return connectSelection{login: chosen, uid: e.UID, cached: &e}, nil
+		}
+	}
+
+	users, err := opts.listUsersLogged(ctx, target, includeInactive)
+	if err != nil {
+		return connectSelection{}, err
+	}
+	u, err := pickConnectUser(users, "", opts.Palette)
+	if err != nil {
+		return connectSelection{}, err
+	}
+	return connectSelection{login: u.Login, uid: u.ID}, nil
+}
+
+// listUsersLogged wraps listConnectUsers with INFO log lines bracketing the
+// `res.users` query, so the (sometimes slow) query is visible in the stream.
+func (opts ConnectOpts) listUsersLogged(ctx context.Context, target connectTarget, includeInactive bool) ([]userRow, error) {
+	opts.log("INFO", "", "querying users", target.dbName)
+	users, err := listConnectUsers(ctx, opts, target, includeInactive)
+	if err != nil {
+		return nil, fmt.Errorf("list users: %w", err)
+	}
+	opts.log("INFO", "", fmt.Sprintf("%d user(s) found", len(users)), target.dbName)
+	return users, nil
 }
 
 // resolveConnectTarget returns the container/db mapping to mint against.
@@ -192,11 +354,15 @@ func maybeConfirmConnectProd(opts ConnectOpts, target connectTarget) error {
 	return confirmProd(opts.Palette, "connect", target.dbName)
 }
 
-func parseConnectArgs(args []string) (login string, includeInactive bool) {
+func parseConnectArgs(args []string) (login string, includeInactive, fresh, newWindow bool) {
 	for _, a := range args {
 		switch {
 		case a == "--all":
 			includeInactive = true
+		case a == "--fresh":
+			fresh = true
+		case a == "--new-window":
+			newWindow = true
 		case a == "--force":
 			// handled by maybeConfirmConnectProd
 		case strings.HasPrefix(a, "-"):
@@ -208,6 +374,14 @@ func parseConnectArgs(args []string) (login string, includeInactive bool) {
 		}
 	}
 	return
+}
+
+// connectWindowMode labels how the browser window was opened, for logs.
+func connectWindowMode(newWindow bool) string {
+	if newWindow {
+		return "incognito"
+	}
+	return "tab"
 }
 
 func listConnectUsers(ctx context.Context, opts ConnectOpts, target connectTarget, includeInactive bool) ([]userRow, error) {

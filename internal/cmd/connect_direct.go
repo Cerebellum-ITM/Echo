@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/charmbracelet/huh"
@@ -27,6 +28,14 @@ func RunDirectConnect(ctx context.Context, args []string) error {
 
 	name, login, add, passthrough := parseDirectArgs(args)
 
+	logf := directConnectLogger(palette)
+	// Start line, mirroring the REPL's startLog (echo.connect.start).
+	var startFields [][2]string
+	if positional := strings.TrimSpace(strings.Join(directPositionals(args), " ")); positional != "" {
+		startFields = append(startFields, [2]string{"args", positional})
+	}
+	logf("INFO", "start", "connect", "", startFields...)
+
 	target, err := resolveDirectTarget(ctx, cfg, palette, name, add)
 	if err != nil {
 		return err
@@ -47,13 +56,38 @@ func RunDirectConnect(ctx context.Context, args []string) error {
 		Cfg:     connectCfg,
 		Args:    connectArgs,
 		Palette: palette,
+		Log:     logf,
 	})
 	if err != nil {
 		return err
 	}
-	fmt.Printf("✓ Session minted for %q (uid=%d) on target %q\n", res.Login, res.UID, target.Name)
-	fmt.Printf("  Opening Chrome at %s/odoo (logged in)\n", res.BaseURL)
+	verb := "session minted"
+	if res.Reused {
+		verb = "session reused (cached)"
+	}
+	logf("INFO", "", verb, res.DBName,
+		[2]string{"login", res.Login},
+		[2]string{"uid", strconv.Itoa(res.UID)},
+		[2]string{"target", target.Name},
+		[2]string{"mfa", "bypassed"})
+	// Closing line, mirroring the REPL's finalize (blank + completed).
+	fmt.Println()
+	logf("INFO", "", "connect completed", res.DBName)
 	return nil
+}
+
+// directPositionals returns the positional args (target name, login) of a
+// projectless connect invocation — flags stripped — for the start line's
+// `args` field, matching how the REPL's startLog reports positionals.
+func directPositionals(args []string) []string {
+	var out []string
+	for _, a := range args {
+		if strings.HasPrefix(a, "-") {
+			continue
+		}
+		out = append(out, a)
+	}
+	return out
 }
 
 func parseDirectArgs(args []string) (name, login string, add bool, passthrough []string) {
@@ -62,7 +96,7 @@ func parseDirectArgs(args []string) (name, login string, add bool, passthrough [
 		switch {
 		case a == "--add":
 			add = true
-		case a == "--all", a == "--force":
+		case a == "--all", a == "--force", a == "--fresh", a == "--new-window":
 			passthrough = append(passthrough, a)
 		case strings.HasPrefix(a, "-"):
 			// unknown flag, ignore for forward-compat
