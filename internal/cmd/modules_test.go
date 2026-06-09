@@ -1,9 +1,49 @@
 package cmd
 
 import (
+	"errors"
 	"reflect"
 	"testing"
 )
+
+func TestExtractLevel(t *testing.T) {
+	cases := []struct {
+		name      string
+		args      []string
+		wantLevel string
+		wantRest  []string
+		wantErr   error
+	}{
+		{"none", []string{"sale", "stock"}, "", []string{"sale", "stock"}, nil},
+		{"space form", []string{"sale", "--level", "debug"}, "debug", []string{"sale"}, nil},
+		{"equals form", []string{"--level=warn", "sale"}, "warn", []string{"sale"}, nil},
+		{"with other flags", []string{"--all", "--level", "error"}, "error", []string{"--all"}, nil},
+		{"invalid level", []string{"sale", "--level", "nope"}, "", nil, ErrInvalidLogLevel},
+		{"bare level no value", []string{"sale", "--level"}, "", nil, nil}, // err checked below
+	}
+	for _, c := range cases {
+		level, rest, err := extractLevel(c.args)
+		if c.name == "bare level no value" {
+			if err == nil {
+				t.Errorf("%s: expected an error for a valueless --level", c.name)
+			}
+			continue
+		}
+		if c.wantErr != nil {
+			if !errors.Is(err, c.wantErr) {
+				t.Errorf("%s: err = %v, want %v", c.name, err, c.wantErr)
+			}
+			continue
+		}
+		if err != nil {
+			t.Errorf("%s: unexpected err %v", c.name, err)
+			continue
+		}
+		if level != c.wantLevel || !reflect.DeepEqual(rest, c.wantRest) {
+			t.Errorf("%s: got (%q, %v), want (%q, %v)", c.name, level, rest, c.wantLevel, c.wantRest)
+		}
+	}
+}
 
 func TestParseAddonsPath(t *testing.T) {
 	cases := []struct {

@@ -78,6 +78,7 @@ prompt that accepts commands and streams their output in real time.
 ### In Scope
 
 - Interactive REPL with streaming command output
+- Non-interactive script mode: `echo <cmd> [args]` runs one command and exits with a status code (for update scripts / CI), failing closed when a prompt would be needed without a TTY; `echo run <file>` executes a recipe of commands
 - Branded compact header (two-column: welcome left, tips right)
 - 4 color themes with semantic token system (charm, hacker, odoo, tokyo)
 - Stage-aware prompt coloring (dev=green, staging=yellow, prod=red)

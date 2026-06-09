@@ -50,6 +50,24 @@ func (c Conn) flags() Cmd {
 	return args
 }
 
+// LogLevels are the values Odoo's `--log-level` accepts. The set is
+// identical across Odoo 17 / 18 / 19.
+var LogLevels = []string{
+	"debug_rpc_answer", "debug_rpc", "debug", "debug_sql",
+	"info", "warn", "error", "critical", "test", "notset",
+}
+
+// WithLogLevel appends `--log-level=<level>` to an argv when level is
+// non-empty; a no-op otherwise. Keeps the Odoo flag spelling in the odoo
+// package while the cmd layer decides when to apply it (e.g. the module
+// commands' `--level` flag).
+func WithLogLevel(cmd Cmd, level string) Cmd {
+	if level == "" {
+		return cmd
+	}
+	return append(cmd, "--log-level="+level)
+}
+
 // Install builds the argv to install one or more modules.
 func Install(c Conn, modules []string, withDemo bool) Cmd {
 	args := append(Cmd{"odoo"}, c.flags()...)

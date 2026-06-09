@@ -7,6 +7,53 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `echo run <file> --log[=<path>]` writes the whole recipe run to a
+  plain-text transcript (Unit 34) — every step's streamed output plus the
+  `echo.run` step/summary lines, ANSI-stripped — so an update routine
+  leaves an auditable record. Opt-in: bare `--log` writes a timestamped
+  file under `~/.config/echo/run-logs/`; `--log=<path>` writes to an
+  explicit path. Without the flag, nothing is written. A log-file error
+  warns but never aborts the run, and the final line reports the path.
+- `--level <lvl>` flag on `update` / `install` / `uninstall` (Unit 33),
+  mapping to Odoo's native `--log-level` so a developer can raise or lower
+  the verbosity of a module operation (e.g. `update sale --level debug_sql`
+  to see the SQL, `--level warn` to quiet it). Both `--level <lvl>` and
+  `--level=<lvl>` forms work. The value is validated against Odoo's level
+  set (`debug_rpc_answer` … `critical`, `test`, `notset`) — an invalid
+  level is rejected with the list of valid ones before Odoo is invoked.
+  Without the flag, behavior is unchanged (Odoo's `info` default).
+- `echo run <file>` **recipe runner** (Unit 32). Runs a whole update
+  routine from a single file — one Echo command per line — instead of N
+  separate invocations. Blank lines and `#` comments are ignored; the
+  recipe can also be read from stdin (`echo run -` or piped input).
+  Comments are stripped both as full lines (`# …`) and inline after a
+  command (`update sale  # fix`), so an annotated table pastes in as-is.
+  Each
+  step streams through the same one-shot path script mode added, and the
+  run **stops at the first step that exits non-zero** (fail-fast),
+  exiting with that step's code; `--continue-on-error` runs every step
+  and exits non-zero if any failed. Progress and the final summary are
+  emitted as `echo.run` log lines in Echo's Odoo style. Because steps go
+  through the one-shot dispatch, any step that would prompt fails closed
+  without a TTY — a recipe must be explicit (module names, `--force`).
+- Non-interactive **script mode** (Unit 31). `echo <command> [args]` now
+  runs a single command and exits, so Echo can be driven from shell
+  scripts and CI (e.g. an update routine that chains `echo stop`,
+  `echo up`, `echo update ventas`, `echo restart`). Bare `echo` still
+  opens the interactive REPL. One-shot output streams through the exact
+  same Odoo-style render and start/finalize frame the REPL uses. The
+  process exits with a meaningful code: `0` success, `1` execution error
+  (or ERROR/CRITICAL lines counted), `2` usage error (unknown command,
+  bad args, or a command that would need a prompt), `3` cancelled. Any
+  command that would otherwise block on a confirmation or a fuzzy picker
+  **fails closed** when stdin is not a TTY — it returns a clear error and
+  a non-zero exit instead of hanging a script, naming the escape hatch
+  (pass the missing argument, or `--force`). A human running the same
+  command at a real terminal still gets the prompt. New `-C` /
+  `--project-dir <dir>` flag runs a one-shot command from outside the
+  project directory (like `git -C`).
+
 ## [0.6.0] — 2026-06-09
 
 ### Added

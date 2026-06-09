@@ -473,6 +473,9 @@ func RunDBDrop(ctx context.Context, opts DBOpts) error {
 }
 
 func confirmDrop(palette theme.Palette, name string) error {
+	if err := requireTTY("pass --force to drop without a prompt"); err != nil {
+		return err
+	}
 	red := lipgloss.NewStyle().Foreground(palette.Error).Bold(true).Render(name)
 	confirmed := false
 	form := huh.NewForm(huh.NewGroup(
@@ -574,6 +577,9 @@ func neutralizeDB(ctx context.Context, opts DBOpts, target string) error {
 }
 
 func confirmNeutralize(palette theme.Palette, name string) error {
+	if err := requireTTY("pass --force to neutralize without a prompt"); err != nil {
+		return err
+	}
 	red := lipgloss.NewStyle().Foreground(palette.Error).Bold(true).Render(name)
 	confirmed := false
 	form := huh.NewForm(huh.NewGroup(

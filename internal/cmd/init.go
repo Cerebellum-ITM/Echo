@@ -30,6 +30,9 @@ type InitOpts struct {
 var ErrCancelled = errors.New("cancelled by user")
 
 func RunInit(ctx context.Context, opts InitOpts) (*config.Config, error) {
+	if err := requireTTY("init is interactive; run it from a terminal"); err != nil {
+		return nil, err
+	}
 	cfg := opts.Cfg
 	huhTheme := BuildHuhTheme(opts.Palette)
 
@@ -89,7 +92,7 @@ func RunInit(ctx context.Context, opts InitOpts) (*config.Config, error) {
 				Options(opt("dev"), opt("staging"), opt("prod")).
 				Value(&stage),
 		).
-			Title(IconOdoo + "  Odoo").
+			Title(IconOdoo+"  Odoo").
 			Description("Version and environment for this project"),
 
 		huh.NewGroup(
@@ -104,13 +107,13 @@ func RunInit(ctx context.Context, opts InitOpts) (*config.Config, error) {
 				Options(containerOptions(containers)...).
 				Value(&dbSvc),
 		).
-			Title(IconContainers + "  Containers").
+			Title(IconContainers+"  Containers").
 			Description("Pick which compose service maps to each role"),
 
 		huh.NewGroup(
 			dbField(dbs, &dbName),
 		).
-			Title(IconDatabase + "  Database").
+			Title(IconDatabase+"  Database").
 			Description("PostgreSQL database used by Odoo"),
 	).
 		WithTheme(huh.ThemeCharm()).

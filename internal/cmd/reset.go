@@ -16,8 +16,8 @@ const (
 
 // ResetResult describes what was wiped.
 type ResetResult struct {
-	Scope    string // "global" | "project" | "all"
-	Removed  []string
+	Scope   string // "global" | "project" | "all"
+	Removed []string
 }
 
 // RunReset asks the user what to wipe and removes the matching files.
@@ -25,12 +25,15 @@ type ResetResult struct {
 // user picks the per-project scope. Returns ErrCancelled if the user
 // declines the confirmation.
 func RunReset(projectKey string, palette theme.Palette) (*ResetResult, error) {
+	if err := requireTTY("reset is interactive; run it from a terminal"); err != nil {
+		return nil, err
+	}
 	huhTheme := BuildHuhTheme(palette)
 
 	var scope string
 	scopeForm := huh.NewForm(huh.NewGroup(
 		huh.NewSelect[string]().
-			Title(IconDatabase + "  Reset config").
+			Title(IconDatabase+"  Reset config").
 			Description("Pick what to wipe").
 			Options(
 				huh.NewOption("Global only (theme, logo, compose flavor)", ResetGlobal),

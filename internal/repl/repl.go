@@ -51,10 +51,47 @@ type session struct {
 	projectDir string
 	lastOutput *lastOutputBuffer
 	prompt     *promptBuilder
+	// exitCode records the outcome of the last dispatched command for
+	// one-shot (script) mode. It is set by the terminal log helpers
+	// (finalize, *FailureLog, readonlyFinalize, …) and read by RunOnce /
+	// RunRecipe. In the interactive REPL it is set but never read.
+	exitCode int
 }
 
-// Start renders the header and enters the interactive prompt loop.
-func Start(s theme.Styles, p theme.Palette, project, id string, stage theme.Stage, version, themeName, username, cwd string, cfg *config.Config) {
+// Exit codes returned by one-shot (script) dispatch. The interactive REPL
+// records them on the session but never surfaces them.
+const (
+	exitOK        = 0 // command completed, no ERROR lines
+	exitError     = 1 // execution error or ERROR/CRITICAL lines counted
+	exitUsage     = 2 // unknown command, bad args, or non-interactive guard
+	exitCancelled = 3 // user aborted a confirm / picker (TTY only)
+)
+
+// scriptExitCode maps a command's terminal outcome (its returned error and
+// streamed ERROR-line count) to a process exit code. Order matters:
+// cancellation and the non-interactive guard are both "errors" but must
+// not be reported as a generic execution failure.
+func scriptExitCode(err error, errCount int) int {
+	switch {
+	case errors.Is(err, cmd.ErrCancelled), errors.Is(err, huh.ErrUserAborted):
+		return exitCancelled
+	case errors.Is(err, cmd.ErrNonInteractive):
+		return exitUsage
+	case err != nil:
+		return exitError
+	case errCount > 0:
+		return exitError
+	default:
+		return exitOK
+	}
+}
+
+// newSession builds a session with the rendering and finalize state but
+// without the interactive prompt loop. Shared by Start (the REPL) and the
+// one-shot / recipe runners in script.go. Returns the unknown prompt
+// segments so the caller can warn about them (the REPL does; script mode
+// stays quiet). It mutates cfg.PromptSegments to the validated subset.
+func newSession(s theme.Styles, p theme.Palette, project, id string, stage theme.Stage, version, themeName, username, cwd string, cfg *config.Config) (*session, []string) {
 	opts := banner.Opts{
 		Version:  FullVersion(),
 		Username: username,
@@ -79,6 +116,12 @@ func Start(s theme.Styles, p theme.Palette, project, id string, stage theme.Stag
 	valid, unknown := validatePromptSegments(cfg.PromptSegments)
 	cfg.PromptSegments = valid
 	sess.prompt = newPromptBuilder(sess)
+	return sess, unknown
+}
+
+// Start renders the header and enters the interactive prompt loop.
+func Start(s theme.Styles, p theme.Palette, project, id string, stage theme.Stage, version, themeName, username, cwd string, cfg *config.Config) {
+	sess, unknown := newSession(s, p, project, id, stage, version, themeName, username, cwd, cfg)
 
 	sess.clearAndRenderHeader()
 	for _, u := range unknown {
@@ -151,8 +194,14 @@ func (sess *session) dispatch(ctx context.Context, input string) {
 	if len(parts) == 0 {
 		return
 	}
+	sess.dispatchParsed(ctx, parts[0], parts[1:])
+}
 
-	cmd, args := parts[0], parts[1:]
+// dispatchParsed routes an already-tokenized command. It is the shared
+// core of the interactive REPL loop (via dispatch) and the one-shot /
+// recipe runners, which call it directly to avoid re-splitting.
+func (sess *session) dispatchParsed(ctx context.Context, cmd string, args []string) {
+	sess.exitCode = exitOK
 
 	if !isMetaCommand(cmd) {
 		sess.lastOutput.Reset()
@@ -183,6 +232,7 @@ func (sess *session) dispatch(ctx context.Context, input string) {
 		sess.runConnect(ctx, args)
 	default:
 		sess.print(Line{Kind: "warn", Text: "unknown command: " + cmd + " — try help"})
+		sess.exitCode = exitUsage
 	}
 }
 
@@ -201,9 +251,12 @@ func helpSections() []helpSection {
 		{"Modules", []helpEntry{
 			{"install <mod...>", "Install modules in the current DB"},
 			{"  --with-demo", "Include demo data"},
+			{"  --level <lvl>", "Odoo --log-level (debug…critical; default info)"},
 			{"update <mod...>", "Update modules"},
 			{"  --all", "Update every installed module"},
+			{"  --level <lvl>", "Odoo --log-level (debug…critical; default info)"},
 			{"uninstall <mod...>", "Uninstall modules"},
+			{"  --level <lvl>", "Odoo --log-level (debug…critical; default info)"},
 			{"test <mod...>", "Run tests for installed modules (filters to /<mod>)"},
 			{"  --update", "Reload modules first (adds -u; needed for XML/schema changes)"},
 			{"  --tags <spec>", "Override --test-tags (e.g. :TestX.test_y, -external)"},
@@ -273,6 +326,21 @@ func (sess *session) runHelp() {
 			fmt.Println("  " + s.Info.Render(label) + s.Out.Render(it.desc))
 		}
 	}
+
+	// Script mode is one-shot only (no REPL command), so it lives outside
+	// helpSections() — which is cross-checked against the command Registry.
+	sess.print(Line{Kind: "out", Text: ""})
+	sess.print(Line{Kind: "accent", Text: "Scripting (one-shot, outside the REPL)"})
+	for _, it := range []helpEntry{
+		{"echo <cmd> [args]", "Run one command and exit with a status code"},
+		{"echo run <file>", "Run a recipe (one command per line); - reads stdin"},
+		{"  --continue-on-error", "Run every step instead of stopping at the first failure"},
+		{"  --log[=<path>]", "Save a plain transcript (default: ~/.config/echo/run-logs/)"},
+		{"echo -C <dir> <cmd>", "Run from outside the project directory"},
+	} {
+		label := lipgloss.NewStyle().Width(22).Render(it.cmd)
+		fmt.Println("  " + s.Info.Render(label) + s.Out.Render(it.desc))
+	}
 }
 
 // helpCommandNames extracts the flat set of top-level command names
@@ -311,6 +379,7 @@ func (sess *session) runInit() {
 		StreamOut: func(line string) { sess.print(Line{Kind: "dim", Text: line}) },
 	})
 	if err != nil {
+		sess.exitCode = scriptExitCode(err, 0)
 		switch {
 		case errors.Is(err, huh.ErrUserAborted), errors.Is(err, cmd.ErrCancelled):
 			sess.print(Line{Kind: "warn", Text: "init cancelled — no changes saved"})
@@ -381,7 +450,8 @@ func (sess *session) runModules(ctx context.Context, name string, args []string)
 		return
 	}
 	switch {
-	case errors.Is(err, cmd.ErrCancelled), errors.Is(err, huh.ErrUserAborted):
+	case errors.Is(err, cmd.ErrCancelled), errors.Is(err, huh.ErrUserAborted),
+		errors.Is(err, cmd.ErrNonInteractive):
 		sess.finalize(name, stats.errors, stats.warnings, err)
 	case err != nil, stats.errors > 0:
 		sess.copyFailureLog(name, resolved, err, stats.errors, stats.warnings)
@@ -413,7 +483,8 @@ func (sess *session) runI18n(ctx context.Context, name string, args []string) {
 		err = cmd.RunI18nUpdate(ctx, opts)
 	}
 	switch {
-	case errors.Is(err, cmd.ErrCancelled), errors.Is(err, huh.ErrUserAborted):
+	case errors.Is(err, cmd.ErrCancelled), errors.Is(err, huh.ErrUserAborted),
+		errors.Is(err, cmd.ErrNonInteractive):
 		sess.finalize(name, stats.errors, stats.warnings, err)
 	case err != nil, stats.errors > 0:
 		sess.commandFailureLog(name, err, stats.errors, stats.warnings)
@@ -468,7 +539,8 @@ func (sess *session) runDocker(ctx context.Context, name string, args []string) 
 		return
 	}
 	switch {
-	case errors.Is(err, cmd.ErrCancelled), errors.Is(err, huh.ErrUserAborted):
+	case errors.Is(err, cmd.ErrCancelled), errors.Is(err, huh.ErrUserAborted),
+		errors.Is(err, cmd.ErrNonInteractive):
 		sess.finalize(name, stats.errors, stats.warnings, err)
 	case err != nil, stats.errors > 0:
 		sess.commandFailureLog(name, err, stats.errors, stats.warnings)
@@ -484,6 +556,7 @@ func (sess *session) runDocker(ctx context.Context, name string, args []string) 
 // ERROR `echo.<cmd>.error`. Mirrors the start/end pair already used
 // by module commands and shell sessions.
 func (sess *session) finalize(name string, errorCount, warnCount int, err error) {
+	sess.exitCode = scriptExitCode(err, errorCount)
 	sess.print(Line{Kind: "out", Text: ""})
 	switch {
 	case errors.Is(err, cmd.ErrCancelled), errors.Is(err, huh.ErrUserAborted):
@@ -537,7 +610,8 @@ func (sess *session) runDB(ctx context.Context, name string, args []string) {
 		err = cmd.RunDBNeutralize(ctx, opts)
 	}
 	switch {
-	case errors.Is(err, cmd.ErrCancelled), errors.Is(err, huh.ErrUserAborted):
+	case errors.Is(err, cmd.ErrCancelled), errors.Is(err, huh.ErrUserAborted),
+		errors.Is(err, cmd.ErrNonInteractive):
 		sess.finalize(name, 0, 0, err)
 	case err != nil:
 		sess.commandFailureLog(name, err, 0, 0)
@@ -569,7 +643,10 @@ func (sess *session) runShell(ctx context.Context, name string, args []string) {
 	}
 	switch {
 	case errors.Is(err, cmd.ErrCancelled), errors.Is(err, huh.ErrUserAborted):
+		sess.exitCode = exitCancelled
 		sess.print(Line{Kind: "warn", Text: name + " cancelled"})
+	case errors.Is(err, cmd.ErrNonInteractive):
+		sess.finalize(name, 0, 0, err)
 	case interrupted:
 		sess.shellCancelledLog(name)
 	case err != nil:
@@ -658,6 +735,7 @@ func (sess *session) clearAndRenderHeader() {
 func (sess *session) runReset() {
 	result, err := cmd.RunReset(sess.cfg.ProjectKey, sess.palette)
 	if err != nil {
+		sess.exitCode = scriptExitCode(err, 0)
 		switch {
 		case errors.Is(err, huh.ErrUserAborted), errors.Is(err, cmd.ErrCancelled):
 			sess.print(Line{Kind: "warn", Text: "reset cancelled"})
@@ -705,4 +783,5 @@ func (sess *session) print(l Line) {
 		sess.lastOutput.Add(l)
 	}
 	fmt.Println(text)
+	teeRunLog(l.Text)
 }

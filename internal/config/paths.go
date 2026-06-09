@@ -17,6 +17,17 @@ func configRoot() (string, error) {
 	return filepath.Join(home, configDir), nil
 }
 
+// RunLogsDir is the directory where `echo run --log` writes recipe
+// transcripts: ~/.config/echo/run-logs. The caller is responsible for
+// MkdirAll before writing.
+func RunLogsDir() (string, error) {
+	root, err := configRoot()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(root, "run-logs"), nil
+}
+
 func projectKey(absPath string) string {
 	sum := sha256.Sum256([]byte(absPath))
 	return fmt.Sprintf("%x", sum)

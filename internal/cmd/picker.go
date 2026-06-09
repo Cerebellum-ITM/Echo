@@ -251,6 +251,9 @@ func (m fuzzyPicker) selectedNames() []string {
 // runFuzzyPicker shows the picker and returns the selected items. Empty
 // selection or user cancel returns ErrCancelled.
 func runFuzzyPicker(title string, available []string, palette theme.Palette) ([]string, error) {
+	if err := requireTTY("pass the selection as command arguments"); err != nil {
+		return nil, err
+	}
 	m := newFuzzyPicker(title, available, palette)
 	final, err := tea.NewProgram(m).Run()
 	if err != nil {
@@ -270,6 +273,9 @@ func runFuzzyPicker(title string, available []string, palette theme.Palette) ([]
 // runSingleFuzzyPicker is the single-select variant: Enter commits the
 // highlighted row. Returns ErrCancelled on Esc / empty list.
 func runSingleFuzzyPicker(title string, available []string, palette theme.Palette) (string, error) {
+	if err := requireTTY("pass the selection as a command argument"); err != nil {
+		return "", err
+	}
 	m := newFuzzyPicker(title, available, palette)
 	m.single = true
 	final, err := tea.NewProgram(m).Run()

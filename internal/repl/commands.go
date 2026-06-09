@@ -21,8 +21,9 @@ var Registry = []string{
 // flags) are intentionally excluded. Commands absent from the map have
 // no known flags. Powers flag highlighting and Tab flag completion.
 var commandFlags = map[string][]string{
-	"install":       {"--with-demo"},
-	"update":        {"--all"},
+	"install":       {"--with-demo", "--level"},
+	"update":        {"--all", "--level"},
+	"uninstall":     {"--level"},
 	"test":          {"--update", "--tags"},
 	"modules":       {"--config"},
 	"i18n-export":   {"--out"},

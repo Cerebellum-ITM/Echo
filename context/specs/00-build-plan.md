@@ -40,6 +40,10 @@ Decomposition of Echo into ordered, scoped, verifiable units.
 | 28 | connect-session-cache       | Cache the minted Odoo session locally (`~/.config/echo/connect-sessions/<key>.toml`) and reuse the cookie on a repeat `connect <login>` — validated by one HTTP probe, re-minted only when stale/invalid — skipping the user query and the mint; interactive `connect` offers recent logins first; `--fresh` forces a re-mint | 18         |
 | 29 | connect-chrome-window-modes | Reuse a persistent Echo-dedicated Chrome instead of spawning a new window + temp profile every connect: browser-level CDP opens a new tab by default; `--new-window` opens an isolated incognito window (own cookie jar → multiple users at once) | 18         |
 | 26 | addons-paths-from-conf      | Discover modules from the instance's `odoo.conf` (`addons_path`, read inside the container) when the host scan finds none: parse the conf, `ls` each container path, persist `addons_mode=conf` + paths, auto-refresh live. Falls back automatically; `modules --config` still pins host mode | 05         |
+| 31 | script-mode                 | Non-interactive one-shot dispatch: `echo <cmd> [args]` runs a single command and exits (bare `echo` still opens the REPL), reusing the REPL render/finalize frame headlessly. TTY-based guard fails closed (exit≠0) when a picker/confirm would block without a terminal; meaningful exit codes; `-C/--project-dir` to run from anywhere | 04, 05, 09 |
+| 32 | recipe-runner               | `echo run <file>` (or stdin): execute a sequence of Echo commands as an update script, one per line, fail-fast on the first non-zero exit. Builds on the script-mode dispatch + exit codes | 31         |
+| 33 | module-log-level            | `--level <lvl>` on `update`/`install`/`uninstall` maps to Odoo's native `--log-level`; validated against Odoo's level set, appended via `odoo.WithLogLevel` | 05         |
+| 34 | recipe-run-log              | `echo run … --log[=<path>]` captures the full run transcript (plain) + summary to a `.log`; opt-in, default under `~/.config/echo/run-logs/`. Tees `print`/`emitOdooLog` to a sink | 32         |
 
 ## Notes
 

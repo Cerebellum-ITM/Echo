@@ -70,6 +70,7 @@ func (sess *session) runCopyLast(args []string) {
 // Odoo-style log line (emitOdooLog) so success and failure share the
 // exact same visual frame and slot in next to Odoo's own log stream.
 func (sess *session) copyFailureLog(name string, resolved []string, runErr error, errCount, warnCount int) {
+	sess.exitCode = scriptExitCode(runErr, errCount)
 	sess.print(Line{Kind: "out", Text: ""})
 
 	logger := failureLogger(name, resolved)
@@ -114,6 +115,7 @@ func (sess *session) copyFailureLog(name string, resolved []string, runErr error
 // start INFO and the picker view, neither of which helps debug. So we
 // copy `<header>\nerr: <message>` and let the user paste it as-is.
 func (sess *session) connectFailureLog(runErr error) {
+	sess.exitCode = scriptExitCode(runErr, 0)
 	sess.print(Line{Kind: "out", Text: ""})
 
 	logger := failureLogger("connect", nil)
@@ -144,6 +146,7 @@ func (sess *session) connectFailureLog(runErr error) {
 // directly to the TTY, so we can't read from lastOutputBuffer; the
 // `captured` string is the stderr we tee'd inside `ExecInteractive`.
 func (sess *session) shellFailureLog(name, captured string, runErr error) {
+	sess.exitCode = scriptExitCode(runErr, 0)
 	sess.print(Line{Kind: "out", Text: ""})
 
 	logger := failureLogger(name, nil)
@@ -176,6 +179,7 @@ func (sess *session) shellFailureLog(name, captured string, runErr error) {
 // db-*). The clipboard payload is everything from the first err/warn
 // onwards, or the full buffer when no err/warn was logged.
 func (sess *session) commandFailureLog(name string, runErr error, errCount, warnCount int) {
+	sess.exitCode = scriptExitCode(runErr, errCount)
 	sess.print(Line{Kind: "out", Text: ""})
 
 	logger := failureLogger(name, nil)
@@ -224,6 +228,7 @@ func (sess *session) commandFailureLog(name string, runErr error, errCount, warn
 // startLog / shellFailureLog so a shell session reads as a normal
 // start → exit pair in the log stream.
 func (sess *session) shellExitLog(name string) {
+	sess.exitCode = exitOK
 	sess.print(Line{Kind: "out", Text: ""})
 	emitOdooLog("INFO", echoCommandLogger(name, nil), name+" exited",
 		nil, sess.styles, sess.palette, sess.cfg.DBName)
@@ -236,6 +241,7 @@ func (sess *session) shellExitLog(name string) {
 // commands do not change state, so a failure does not produce a
 // payload worth pasting.
 func (sess *session) readonlyFinalize(name string, runErr error) {
+	sess.exitCode = scriptExitCode(runErr, 0)
 	sess.print(Line{Kind: "out", Text: ""})
 	if runErr != nil {
 		emitOdooLog("ERROR", failureLogger(name, nil), name+" failed",
@@ -255,6 +261,7 @@ func (sess *session) readonlyFinalize(name string, runErr error) {
 // want to auto-copy a traceback the user already saw and intended to
 // trigger.
 func (sess *session) shellCancelledLog(name string) {
+	sess.exitCode = exitCancelled
 	sess.print(Line{Kind: "out", Text: ""})
 	logger := echoCommandLogger(name, nil) + ".cancelled"
 	emitOdooLog("WARNING", logger, name+" interrupted by user",
@@ -289,6 +296,7 @@ func (sess *session) startLog(name string, args []string) {
 // the Odoo-style INFO line, with the hierarchical logger naming the
 // module(s) targeted (echo.update.module.<mod> / .modules / .all).
 func (sess *session) successLog(name string, resolved []string, warnCount int) {
+	sess.exitCode = exitOK
 	sess.print(Line{Kind: "out", Text: ""})
 	var fields []logField
 	if warnCount > 0 {
