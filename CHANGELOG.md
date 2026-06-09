@@ -8,6 +8,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `db-neutralize [name]` command and a `--neutralize` flag on `db-restore`
+  (Unit 30). Both run Odoo's native `odoo neutralize` CLI inside the Odoo
+  container, applying each installed module's `data/neutralize.sql` to
+  deactivate production-only parameters (outgoing mail / fetchmail servers,
+  cron jobs, payment providers, the environment ribbon, …). `db-neutralize`
+  targets the configured DB by default, a positional name, or a picker when
+  neither is set, and shows a red confirmation when the target is the active
+  DB or `stage=prod` (skippable with `--force`). `db-restore --neutralize`
+  neutralizes the freshly restored copy in one step — the prod→test flow.
 - `connect` no longer spawns a fresh Chrome window (and a throwaway temp
   profile) on every run (Unit 29). It now reuses a persistent,
   Echo-dedicated Chrome instance (`~/.local/share/echo/connect-chrome`,

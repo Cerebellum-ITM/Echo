@@ -84,8 +84,8 @@ func TestClassifyFlag(t *testing.T) {
 
 func TestFlagsWithPrefix(t *testing.T) {
 	got := flagsWithPrefix("db-restore", "--")
-	if len(got) != 2 || got[0] != "--as" || got[1] != "--force" {
-		t.Errorf("flagsWithPrefix(db-restore, --) = %v, want [--as --force]", got)
+	if len(got) != 3 || got[0] != "--as" || got[1] != "--force" || got[2] != "--neutralize" {
+		t.Errorf("flagsWithPrefix(db-restore, --) = %v, want [--as --force --neutralize]", got)
 	}
 	if g := flagsWithPrefix("db-restore", "--f"); len(g) != 1 || g[0] != "--force" {
 		t.Errorf("flagsWithPrefix(db-restore, --f) = %v, want [--force]", g)
