@@ -117,18 +117,33 @@ func readRecipe(path string) ([]string, error) {
 	return parseRecipeLines(f)
 }
 
-// parseRecipeLines returns the executable steps: trimmed non-empty lines
-// that are not `#` comments. Pure over an io.Reader for testability.
+// parseRecipeLines returns the executable steps: each line with its
+// comment stripped and trimmed, dropping the now-empty ones. Both
+// full-line comments (`# …`) and trailing comments (`update x  # …`) are
+// supported. Pure over an io.Reader for testability.
 func parseRecipeLines(r io.Reader) ([]string, error) {
 	var steps []string
 	sc := bufio.NewScanner(r)
 	sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 	for sc.Scan() {
-		line := strings.TrimSpace(sc.Text())
-		if line == "" || strings.HasPrefix(line, "#") {
+		line := strings.TrimSpace(stripComment(sc.Text()))
+		if line == "" {
 			continue
 		}
 		steps = append(steps, line)
 	}
 	return steps, sc.Err()
+}
+
+// stripComment removes a `#` comment from a recipe line. A `#` starts a
+// comment only at the start of the line or when preceded by whitespace,
+// so a `#` embedded in a token (none occur in Echo args today, but the
+// rule stays safe) is left intact. Returns the line up to the comment.
+func stripComment(line string) string {
+	for i := 0; i < len(line); i++ {
+		if line[i] == '#' && (i == 0 || line[i-1] == ' ' || line[i-1] == '\t') {
+			return line[:i]
+		}
+	}
+	return line
 }

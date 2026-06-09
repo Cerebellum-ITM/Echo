@@ -10,10 +10,11 @@ func TestParseRecipeLines(t *testing.T) {
 	in := `# update the instance
 stop
 
-   db-backup
+   db-backup            # safety net before touching anything
 up
-# a comment
-update ventas contabilidad
+# a full-line comment
+update ventas contabilidad   # 8d7a7e0 — label dup
+   # indented comment
 `
 	got, err := parseRecipeLines(strings.NewReader(in))
 	if err != nil {
@@ -22,6 +23,23 @@ update ventas contabilidad
 	want := []string{"stop", "db-backup", "up", "update ventas contabilidad"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("steps = %v, want %v", got, want)
+	}
+}
+
+func TestStripComment(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{"update sale", "update sale"},
+		{"update sale # a fix", "update sale "},
+		{"update sale\t# tabbed", "update sale\t"},
+		{"# full line", ""},
+		{"   # indented", "   "},
+		{"db-restore --as 2", "db-restore --as 2"},
+		{"foo#bar", "foo#bar"}, // # not preceded by whitespace → kept
+	}
+	for _, c := range cases {
+		if got := stripComment(c.in); got != c.want {
+			t.Errorf("stripComment(%q) = %q, want %q", c.in, got, c.want)
+		}
 	}
 }
 

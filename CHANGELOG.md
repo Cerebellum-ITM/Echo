@@ -11,7 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `echo run <file>` **recipe runner** (Unit 32). Runs a whole update
   routine from a single file — one Echo command per line — instead of N
   separate invocations. Blank lines and `#` comments are ignored; the
-  recipe can also be read from stdin (`echo run -` or piped input). Each
+  recipe can also be read from stdin (`echo run -` or piped input).
+  Comments are stripped both as full lines (`# …`) and inline after a
+  command (`update sale  # fix`), so an annotated table pastes in as-is.
+  Each
   step streams through the same one-shot path script mode added, and the
   run **stops at the first step that exits non-zero** (fail-fast),
   exiting with that step's code; `--continue-on-error` runs every step

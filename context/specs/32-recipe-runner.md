@@ -19,7 +19,7 @@ A recipe is a plain text file, e.g. `update.echo`:
 stop
 db-backup
 up
-update ventas contabilidad
+update ventas contabilidad   # trailing comments are stripped too
 test ventas
 restart
 ```
@@ -30,7 +30,12 @@ Execution rules:
   added (`repl.RunOnce`) — each line is parsed like a REPL line
   (`strings.Fields`), so identical rendering and the `startLog`/`finalize`
   frame apply per step.
-- Blank lines and lines starting with `#` are skipped.
+- Blank lines and full-line `#` comments are skipped. A `#` that begins a
+  comment may also appear **inline** after a command (`update sale  # fix`)
+  — the comment is stripped from the step. A `#` only starts a comment at
+  the start of the line or when preceded by whitespace, so a `#` inside a
+  token is left intact (none occur in Echo args today, but the rule is
+  safe). Stripping happens in `stripComment`, before `strings.Fields`.
 - **Fail-fast:** the first step whose exit code is non-zero aborts the
   run; `echo run` exits with that step's code. Remaining steps are not
   executed. A final summary line reports how far it got
@@ -100,8 +105,10 @@ Unit 31) before reading the recipe, since every step needs `root`/`cfg`.
 
 ### Tests (`internal/repl/recipe_test.go`)
 
-- Recipe parsing: comments, blank lines, and leading/trailing whitespace
-  are stripped; the resulting step list matches expectation.
+- Recipe parsing: full-line comments, inline `#` comments, blank lines,
+  and leading/trailing whitespace are stripped; the resulting step list
+  matches expectation. `stripComment` keeps a `#` not preceded by
+  whitespace.
 - Fail-fast: given a step list where step 2 returns a non-zero code (via
   a stubbed dispatch hook), steps 3+ do not run and `RunRecipe` returns
   step 2's code.
@@ -134,7 +141,8 @@ existing render/finalize frame.
 - [ ] `--continue-on-error` runs every step and exits `1` if any failed,
       `0` if all passed.
 - [ ] `echo run -` (and piped stdin) reads the recipe from stdin.
-- [ ] Comments (`#`) and blank lines are ignored.
+- [ ] Full-line and inline (`update x  # …`) comments and blank lines are
+      ignored; a pasted table with trailing `#` annotations runs cleanly.
 - [ ] A step that would prompt (missing arg / prod confirm without
       `--force`) fails closed via the Unit 31 guard and aborts the run
       under fail-fast.
