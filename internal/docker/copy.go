@@ -53,3 +53,21 @@ func runDockerCp(ctx context.Context, src, dst string) error {
 	}
 	return nil
 }
+
+// ExecAsRoot runs `docker exec -u 0 <container> <argv...>` against a
+// container id (raw docker, not compose) so it can fix ownership of files
+// that `docker cp` left root-owned. Combined output is folded into the
+// returned error.
+func ExecAsRoot(ctx context.Context, container string, argv ...string) error {
+	args := append([]string{"exec", "-u", "0", container}, argv...)
+	cmd := exec.CommandContext(ctx, "docker", args...)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		msg := strings.TrimSpace(string(out))
+		if msg == "" {
+			return fmt.Errorf("docker exec: %w", err)
+		}
+		return fmt.Errorf("docker exec: %s", msg)
+	}
+	return nil
+}

@@ -26,6 +26,9 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.Stage != "dev" {
 		t.Errorf("Stage = %q, want dev", cfg.Stage)
 	}
+	if cfg.FilestorePath != "/var/lib/odoo/filestore" {
+		t.Errorf("FilestorePath = %q, want /var/lib/odoo/filestore", cfg.FilestorePath)
+	}
 }
 
 func TestProjectKey(t *testing.T) {

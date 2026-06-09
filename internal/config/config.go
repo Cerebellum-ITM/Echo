@@ -24,6 +24,11 @@ type Config struct {
 	ProjectPath   string
 	ProjectKey    string
 
+	// FilestorePath is the Odoo filestore base dir inside the container
+	// (default /var/lib/odoo/filestore). Used by db-backup/db-restore to
+	// read/write the filestore via `docker cp`.
+	FilestorePath string
+
 	// Compose project name override (per project). When empty, the REPL
 	// derives the name from COMPOSE_PROJECT_NAME or the project dir basename.
 	ComposeProject string
@@ -79,6 +84,7 @@ type projectFile struct {
 	AddonsPaths    []string     `toml:"addons_paths"`
 	ComposeProject string       `toml:"compose_project"`
 	ProjectPath    string       `toml:"project_path"`
+	FilestorePath  string       `toml:"filestore_path"`
 	Connect        *connectFile `toml:"connect"`
 }
 
@@ -174,6 +180,7 @@ func Load(projectPath string) (*Config, error) {
 	if p.ProjectPath != "" {
 		cfg.ProjectPath = p.ProjectPath
 	}
+	cfg.FilestorePath = p.FilestorePath
 	if p.Connect != nil {
 		cfg.ConnectSSHHost = p.Connect.SSHHost
 		cfg.ConnectRemotePath = p.Connect.RemotePath
@@ -276,6 +283,7 @@ func SaveProject(cfg *Config) error {
 		AddonsPaths:    cfg.AddonsPaths,
 		ComposeProject: cfg.ComposeProject,
 		ProjectPath:    cfg.ProjectPath,
+		FilestorePath:  cfg.FilestorePath,
 	}
 	if cfg.ConnectSSHHost != "" || cfg.ConnectRemotePath != "" ||
 		cfg.ConnectChromePath != "" {

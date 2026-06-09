@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- The filestore is now read from and written to the **Odoo container**,
+  not the host (Unit 25). Echo previously used the native install path
+  `~/.local/share/Odoo/filestore/<db>`, so a restored filestore landed on
+  the host where the containerized Odoo couldn't see it — every attachment
+  then raised `FileNotFoundError`. `db-restore` now `docker cp`s the
+  filestore into `<filestore_path>/<target>/` inside the Odoo container
+  (best-effort `chown` so Odoo can also write), and `db-backup
+  --with-filestore` pulls the filestore back out of the container. New
+  per-project `filestore_path` config (default `/var/lib/odoo/filestore`).
+
 ### Changed
 - `--force` on `db-drop` (and on `db-restore --force`'s replace step) now
   terminates the target DB's active connections (`pg_terminate_backend`)

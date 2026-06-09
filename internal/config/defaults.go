@@ -10,6 +10,7 @@ var Defaults = Config{
 	DBContainer:    "db",
 	DBName:         "odoo",
 	Stage:          "dev",
+	FilestorePath:  "/var/lib/odoo/filestore",
 	PromptSegments: []string{"name", "version_db", "stage", "health"},
 	PromptNameMax:  18,
 	HealthTTL:      5 * time.Second,
@@ -36,6 +37,9 @@ func applyDefaults(cfg *Config) {
 	}
 	if cfg.Stage == "" {
 		cfg.Stage = Defaults.Stage
+	}
+	if cfg.FilestorePath == "" {
+		cfg.FilestorePath = Defaults.FilestorePath
 	}
 	if len(cfg.PromptSegments) == 0 {
 		cfg.PromptSegments = append([]string(nil), Defaults.PromptSegments...)

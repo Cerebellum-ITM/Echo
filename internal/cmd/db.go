@@ -199,10 +199,12 @@ func backupWithFilestore(ctx context.Context, opts DBOpts, db, outPath string) e
 		return err
 	}
 
-	filestoreDir := odooFilestorePath(db)
-	hasFilestore := dirExists(filestoreDir)
+	// Pull the filestore out of the Odoo container (that's where it
+	// actually lives in a Dockerized Odoo).
+	filestoreDir, cleanup, hasFilestore := pullContainerFilestore(ctx, opts, db)
+	defer cleanup()
 	if !hasFilestore && opts.StreamOut != nil {
-		opts.StreamOut(fmt.Sprintf("⚠ filestore not found at %s — packaging dump only", filestoreDir))
+		opts.StreamOut(fmt.Sprintf("⚠ filestore not found in container at %s/%s — packaging dump only", opts.Cfg.FilestorePath, db))
 	}
 
 	out, err := os.Create(outPath)
@@ -223,6 +225,33 @@ func backupWithFilestore(ctx context.Context, opts DBOpts, db, outPath string) e
 		}
 	}
 	return nil
+}
+
+// pullContainerFilestore copies <FilestorePath>/<db> out of the Odoo
+// container into a host temp dir and returns its path, a cleanup func,
+// and whether a filestore was found. ok=false (with a no-op cleanup)
+// when the container or filestore dir is missing — callers package the
+// dump only.
+func pullContainerFilestore(ctx context.Context, opts DBOpts, db string) (string, func(), bool) {
+	noop := func() {}
+	id, err := docker.ContainerID(ctx, opts.Cfg.ComposeCmd, opts.Root, opts.Cfg.OdooContainer)
+	if err != nil {
+		return "", noop, false
+	}
+	containerSrc := opts.Cfg.FilestorePath + "/" + db
+	if err := docker.Exec(ctx, opts.Cfg.ComposeCmd, opts.Root, opts.Cfg.OdooContainer, []string{"test", "-d", containerSrc}, func(string) {}); err != nil {
+		return "", noop, false
+	}
+	tmp, err := os.MkdirTemp("", "echo-fs-*")
+	if err != nil {
+		return "", noop, false
+	}
+	cleanup := func() { os.RemoveAll(tmp) }
+	if err := docker.CopyFromContainer(ctx, id, containerSrc, tmp); err != nil {
+		cleanup()
+		return "", noop, false
+	}
+	return filepath.Join(tmp, db), cleanup, true
 }
 
 // RunDBRestore opens a single-select picker over ./backups/*.{dump,zip},
@@ -325,8 +354,8 @@ func restoreFromZip(ctx context.Context, opts DBOpts, target, zipPath string) er
 		return fmt.Errorf("no dump.backup or dump.sql found in archive")
 	}
 
-	// Find a filestore/<somename>/ entry and copy it to the host
-	// filestore path under the new target name.
+	// Copy the filestore into the Odoo container under the new db name —
+	// Odoo reads it from there, not from the host.
 	srcFilestore, ok := findFilestoreInDir(tmpDir)
 	if !ok {
 		if opts.StreamOut != nil {
@@ -334,15 +363,34 @@ func restoreFromZip(ctx context.Context, opts DBOpts, target, zipPath string) er
 		}
 		return nil
 	}
-	dst := odooFilestorePath(target)
-	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
-		return err
-	}
-	if err := copyDir(srcFilestore, dst); err != nil {
+	if err := copyFilestoreToContainer(ctx, opts, target, srcFilestore); err != nil {
 		return fmt.Errorf("filestore copy: %w", err)
 	}
 	if opts.StreamOut != nil {
 		opts.StreamOut("→ " + target + " (with filestore)")
+	}
+	return nil
+}
+
+// copyFilestoreToContainer copies the unzipped filestore directory into
+// the Odoo container at <FilestorePath>/<target>/ via `docker cp`, then
+// best-effort fixes ownership so Odoo can read existing and write new
+// attachments (docker cp leaves files root-owned).
+func copyFilestoreToContainer(ctx context.Context, opts DBOpts, target, srcDir string) error {
+	id, err := docker.ContainerID(ctx, opts.Cfg.ComposeCmd, opts.Root, opts.Cfg.OdooContainer)
+	if err != nil {
+		return err
+	}
+	dst := opts.Cfg.FilestorePath + "/" + target
+	if err := docker.Exec(ctx, opts.Cfg.ComposeCmd, opts.Root, opts.Cfg.OdooContainer, []string{"mkdir", "-p", dst}, func(string) {}); err != nil {
+		return err
+	}
+	if err := docker.CopyToContainer(ctx, id, srcDir+"/.", dst); err != nil {
+		return err
+	}
+	chown := fmt.Sprintf(`chown -R "$(stat -c '%%u:%%g' '%s')" '%s'`, opts.Cfg.FilestorePath, dst)
+	if err := docker.ExecAsRoot(ctx, id, "sh", "-c", chown); err != nil && opts.StreamOut != nil {
+		opts.StreamOut("⚠ filestore copied but chown failed — Odoo can read it but may not write new attachments")
 	}
 	return nil
 }
@@ -490,16 +538,6 @@ func dbNameFromBackup(name string) string {
 	return base
 }
 
-func odooFilestorePath(db string) string {
-	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".local", "share", "Odoo", "filestore", db)
-}
-
-func dirExists(p string) bool {
-	info, err := os.Stat(p)
-	return err == nil && info.IsDir()
-}
-
 func fileExists(p string) bool {
 	info, err := os.Stat(p)
 	return err == nil && !info.IsDir()
@@ -642,30 +680,3 @@ func findFilestoreInDir(root string) (string, bool) {
 	return filepath.Join(fs, firstDir), true // Echo: filestore/<db>/<XX>/…
 }
 
-func copyDir(src, dst string) error {
-	return filepath.Walk(src, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			return err
-		}
-		rel, err := filepath.Rel(src, path)
-		if err != nil {
-			return err
-		}
-		target := filepath.Join(dst, rel)
-		if info.IsDir() {
-			return os.MkdirAll(target, info.Mode())
-		}
-		in, err := os.Open(path)
-		if err != nil {
-			return err
-		}
-		defer in.Close()
-		out, err := os.OpenFile(target, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, info.Mode())
-		if err != nil {
-			return err
-		}
-		defer out.Close()
-		_, err = io.Copy(out, in)
-		return err
-	})
-}
