@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- `--force` on `db-drop` (and on `db-restore --force`'s replace step) now
+  terminates the target DB's active connections (`pg_terminate_backend`)
+  before dropping, instead of aborting (Unit 23). This makes an orphaned
+  or busy database — e.g. one left behind by a failed restore — removable
+  without manually running `down odoo` first. Without `--force`, `db-drop`
+  still guards against active connections (now pointing at `--force` in
+  the error) so a live DB isn't dropped by accident.
+
 ### Added
 - Live command highlighting in the REPL (Unit 21). As you type, the first
   token (the command) is colored fish-style: green/bold when it's an exact

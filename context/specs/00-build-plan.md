@@ -34,6 +34,7 @@ Decomposition of Echo into ordered, scoped, verifiable units.
 | 20 | docker-container-log-style   | Reformat `docker compose` lifecycle progress lines (`Container … Restarting`) into Odoo-style `docker.<resource>` log lines with `name=` field; closes the compose-output gap deferred in Unit 08 | 04, 08     |
 | 21 | command-highlight           | Live fish-style highlight of the first REPL token: green when it's an exact command, red when it can't become one, neutral while it's still a valid prefix (reuses Registry/matchPrefix; custom `lineModel.View()`) | 01, 13     |
 | 22 | odoo-native-restore         | `db-restore` also accepts a standard Odoo backup `.zip` (`dump.sql` + `filestore/<XX>/…` + `manifest.json`): auto-detects `dump.sql` vs `dump.backup` (psql vs pg_restore), handles both filestore layouts, and strips the Odoo `_YYYY-MM-DD_HH-MM-SS` timestamp | 09         |
+| 23 | db-drop-force-connections   | `--force` on `db-drop` (and `db-restore --force`'s replace) terminates active connections (`pg_terminate_backend`) before dropping, so an orphaned/busy DB can be removed without a manual `down odoo` | 09         |
 
 ## Notes
 

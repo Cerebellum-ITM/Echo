@@ -31,7 +31,7 @@ type DBOpts struct {
 
 var (
 	ErrNoBackups      = errors.New("no backups found in ./backups/")
-	ErrActiveConns    = errors.New("active connections to the database — stop Odoo first (`down odoo`)")
+	ErrActiveConns    = errors.New("active connections to the database — pass --force to terminate them and drop, or stop Odoo first (`down odoo`)")
 	ErrDBExists       = errors.New("database already exists — use --force to replace")
 	ErrNoFilestore    = errors.New("no filestore directory for this database")
 	ErrNoTargetDB     = errors.New("no database given")
@@ -274,7 +274,7 @@ func RunDBRestore(ctx context.Context, opts DBOpts) error {
 		if !flags.force {
 			return fmt.Errorf("%w (%q)", ErrDBExists, target)
 		}
-		if err := assertNoActiveConns(ctx, opts, target); err != nil {
+		if err := docker.TerminateConnections(ctx, opts.Cfg.ComposeCmd, opts.Root, opts.Cfg.DBContainer, dbUser(opts), target); err != nil {
 			return err
 		}
 		if err := docker.DropDatabase(ctx, opts.Cfg.ComposeCmd, opts.Root, opts.Cfg.DBContainer, dbUser(opts), target); err != nil {
@@ -377,11 +377,16 @@ func RunDBDrop(ctx context.Context, opts DBOpts) error {
 		return ErrNoTargetDB
 	}
 
-	if err := assertNoActiveConns(ctx, opts, target); err != nil {
-		return err
-	}
-
-	if !flags.force {
+	// --force also clears whatever is holding the DB open; without it the
+	// guard still protects a live DB from an accidental drop.
+	if flags.force {
+		if err := docker.TerminateConnections(ctx, opts.Cfg.ComposeCmd, opts.Root, opts.Cfg.DBContainer, dbUser(opts), target); err != nil {
+			return err
+		}
+	} else {
+		if err := assertNoActiveConns(ctx, opts, target); err != nil {
+			return err
+		}
 		if err := confirmDrop(opts.Palette, target); err != nil {
 			return err
 		}

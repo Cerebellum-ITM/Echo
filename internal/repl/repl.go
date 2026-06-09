@@ -220,9 +220,9 @@ func helpSections() []helpSection {
 			{"db-backup [name]", "Dump DB (default: configured) to ./backups/"},
 			{"  --with-filestore", "Include filestore (.zip instead of .dump)"},
 			{"db-restore [--as N]", "Pick a backup and restore (creates DB)"},
-			{"  --force", "Replace target DB if it already exists"},
+			{"  --force", "Replace target DB (terminates its connections)"},
 			{"db-drop [name]", "Drop a database (confirmation by default)"},
-			{"  --force", "Skip the confirmation prompt"},
+			{"  --force", "Skip confirm and terminate active connections"},
 			{"db-list", "List DBs with size, date; ● marks the active one"},
 		}},
 		{"Shell", []helpEntry{

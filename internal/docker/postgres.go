@@ -183,6 +183,19 @@ func DropDatabase(ctx context.Context, composeCmd, dir, dbContainer, user, db st
 	return psqlExec(ctx, composeCmd, dir, dbContainer, user, "postgres", stmt)
 }
 
+// TerminateConnections force-closes every other backend connected to db
+// so it can be dropped or replaced even while something (e.g. a stale
+// Odoo worker) holds it open. Intended to run right before DropDatabase
+// under --force. A DB with no connections is a harmless no-op.
+func TerminateConnections(ctx context.Context, composeCmd, dir, dbContainer, user, db string) error {
+	if user == "" {
+		user = "postgres"
+	}
+	query := `SELECT pg_terminate_backend(pid) FROM pg_stat_activity ` +
+		`WHERE datname = '` + escapeIdent(db) + `' AND pid <> pg_backend_pid();`
+	return psqlExec(ctx, composeCmd, dir, dbContainer, user, "postgres", query)
+}
+
 func psqlScalar(ctx context.Context, composeCmd, dir, dbContainer, user, db, query string) (string, error) {
 	args := append(SplitCompose(composeCmd),
 		"exec", "-T", dbContainer,
