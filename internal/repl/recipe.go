@@ -61,17 +61,48 @@ func RunRecipe(s theme.Styles, p theme.Palette, project, id string, stage theme.
 		}
 	}
 
+	// Capture a structured record of the run so a later `report` can query
+	// it by step and level. Persisted (best-effort) after the run.
+	report := config.RunReport{Recipe: recipeLabel(path)}
+	stepNum := 0
+
 	runStep := func(name string, sargs []string) stepOutcome {
+		stepNum++
 		start := time.Now()
 		sess.dispatchParsed(ctx, name, sargs)
-		return stepOutcome{
+		out := stepOutcome{
 			code:     sess.exitCode,
 			errors:   sess.lastErrors,
 			warnings: sess.lastWarnings,
 			duration: time.Since(start),
 		}
+		lines := sess.lastOutput.Filtered(nil)
+		rls := make([]config.ReportLine, 0, len(lines))
+		for _, l := range lines {
+			// Prefer the exact level token from the text (keeps ERROR vs
+			// CRITICAL distinct); fall back to the line's classified Kind so
+			// Echo's own leveled lines and inherited traceback frames still
+			// carry a level.
+			lvl := lineLevel(l.Text)
+			if lvl == "" {
+				lvl = levelFromKind(l.Kind)
+			}
+			rls = append(rls, config.ReportLine{Level: lvl, Text: l.Text})
+		}
+		// Isolate steps: meta commands (help/clear) don't reset the buffer,
+		// so clear it here to keep each step's capture to its own lines.
+		sess.lastOutput.Reset()
+		report.Steps = append(report.Steps, config.StepReport{
+			Index:  stepNum,
+			Cmd:    strings.TrimSpace(name + " " + strings.Join(sargs, " ")),
+			Status: stepStatus(out.code),
+			Lines:  rls,
+		})
+		return out
 	}
-	return runRecipeSteps(steps, continueOnError, runStep, sess.runLog)
+	code := runRecipeSteps(steps, continueOnError, runStep, sess.runLog)
+	_ = config.SaveRunReport(report) // best-effort; never fails the run
+	return code
 }
 
 // openRunLog resolves the log destination, creates the file, sets the

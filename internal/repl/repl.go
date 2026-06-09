@@ -179,7 +179,7 @@ func (sess *session) renderPrompt() string {
 // registry_test.go; `exit` and `quit` are handled in Start (above) and
 // are therefore not part of this slice.
 var dispatchNames = []string{
-	"help", "clear", "copy-last",
+	"help", "clear", "copy-last", "report",
 	"init", "reset",
 	"up", "down", "stop", "restart", "ps", "logs",
 	"install", "update", "uninstall", "test", "modules",
@@ -226,6 +226,8 @@ func (sess *session) dispatchParsed(ctx context.Context, cmd string, args []stri
 		sess.clearAndRenderHeader()
 	case "copy-last":
 		sess.runCopyLast(args)
+	case "report":
+		sess.runReport(args)
 	case "init":
 		sess.runInit()
 	case "reset":
@@ -320,6 +322,11 @@ func helpSections() []helpSection {
 		{"Shell", []helpEntry{
 			{"copy-last", "Copy the last command's output to clipboard"},
 			{"  --errors", "Only copy error/warning lines"},
+			{"report", "Inspect/copy the last run's logs by step and level"},
+			{"  --step=<N>", "Only that step (default: all)"},
+			{"  --level=<lvl>", "Only lines of that level (debug…critical)"},
+			{"  --min-level=<lvl>", "That level and more severe"},
+			{"  --copy", "Copy the matched lines (default: print)"},
 			{"clear", "Clear screen and reprint header"},
 			{"help", "Show this help"},
 			{"exit, quit, Ctrl+D", "Quit Echo"},

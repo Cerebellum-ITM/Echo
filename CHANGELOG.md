@@ -8,6 +8,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- New `report` command (Unit 40) inspects or copies the **last run's** logs
+  by step and level, across process boundaries: every `echo run` now
+  persists a structured `~/.config/echo/run-logs/last-run.json` (per step:
+  command, status, and its captured lines tagged with a log level), and
+  `report` queries it. `report --step=<N>` selects a step (default: all);
+  `--level=<lvl>` matches that level exactly, `--min-level=<lvl>` matches
+  it and more severe (`ERROR` and `CRITICAL` stay distinct); `--copy` puts
+  the matched lines on the clipboard (OSC 52-aware), otherwise they print
+  to stdout colored by level. Works one-shot (`echo report …`) and in the
+  REPL (`report …`). Example: `echo report --step=1 --level=warn --copy`.
 - `echo run --pick` (Unit 39) opens a single-select picker of the `*.echo`
   recipe files in the current directory and runs the chosen one — so you
   can launch a recipe without typing its path. Top-level only (no

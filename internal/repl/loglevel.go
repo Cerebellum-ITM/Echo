@@ -53,6 +53,25 @@ func classifyOdooLog(line, previousKind string) string {
 	return "out"
 }
 
+// lineLevel returns a line's own log-level token (DEBUG/INFO/WARNING/
+// ERROR/CRITICAL) when it has one, or "" otherwise. Unlike classifyOdooLog
+// it does not infer from context (no traceback inheritance) and keeps
+// ERROR and CRITICAL distinct — used by `report` to filter stored lines by
+// exact level. Recognizes the standard Odoo prefix, the loguru prefix, and
+// loose-severity stderr.
+func lineLevel(text string) string {
+	if m := odooLogPrefix.FindStringSubmatch(text); m != nil {
+		return m[1]
+	}
+	if m := loguruLogPrefix.FindStringSubmatch(text); m != nil {
+		return m[1]
+	}
+	if ll, ok := parseLooseSeverity(text); ok {
+		return ll.level
+	}
+	return ""
+}
+
 // logColorer remembers the previous classification so traceback indentation
 // inherits the level of the line that opened it. Use a fresh instance per
 // command run.
