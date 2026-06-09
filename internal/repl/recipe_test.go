@@ -2,6 +2,7 @@ package repl
 
 import (
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -105,12 +106,12 @@ func TestParseRecipeArgs(t *testing.T) {
 func TestRunRecipeStepsFailFast(t *testing.T) {
 	steps := []string{"stop", "update bad", "restart"}
 	var ran []string
-	runStep := func(name string, args []string) int {
+	runStep := func(name string, args []string) stepOutcome {
 		ran = append(ran, name)
 		if name == "update" {
-			return exitError
+			return stepOutcome{code: exitError}
 		}
-		return exitOK
+		return stepOutcome{code: exitOK}
 	}
 	code := runRecipeSteps(steps, false, runStep, func(string, string, ...logField) {})
 
@@ -125,12 +126,12 @@ func TestRunRecipeStepsFailFast(t *testing.T) {
 func TestRunRecipeStepsContinueOnError(t *testing.T) {
 	steps := []string{"stop", "update bad", "restart"}
 	var ran []string
-	runStep := func(name string, args []string) int {
+	runStep := func(name string, args []string) stepOutcome {
 		ran = append(ran, name)
 		if name == "update" {
-			return exitError
+			return stepOutcome{code: exitError}
 		}
-		return exitOK
+		return stepOutcome{code: exitOK}
 	}
 	code := runRecipeSteps(steps, true, runStep, func(string, string, ...logField) {})
 
@@ -144,8 +145,95 @@ func TestRunRecipeStepsContinueOnError(t *testing.T) {
 
 func TestRunRecipeStepsAllPass(t *testing.T) {
 	steps := []string{"stop", "up", "restart"}
-	runStep := func(name string, args []string) int { return exitOK }
+	runStep := func(name string, args []string) stepOutcome { return stepOutcome{code: exitOK} }
 	if code := runRecipeSteps(steps, false, runStep, func(string, string, ...logField) {}); code != exitOK {
 		t.Errorf("all-pass exit = %d, want %d", code, exitOK)
+	}
+}
+
+// logCall captures one emitted log line for assertions.
+type logCall struct {
+	level  string
+	msg    string
+	fields map[string]string
+}
+
+func captureLog(calls *[]logCall) func(string, string, ...logField) {
+	return func(level, msg string, fields ...logField) {
+		m := map[string]string{}
+		for _, f := range fields {
+			m[f.key] = f.value
+		}
+		*calls = append(*calls, logCall{level: level, msg: msg, fields: m})
+	}
+}
+
+func findCall(calls []logCall, msg string) (logCall, bool) {
+	for _, c := range calls {
+		if c.msg == msg {
+			return c, true
+		}
+	}
+	return logCall{}, false
+}
+
+func TestRunRecipeStepsSummaryFailFast(t *testing.T) {
+	steps := []string{"stop", "update bad", "restart"}
+	runStep := func(name string, args []string) stepOutcome {
+		if name == "update" {
+			return stepOutcome{code: exitError, errors: 2, warnings: 1}
+		}
+		if name == "stop" {
+			return stepOutcome{code: exitOK, warnings: 3}
+		}
+		return stepOutcome{code: exitOK}
+	}
+	var calls []logCall
+	runRecipeSteps(steps, false, runStep, captureLog(&calls))
+
+	// Step 1 ran ok with warnings; recap line present at INFO.
+	if c, ok := findCall(calls, "step 1/3 ok"); !ok {
+		t.Error("missing recap for step 1")
+	} else if c.level != "INFO" || c.fields["cmd"] != "stop" || c.fields["warnings"] != "3" {
+		t.Errorf("step 1 recap = %+v", c)
+	}
+	// Step 2 failed: ERROR, exit + errors fields.
+	if c, ok := findCall(calls, "step 2/3 failed"); !ok {
+		t.Error("missing recap for failed step 2")
+	} else if c.level != "ERROR" || c.fields["exit"] != strconv.Itoa(exitError) || c.fields["errors"] != "2" {
+		t.Errorf("step 2 recap = %+v", c)
+	}
+	// Step 3 never ran → skipped, WARNING, no took.
+	if c, ok := findCall(calls, "step 3/3 skipped"); !ok {
+		t.Error("missing recap for skipped step 3")
+	} else if c.level != "WARNING" || c.fields["cmd"] != "restart" {
+		t.Errorf("step 3 recap = %+v", c)
+	} else if _, has := c.fields["took"]; has {
+		t.Error("skipped step must not carry a took field")
+	}
+	// Totals line: failed=1, skipped=1, warnings total = 3 (only ok+failed counted), ERROR.
+	if c, ok := findCall(calls, "run summary"); !ok {
+		t.Error("missing run summary")
+	} else if c.level != "ERROR" || c.fields["steps"] != "3" || c.fields["failed"] != "1" ||
+		c.fields["skipped"] != "1" || c.fields["ok"] != "1" || c.fields["warnings"] != "4" {
+		t.Errorf("totals = %+v", c)
+	}
+}
+
+func TestRunRecipeStepsSummaryAllPass(t *testing.T) {
+	steps := []string{"stop", "up"}
+	runStep := func(name string, args []string) stepOutcome { return stepOutcome{code: exitOK} }
+	var calls []logCall
+	runRecipeSteps(steps, false, runStep, captureLog(&calls))
+
+	c, ok := findCall(calls, "run summary")
+	if !ok {
+		t.Fatal("missing run summary")
+	}
+	if c.level != "INFO" || c.fields["steps"] != "2" || c.fields["ok"] != "2" {
+		t.Errorf("totals = %+v", c)
+	}
+	if _, has := c.fields["failed"]; has {
+		t.Error("clean run must not carry a failed field")
 	}
 }

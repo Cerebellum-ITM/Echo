@@ -60,6 +60,12 @@ type session struct {
 	// (finalize, *FailureLog, readonlyFinalize, …) and read by RunOnce /
 	// RunRecipe. In the interactive REPL it is set but never read.
 	exitCode int
+	// lastErrors / lastWarnings mirror the last dispatched command's
+	// runStats (the ERROR/CRITICAL and WARNING line counts). Set by the
+	// same terminal helpers that set exitCode, reset at dispatch start,
+	// and read by RunRecipe to build the per-step run summary (Unit 37).
+	lastErrors   int
+	lastWarnings int
 }
 
 // Exit codes returned by one-shot (script) dispatch. The interactive REPL
@@ -207,6 +213,7 @@ func (sess *session) dispatch(ctx context.Context, input string) {
 // recipe runners, which call it directly to avoid re-splitting.
 func (sess *session) dispatchParsed(ctx context.Context, cmd string, args []string) {
 	sess.exitCode = exitOK
+	sess.lastErrors, sess.lastWarnings = 0, 0
 
 	if !isMetaCommand(cmd) {
 		sess.lastOutput.Reset()
@@ -425,8 +432,6 @@ func confLine(icon, label, value string) string {
 // reprints the welcome banner. Any command can call this to reset the
 // visible context.
 func (sess *session) runModules(ctx context.Context, name string, args []string) {
-	sess.startLog(name, args)
-
 	lc := &logColorer{}
 	stats := &runStats{}
 	opts := cmd.ModulesOpts{
@@ -436,8 +441,11 @@ func (sess *session) runModules(ctx context.Context, name string, args []string)
 		Palette:     sess.palette,
 		Interactive: sess.interactive,
 		StreamOut: stats.wrap(func(line string) {
-			sess.print(Line{Kind: lc.classify(line), Text: line})
+			sess.emitStreamLine(lc, line)
 		}),
+		// The start line is emitted here, once the module set is resolved
+		// (after picker / --last), so it names the actual modules.
+		OnResolve: func(resolved []string) { sess.startResolved(name, resolved) },
 	}
 
 	var err error
@@ -452,6 +460,7 @@ func (sess *session) runModules(ctx context.Context, name string, args []string)
 	case "test":
 		resolved, err = cmd.RunTest(ctx, opts)
 	case "modules":
+		sess.startLog(name, args)
 		err = cmd.RunModules(ctx, opts)
 		sess.readonlyFinalize(name, err)
 		return
@@ -511,13 +520,7 @@ func (sess *session) runDocker(ctx context.Context, name string, args []string) 
 		Args:    args,
 		Palette: sess.palette,
 		StreamOut: stats.wrap(func(line string) {
-			if cl, ok := parseComposeProgress(line); ok {
-				emitOdooLog(cl.level, "docker."+cl.resource, cl.state,
-					[]logField{{"name", cl.name}},
-					sess.styles, sess.palette, sess.cfg.DBName)
-				return
-			}
-			sess.print(Line{Kind: lc.classify(line), Text: line})
+			sess.emitStreamLine(lc, line)
 		}),
 	}
 
@@ -564,6 +567,7 @@ func (sess *session) runDocker(ctx context.Context, name string, args []string) 
 // by module commands and shell sessions.
 func (sess *session) finalize(name string, errorCount, warnCount int, err error) {
 	sess.exitCode = scriptExitCode(err, errorCount)
+	sess.lastErrors, sess.lastWarnings = errorCount, warnCount
 	sess.print(Line{Kind: "out", Text: ""})
 	switch {
 	case errors.Is(err, cmd.ErrCancelled), errors.Is(err, huh.ErrUserAborted):
@@ -755,6 +759,30 @@ func (sess *session) runReset() {
 	for _, path := range result.Removed {
 		sess.print(Line{Kind: "dim", Text: "    removed " + path})
 	}
+}
+
+// emitStreamLine renders one streamed subprocess line. Foreign lines that
+// Echo can normalize — docker compose progress, and loose-severity stderr
+// (Warn:/Error: … from tools like wkhtmltopdf) — are reformatted into the
+// Odoo log style; everything else goes through the kind classifier (which
+// also keeps traceback continuations grouped via err/warn inheritance).
+func (sess *session) emitStreamLine(lc *logColorer, line string) {
+	if cl, ok := parseComposeProgress(line); ok {
+		emitOdooLog(cl.level, "docker."+cl.resource, cl.state,
+			[]logField{{"name", cl.name}},
+			sess.styles, sess.palette, sess.cfg.DBName)
+		return
+	}
+	// Don't hijack a line out of an active traceback (err/warn inheritance):
+	// a bare `SomeError: …` tail must stay grouped with its frames.
+	if lc.last != "err" && lc.last != "warn" {
+		if ll, ok := parseLooseSeverity(line); ok {
+			emitOdooLog(ll.level, looseSeverityLogger, ll.message, nil,
+				sess.styles, sess.palette, sess.cfg.DBName)
+			return
+		}
+	}
+	sess.print(Line{Kind: lc.classify(line), Text: line})
 }
 
 func (sess *session) print(l Line) {

@@ -8,6 +8,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `echo run <file>` now ends with a per-step run summary (Unit 37): one
+  `echo.run` line per step with its status (`ok` / `failed` / `cancelled`
+  / `skipped`), warning count, and duration (`took`), plus a final
+  `run summary` totals line (`steps` / `ok` / `failed` / `skipped` /
+  `warnings` / `took`). Under fail-fast the steps after the failure are
+  reported as `skipped`. The recap is captured by `--log` like the rest of
+  the run. Process exit codes are unchanged.
+- Loose-severity stderr lines now reformat into Echo's Odoo log style
+  (Unit 36). A line whose first token is a bare severity keyword + `:` —
+  e.g. wkhtmltopdf's `Warn: Can't find .pfb for face 'Courier'` or
+  `Error: Failed loading page` — is rendered with a timestamp, level chip
+  and the synthetic `report.wkhtmltopdf` logger instead of leaking through
+  as raw, unstyled text. A loose `Warn:` counts toward the run's warning
+  total; a loose `Error:`/`Critical:` is colored but **not** counted as a
+  failure, so a noisy tool's stderr can't flip a finished update to ✗.
+  Lines inside an active traceback (err/warn inheritance) are left grouped,
+  not hijacked. Applies to module (`update`/…) and `logs` output.
 - `update --last` repeats the last `update` for the current project and
   database (Unit 35) — the resolved module list, or `--all` if that was
   last — bypassing the picker and running directly. The target is
@@ -67,6 +84,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   command at a real terminal still gets the prompt. New `-C` /
   `--project-dir <dir>` flag runs a one-shot command from outside the
   project directory (like `git -C`).
+
+### Changed
+- The `update` / `install` / `uninstall` / `test` **start line** now names
+  the resolved module(s) — including picker selections and `update --last`,
+  which previously logged a generic `echo.update.start`. The line is
+  emitted once the module set is known (after the picker / `--last` disk
+  read), with the modules in both the logger (`echo.update.module.<mod>` /
+  `.modules` / `.all`) and a `modules=` field, so you can tell what's
+  running from the start, not only from the end-of-run line.
 
 ## [0.6.0] — 2026-06-09
 

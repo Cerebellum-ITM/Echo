@@ -46,9 +46,15 @@ func RunRecipe(s theme.Styles, p theme.Palette, project, id string, stage theme.
 		}
 	}
 
-	runStep := func(name string, sargs []string) int {
+	runStep := func(name string, sargs []string) stepOutcome {
+		start := time.Now()
 		sess.dispatchParsed(ctx, name, sargs)
-		return sess.exitCode
+		return stepOutcome{
+			code:     sess.exitCode,
+			errors:   sess.lastErrors,
+			warnings: sess.lastWarnings,
+			duration: time.Since(start),
+		}
 	}
 	return runRecipeSteps(steps, continueOnError, runStep, sess.runLog)
 }
@@ -108,39 +114,144 @@ func (sess *session) runLog(level, msg string, fields ...logField) {
 	emitOdooLog(level, "echo.run", msg, fields, sess.styles, sess.palette, sess.cfg.DBName)
 }
 
+// stepOutcome is one recipe step's result, captured by the runStep
+// closure after dispatchParsed: the exit code plus the command's runStats
+// (surfaced on the session) and the wall-clock duration.
+type stepOutcome struct {
+	code     int
+	errors   int
+	warnings int
+	duration time.Duration
+}
+
 // runRecipeSteps is the fail-fast (or continue-on-error) loop, decoupled
 // from session/IO so it can be tested with a stubbed step runner. runStep
-// returns each step's exit code; log emits progress/summary lines.
-func runRecipeSteps(steps []string, continueOnError bool, runStep func(name string, args []string) int, log func(level, msg string, fields ...logField)) int {
+// returns each step's outcome; log emits the live progress lines, the
+// per-step recap, and the totals line. The process exit code is unchanged
+// from the bare-int era: all-pass → exitOK, fail-fast → the failing step's
+// code, continue-on-error → exitError if any step failed.
+func runRecipeSteps(steps []string, continueOnError bool, runStep func(name string, args []string) stepOutcome, log func(level, msg string, fields ...logField)) int {
 	total := len(steps)
-	failed := 0
-	var lastCode int
+
+	type result struct {
+		step   string
+		out    stepOutcome
+		status string
+	}
+	var results []result
+	failed, skipped := 0, 0
+	lastCode := exitOK
+	stopped := -1
 
 	for i, step := range steps {
 		log("INFO", fmt.Sprintf("step %d/%d → %s", i+1, total, step))
 		fields := strings.Fields(step)
-		code := runStep(fields[0], fields[1:])
-		if code != exitOK {
-			lastCode = code
+		out := runStep(fields[0], fields[1:])
+		results = append(results, result{step: step, out: out, status: stepStatus(out.code)})
+		if out.code != exitOK {
+			lastCode = out.code
 			failed++
 			if !continueOnError {
-				log("ERROR", fmt.Sprintf("stopped at step %d/%d", i+1, total),
-					logField{"exit", strconv.Itoa(code)})
-				return code
+				stopped = i
+				break
 			}
 		}
 	}
-
-	if failed > 0 {
-		log("ERROR", "finished with errors",
-			logField{"failed", strconv.Itoa(failed)},
-			logField{"steps", strconv.Itoa(total)})
-		if lastCode != exitOK {
-			return exitError
+	// Under fail-fast the steps after the failure never ran — record them
+	// as skipped so the recap accounts for all N steps.
+	if stopped >= 0 {
+		for j := stopped + 1; j < total; j++ {
+			results = append(results, result{step: steps[j], status: "skipped"})
+			skipped++
 		}
 	}
-	log("INFO", fmt.Sprintf("%d steps completed", total))
-	return exitOK
+
+	// Per-step recap + running totals.
+	var warnTot int
+	var durTot time.Duration
+	for i, r := range results {
+		warnTot += r.out.warnings
+		durTot += r.out.duration
+		log(recapLevel(r.status),
+			fmt.Sprintf("step %d/%d %s", i+1, total, r.status),
+			stepFields(r.step, r.out, r.status)...)
+	}
+
+	okN := total - failed - skipped
+	totFields := []logField{{"steps", strconv.Itoa(total)}, {"ok", strconv.Itoa(okN)}}
+	if failed > 0 {
+		totFields = append(totFields, logField{"failed", strconv.Itoa(failed)})
+	}
+	if skipped > 0 {
+		totFields = append(totFields, logField{"skipped", strconv.Itoa(skipped)})
+	}
+	if warnTot > 0 {
+		totFields = append(totFields, logField{"warnings", strconv.Itoa(warnTot)})
+	}
+	totFields = append(totFields, logField{"took", fmtDur(durTot)})
+	totLevel := "INFO"
+	if failed > 0 {
+		totLevel = "ERROR"
+	}
+	log(totLevel, "run summary", totFields...)
+
+	switch {
+	case stopped >= 0:
+		return lastCode
+	case failed > 0:
+		return exitError
+	default:
+		return exitOK
+	}
+}
+
+// stepStatus maps a step's exit code to its recap status word.
+func stepStatus(code int) string {
+	switch code {
+	case exitOK:
+		return "ok"
+	case exitCancelled:
+		return "cancelled"
+	default:
+		return "failed"
+	}
+}
+
+// recapLevel maps a recap status to the log level its line is emitted at.
+func recapLevel(status string) string {
+	switch status {
+	case "failed":
+		return "ERROR"
+	case "cancelled", "skipped":
+		return "WARNING"
+	default:
+		return "INFO"
+	}
+}
+
+// stepFields builds the recap fields for one step: always the cmd; the
+// warning count when non-zero; on failure the error count + exit code; and
+// the duration for any step that actually ran (skipped steps have none).
+func stepFields(step string, out stepOutcome, status string) []logField {
+	fields := []logField{{"cmd", step}}
+	if out.warnings > 0 {
+		fields = append(fields, logField{"warnings", strconv.Itoa(out.warnings)})
+	}
+	if status == "failed" {
+		if out.errors > 0 {
+			fields = append(fields, logField{"errors", strconv.Itoa(out.errors)})
+		}
+		fields = append(fields, logField{"exit", strconv.Itoa(out.code)})
+	}
+	if status != "skipped" {
+		fields = append(fields, logField{"took", fmtDur(out.duration)})
+	}
+	return fields
+}
+
+// fmtDur renders a step/total duration compactly (e.g. "1.23s", "180ms").
+func fmtDur(d time.Duration) string {
+	return d.Round(time.Millisecond).String()
 }
 
 // parseRecipeArgs extracts the recipe path (first positional; empty or `-`

@@ -71,6 +71,19 @@ type ModulesOpts struct {
 	// `update` empty-picker "repeat last" confirmation so it never fires
 	// under `echo run <file>` / one-shot script dispatch.
 	Interactive bool
+	// OnResolve, when set, is called with the final module set (or the
+	// {"--all"} sentinel) immediately before the Odoo subprocess runs, so
+	// the caller can emit a start line that names the actual modules —
+	// including picker and `--last` resolutions the raw args don't reveal.
+	OnResolve func(resolved []string)
+}
+
+// emitResolved invokes opts.OnResolve when set. Called by each module
+// Run* with the resolved target right before runOdoo.
+func emitResolved(opts ModulesOpts, resolved []string) {
+	if opts.OnResolve != nil {
+		opts.OnResolve(resolved)
+	}
 }
 
 var (
@@ -152,6 +165,7 @@ func RunInstall(ctx context.Context, opts ModulesOpts) ([]string, error) {
 		}
 		modules = picked
 	}
+	emitResolved(opts, modules)
 	return modules, runOdoo(ctx, opts, odoo.WithLogLevel(odoo.Install(buildConn(opts), modules, withDemo), level))
 }
 
@@ -193,14 +207,17 @@ func RunUpdate(ctx context.Context, opts ModulesOpts) ([]string, error) {
 		}
 		if prev.All {
 			saveLastUpdate(opts, nil, true, level)
+			emitResolved(opts, []string{"--all"})
 			return []string{"--all"}, runOdoo(ctx, opts, odoo.WithLogLevel(odoo.UpdateAll(buildConn(opts)), level))
 		}
 		saveLastUpdate(opts, prev.Modules, false, level)
+		emitResolved(opts, prev.Modules)
 		return prev.Modules, runOdoo(ctx, opts, odoo.WithLogLevel(odoo.Update(buildConn(opts), prev.Modules), level))
 	}
 
 	if all {
 		saveLastUpdate(opts, nil, true, level)
+		emitResolved(opts, []string{"--all"})
 		return []string{"--all"}, runOdoo(ctx, opts, odoo.WithLogLevel(odoo.UpdateAll(buildConn(opts)), level))
 	}
 
@@ -230,6 +247,7 @@ func RunUpdate(ctx context.Context, opts ModulesOpts) ([]string, error) {
 		}
 	}
 	saveLastUpdate(opts, modules, false, level)
+	emitResolved(opts, modules)
 	return modules, runOdoo(ctx, opts, odoo.WithLogLevel(odoo.Update(buildConn(opts), modules), level))
 }
 
@@ -295,6 +313,7 @@ func RunUninstall(ctx context.Context, opts ModulesOpts) ([]string, error) {
 		}
 		modules = picked
 	}
+	emitResolved(opts, modules)
 	return modules, runOdoo(ctx, opts, odoo.WithLogLevel(odoo.Uninstall(buildConn(opts), modules), level))
 }
 
@@ -348,6 +367,7 @@ func RunTest(ctx context.Context, opts ModulesOpts) ([]string, error) {
 		}
 		modules = picked
 	}
+	emitResolved(opts, modules)
 	return modules, runOdoo(ctx, opts, odoo.Test(buildConn(opts), odoo.TestOpts{
 		Modules: modules,
 		Tags:    tags,

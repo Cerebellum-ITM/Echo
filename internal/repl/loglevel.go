@@ -85,6 +85,13 @@ func (s *runStats) wrap(inner func(string)) func(string) {
 			countLevel(m[1])
 		} else if cl, ok := parseComposeProgress(line); ok {
 			countLevel(cl.level)
+		} else if ll, ok := parseLooseSeverity(line); ok {
+			// Loose-severity stderr (e.g. wkhtmltopdf): a Warn: counts as a
+			// warning, but a loose Error: must not fail an otherwise-healthy
+			// run, so only WARNING is counted here.
+			if ll.level == "WARNING" {
+				s.warnings++
+			}
 		}
 		inner(line)
 	}
