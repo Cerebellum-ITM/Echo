@@ -9,7 +9,7 @@ var Registry = []string{
 	"init", "reset",
 	"install", "update", "uninstall", "test", "modules",
 	"i18n-export", "i18n-update",
-	"db-backup", "db-restore", "db-drop", "db-list",
+	"db-backup", "db-restore", "db-drop", "db-neutralize", "db-list",
 	"bash", "psql", "shell", "connect",
 	"up", "down", "stop", "restart", "ps", "logs",
 	"copy-last",
@@ -21,19 +21,20 @@ var Registry = []string{
 // flags) are intentionally excluded. Commands absent from the map have
 // no known flags. Powers flag highlighting and Tab flag completion.
 var commandFlags = map[string][]string{
-	"install":     {"--with-demo"},
-	"update":      {"--all"},
-	"test":        {"--update", "--tags"},
-	"modules":     {"--config"},
-	"i18n-export": {"--out"},
-	"i18n-update": {"--force"},
-	"db-backup":   {"--with-filestore"},
-	"db-restore":  {"--as", "--force"},
-	"db-drop":     {"--force"},
-	"down":        {"--force"},
-	"logs":        {"-t", "--no-follow", "-c", "--copy", "--all"},
-	"connect":     {"--all", "--force", "--fresh", "--new-window"},
-	"copy-last":   {"--errors"},
+	"install":       {"--with-demo"},
+	"update":        {"--all"},
+	"test":          {"--update", "--tags"},
+	"modules":       {"--config"},
+	"i18n-export":   {"--out"},
+	"i18n-update":   {"--force"},
+	"db-backup":     {"--with-filestore"},
+	"db-restore":    {"--as", "--force", "--neutralize"},
+	"db-drop":       {"--force"},
+	"db-neutralize": {"--force"},
+	"down":          {"--force"},
+	"logs":          {"-t", "--no-follow", "-c", "--copy", "--all"},
+	"connect":       {"--all", "--force", "--fresh", "--new-window"},
+	"copy-last":     {"--errors"},
 }
 
 func init() {

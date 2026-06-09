@@ -1,6 +1,52 @@
 package cmd
 
-import "testing"
+import (
+	"strings"
+	"testing"
+
+	"github.com/pascualchavez/echo/internal/odoo"
+)
+
+func TestParseDBArgsNeutralize(t *testing.T) {
+	cases := []struct {
+		name           string
+		args           []string
+		wantNeutralize bool
+		wantForce      bool
+		wantAs         string
+		wantPos        []string
+	}{
+		{"bare", []string{"--neutralize"}, true, false, "", nil},
+		{"with-positional", []string{"mydb", "--neutralize"}, true, false, "", []string{"mydb"}},
+		{"mixed", []string{"--neutralize", "--force", "--as", "copy"}, true, true, "copy", nil},
+		{"absent", []string{"--force"}, false, true, "", nil},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			f, pos := parseDBArgs(c.args)
+			if f.neutralize != c.wantNeutralize {
+				t.Errorf("neutralize = %v, want %v", f.neutralize, c.wantNeutralize)
+			}
+			if f.force != c.wantForce {
+				t.Errorf("force = %v, want %v", f.force, c.wantForce)
+			}
+			if f.asName != c.wantAs {
+				t.Errorf("asName = %q, want %q", f.asName, c.wantAs)
+			}
+			if strings.Join(pos, ",") != strings.Join(c.wantPos, ",") {
+				t.Errorf("positional = %v, want %v", pos, c.wantPos)
+			}
+		})
+	}
+}
+
+func TestNeutralizeBuilder(t *testing.T) {
+	got := odoo.Neutralize(odoo.Conn{DB: "mydb", Host: "db", Port: "5432", User: "odoo"})
+	want := []string{"odoo", "neutralize", "-d", "mydb", "--db_host", "db", "--db_port", "5432", "--db_user", "odoo"}
+	if strings.Join(got, " ") != strings.Join(want, " ") {
+		t.Errorf("Neutralize() = %v, want %v", got, want)
+	}
+}
 
 func TestDBNameFromBackup(t *testing.T) {
 	cases := []struct {

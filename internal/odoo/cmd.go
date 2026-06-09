@@ -78,6 +78,16 @@ func Uninstall(c Conn, modules []string) Cmd {
 	return append(args, "--uninstall", strings.Join(modules, ","), "--stop-after-init")
 }
 
+// Neutralize builds the argv for `odoo neutralize`, which applies the
+// per-module data/neutralize.sql to the target DB (disabling crons,
+// mail/fetchmail servers, payment providers, the environment ribbon, …).
+// `neutralize` is a CLI subcommand, so it goes immediately after `odoo`,
+// before the connection flags. The subcommand exits on its own — no
+// --stop-after-init needed. Flag set is identical across Odoo 17/18/19.
+func Neutralize(c Conn) Cmd {
+	return append(Cmd{"odoo", "neutralize"}, c.flags()...)
+}
+
 // TestHTTPPort is the fallback HTTP port the test process binds to.
 // Chosen high and uncommon so it is unlikely to clash with anything
 // else running in the Odoo container.
@@ -87,13 +97,13 @@ const TestHTTPPort = "8189"
 //
 //   - Modules: target module names (always at least one after picker).
 //   - Tags:    optional --test-tags spec. If empty, Test auto-builds
-//              `--test-tags /<mod1>,/<mod2>` to filter execution to
-//              just those modules' tests.
+//     `--test-tags /<mod1>,/<mod2>` to filter execution to
+//     just those modules' tests.
 //   - Update:  when true, also pass `-u <mods>` so the modules are
-//              reloaded before tests run (needed when views/schema
-//              changed; not needed for Python-only test iteration
-//              because --stop-after-init spawns a fresh process that
-//              imports the latest code from disk).
+//     reloaded before tests run (needed when views/schema
+//     changed; not needed for Python-only test iteration
+//     because --stop-after-init spawns a fresh process that
+//     imports the latest code from disk).
 type TestOpts struct {
 	Modules []string
 	Tags    string

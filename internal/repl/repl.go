@@ -130,7 +130,7 @@ var dispatchNames = []string{
 	"up", "down", "stop", "restart", "ps", "logs",
 	"install", "update", "uninstall", "test", "modules",
 	"i18n-export", "i18n-update",
-	"db-backup", "db-restore", "db-drop", "db-list",
+	"db-backup", "db-restore", "db-drop", "db-neutralize", "db-list",
 	"shell", "bash", "psql", "connect",
 }
 
@@ -175,7 +175,7 @@ func (sess *session) dispatch(ctx context.Context, input string) {
 		sess.runModules(ctx, cmd, args)
 	case "i18n-export", "i18n-update":
 		sess.runI18n(ctx, cmd, args)
-	case "db-backup", "db-restore", "db-drop", "db-list":
+	case "db-backup", "db-restore", "db-drop", "db-neutralize", "db-list":
 		sess.runDB(ctx, cmd, args)
 	case "shell", "bash", "psql":
 		sess.runShell(ctx, cmd, args)
@@ -221,8 +221,11 @@ func helpSections() []helpSection {
 			{"  --with-filestore", "Include filestore (.zip instead of .dump)"},
 			{"db-restore [--as N]", "Pick a backup and restore (creates DB)"},
 			{"  --force", "Replace target DB (terminates its connections)"},
+			{"  --neutralize", "Neutralize the DB after restoring"},
 			{"db-drop [name]", "Drop a database (confirmation by default)"},
 			{"  --force", "Skip confirm and terminate active connections"},
+			{"db-neutralize [name]", "Neutralize a DB (disable mail/cron/payments)"},
+			{"  --force", "Skip the active-DB / prod confirmation"},
 			{"db-list", "List DBs with size, date; ● marks the active one"},
 		}},
 		{"Shell", []helpEntry{
@@ -530,6 +533,8 @@ func (sess *session) runDB(ctx context.Context, name string, args []string) {
 		err = cmd.RunDBRestore(ctx, opts)
 	case "db-drop":
 		err = cmd.RunDBDrop(ctx, opts)
+	case "db-neutralize":
+		err = cmd.RunDBNeutralize(ctx, opts)
 	}
 	switch {
 	case errors.Is(err, cmd.ErrCancelled), errors.Is(err, huh.ErrUserAborted):

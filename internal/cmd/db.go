@@ -18,6 +18,7 @@ import (
 	"github.com/pascualchavez/echo/internal/config"
 	"github.com/pascualchavez/echo/internal/docker"
 	"github.com/pascualchavez/echo/internal/env"
+	"github.com/pascualchavez/echo/internal/odoo"
 	"github.com/pascualchavez/echo/internal/theme"
 )
 
@@ -30,17 +31,18 @@ type DBOpts struct {
 }
 
 var (
-	ErrNoBackups      = errors.New("no backups found in ./backups/")
-	ErrActiveConns    = errors.New("active connections to the database — pass --force to terminate them and drop, or stop Odoo first (`down odoo`)")
-	ErrDBExists       = errors.New("database already exists — use --force to replace")
-	ErrNoFilestore    = errors.New("no filestore directory for this database")
-	ErrNoTargetDB     = errors.New("no database given")
-	ErrNoDBContainer  = errors.New("no db container configured — run `init` first")
+	ErrNoBackups     = errors.New("no backups found in ./backups/")
+	ErrActiveConns   = errors.New("active connections to the database — pass --force to terminate them and drop, or stop Odoo first (`down odoo`)")
+	ErrDBExists      = errors.New("database already exists — use --force to replace")
+	ErrNoFilestore   = errors.New("no filestore directory for this database")
+	ErrNoTargetDB    = errors.New("no database given")
+	ErrNoDBContainer = errors.New("no db container configured — run `init` first")
 )
 
 type dbFlags struct {
 	force         bool
 	withFilestore bool
+	neutralize    bool
 	asName        string
 }
 
@@ -54,6 +56,8 @@ func parseDBArgs(args []string) (dbFlags, []string) {
 			f.force = true
 		case a == "--with-filestore":
 			f.withFilestore = true
+		case a == "--neutralize":
+			f.neutralize = true
 		case a == "--as":
 			if i+1 < len(args) {
 				f.asName = args[i+1]
@@ -315,27 +319,49 @@ func RunDBRestore(ctx context.Context, opts DBOpts) error {
 		return err
 	}
 
+	note := ""
 	if strings.HasSuffix(picked, ".zip") {
-		return restoreFromZip(ctx, opts, target, picked)
+		n, err := restoreFromZip(ctx, opts, target, picked)
+		if err != nil {
+			return err
+		}
+		note = n
+	} else {
+		if err := docker.Restore(ctx, opts.Cfg.ComposeCmd, opts.Root, opts.Cfg.DBContainer, dbUser(opts), target, picked); err != nil {
+			return err
+		}
 	}
-	if err := docker.Restore(ctx, opts.Cfg.ComposeCmd, opts.Root, opts.Cfg.DBContainer, dbUser(opts), target, picked); err != nil {
-		return err
+
+	// --neutralize: turn the freshly restored copy into a safe,
+	// non-production DB. Run last so a neutralize failure surfaces after
+	// the data is already in place.
+	if flags.neutralize {
+		if err := neutralizeDB(ctx, opts, target); err != nil {
+			return err
+		}
+		note += " (neutralized)"
 	}
+
 	if opts.StreamOut != nil {
-		opts.StreamOut("→ " + target)
+		opts.StreamOut("→ " + target + note)
 	}
 	return nil
 }
 
-func restoreFromZip(ctx context.Context, opts DBOpts, target, zipPath string) error {
+// restoreFromZip restores the dump inside a .zip and copies its
+// filestore into the Odoo container. It returns a footer suffix
+// describing the outcome (" (with filestore)" or "") so the caller can
+// compose the final `→ <target>` line; ⚠ warnings are still printed
+// here.
+func restoreFromZip(ctx context.Context, opts DBOpts, target, zipPath string) (string, error) {
 	tmpDir, err := os.MkdirTemp("", "echo-restore-*")
 	if err != nil {
-		return err
+		return "", err
 	}
 	defer os.RemoveAll(tmpDir)
 
 	if err := unzip(zipPath, tmpDir); err != nil {
-		return err
+		return "", err
 	}
 
 	// Pick the restore path by which dump the archive carries: Echo's own
@@ -344,14 +370,14 @@ func restoreFromZip(ctx context.Context, opts DBOpts, target, zipPath string) er
 	switch {
 	case fileExists(filepath.Join(tmpDir, "dump.backup")):
 		if err := docker.Restore(ctx, opts.Cfg.ComposeCmd, opts.Root, opts.Cfg.DBContainer, dbUser(opts), target, filepath.Join(tmpDir, "dump.backup")); err != nil {
-			return err
+			return "", err
 		}
 	case fileExists(filepath.Join(tmpDir, "dump.sql")):
 		if err := docker.RestoreSQL(ctx, opts.Cfg.ComposeCmd, opts.Root, opts.Cfg.DBContainer, dbUser(opts), target, filepath.Join(tmpDir, "dump.sql")); err != nil {
-			return err
+			return "", err
 		}
 	default:
-		return fmt.Errorf("no dump.backup or dump.sql found in archive")
+		return "", fmt.Errorf("no dump.backup or dump.sql found in archive")
 	}
 
 	// Copy the filestore into the Odoo container under the new db name —
@@ -361,15 +387,12 @@ func restoreFromZip(ctx context.Context, opts DBOpts, target, zipPath string) er
 		if opts.StreamOut != nil {
 			opts.StreamOut("⚠ no filestore in archive — sql only")
 		}
-		return nil
+		return "", nil
 	}
 	if err := copyFilestoreToContainer(ctx, opts, target, srcFilestore); err != nil {
-		return fmt.Errorf("filestore copy: %w", err)
+		return "", fmt.Errorf("filestore copy: %w", err)
 	}
-	if opts.StreamOut != nil {
-		opts.StreamOut("→ " + target + " (with filestore)")
-	}
-	return nil
+	return " (with filestore)", nil
 }
 
 // copyFilestoreToContainer copies the unzipped filestore directory into
@@ -454,9 +477,110 @@ func confirmDrop(palette theme.Palette, name string) error {
 	confirmed := false
 	form := huh.NewForm(huh.NewGroup(
 		huh.NewConfirm().
-			Title("⚠  About to drop database "+red).
+			Title("⚠  About to drop database " + red).
 			Description("This cannot be undone.").
 			Affirmative("Drop").
+			Negative("Cancel").
+			Value(&confirmed),
+	)).
+		WithTheme(BuildHuhTheme(palette)).
+		WithInput(os.Stdin).
+		WithOutput(os.Stdout)
+	if err := form.Run(); err != nil {
+		return err
+	}
+	if !confirmed {
+		return ErrCancelled
+	}
+	return nil
+}
+
+// RunDBNeutralize runs `odoo neutralize` against the target DB, applying
+// Odoo's per-module neutralization SQL (disables mail/fetchmail servers,
+// crons, payment providers, the environment ribbon, …). Target defaults
+// to cfg.DBName; a positional arg overrides it; if neither is set, a
+// picker is shown. Confirms (red) when the target is the active DB or
+// stage=prod — neutralizing those wipes real config — unless --force is
+// passed.
+func RunDBNeutralize(ctx context.Context, opts DBOpts) error {
+	if err := requireDBContainer(opts.Cfg); err != nil {
+		return err
+	}
+	if err := requireOdooConfig(opts.Cfg); err != nil {
+		return err
+	}
+	flags, positional := parseDBArgs(opts.Args)
+
+	target := opts.Cfg.DBName
+	if len(positional) > 0 {
+		target = positional[0]
+	}
+	if target == "" {
+		names, err := docker.ListDatabases(ctx, opts.Cfg.ComposeCmd, opts.Root, opts.Cfg.DBContainer, dbUser(opts))
+		if err != nil {
+			return err
+		}
+		if len(names) == 0 {
+			return errors.New("no databases to neutralize")
+		}
+		picked, err := runSingleFuzzyPicker("Pick a database to neutralize", names, opts.Palette)
+		if err != nil {
+			return err
+		}
+		target = picked
+	}
+	if target == "" {
+		return ErrNoTargetDB
+	}
+
+	// Guard the dangerous targets: neutralizing the active DB or a prod
+	// stage destroys real mail/payment configuration.
+	if !flags.force && (target == opts.Cfg.DBName || strings.EqualFold(opts.Cfg.Stage, "prod")) {
+		if err := confirmNeutralize(opts.Palette, target); err != nil {
+			return err
+		}
+	}
+
+	if err := neutralizeDB(ctx, opts, target); err != nil {
+		return err
+	}
+	if opts.StreamOut != nil {
+		opts.StreamOut("→ " + target + " (neutralized)")
+	}
+	return nil
+}
+
+// neutralizeDB runs `odoo neutralize -d <target>` inside the Odoo
+// container, streaming its output. Shared by RunDBNeutralize (after its
+// guard) and RunDBRestore (--neutralize). No active-connection guard:
+// neutralization runs fine while Odoo is up.
+func neutralizeDB(ctx context.Context, opts DBOpts, target string) error {
+	envVars := env.Load(opts.Root)
+	conn := odoo.Conn{
+		DB:       target,
+		Host:     opts.Cfg.DBContainer,
+		Port:     envVars["POSTGRES_PORT"],
+		User:     envVars["POSTGRES_USER"],
+		Password: envVars["POSTGRES_PASSWORD"],
+	}
+	if conn.Port == "" {
+		conn.Port = "5432"
+	}
+	stream := func(string) {}
+	if opts.StreamOut != nil {
+		stream = opts.StreamOut
+	}
+	return docker.Exec(ctx, opts.Cfg.ComposeCmd, opts.Root, opts.Cfg.OdooContainer, odoo.Neutralize(conn), stream)
+}
+
+func confirmNeutralize(palette theme.Palette, name string) error {
+	red := lipgloss.NewStyle().Foreground(palette.Error).Bold(true).Render(name)
+	confirmed := false
+	form := huh.NewForm(huh.NewGroup(
+		huh.NewConfirm().
+			Title("⚠  About to neutralize database " + red).
+			Description("Disables mail servers, crons, and payment providers. Don't run this on production.").
+			Affirmative("Neutralize").
 			Negative("Cancel").
 			Value(&confirmed),
 	)).
@@ -679,4 +803,3 @@ func findFilestoreInDir(root string) (string, bool) {
 	}
 	return filepath.Join(fs, firstDir), true // Echo: filestore/<db>/<XX>/…
 }
-
