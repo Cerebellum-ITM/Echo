@@ -46,6 +46,12 @@ type logField struct {
 // for Odoo loggers, message default fg, and per-key colors on the
 // structured fields.
 func emitOdooLog(level, logger, msg string, fields []logField, s theme.Styles, p theme.Palette, db string) {
+	// Silenced recipe step (--silent): drop screen + log entirely. The
+	// runner's own step/recap lines are emitted with suppression inactive,
+	// so they stay visible.
+	if outputSuppressed(level) {
+		return
+	}
 	ts := time.Now().Format("2006-01-02 15:04:05.000")
 	ts = strings.Replace(ts, ".", ",", 1)
 	pid := strconv.Itoa(os.Getpid())
@@ -61,12 +67,19 @@ func emitOdooLog(level, logger, msg string, fields []logField, s theme.Styles, p
 		s.Faint.Render(pid) + " " +
 		levelStyle.Render(short) + " " +
 		dbStyle.Render(db) + " " +
-		loggerStyle.Render(logger+":") + " " +
-		s.Out.Render(msg)
+		loggerStyle.Render(logger+":")
+	if msg != "" {
+		line += " " + s.Out.Render(msg)
+	}
 
 	for _, f := range fields {
 		keyStyle := keyColor(f.key, p)
-		line += " " + keyStyle.Render(f.key) + "=" + s.Out.Render(quoteIfNeeded(f.value))
+		valText := quoteIfNeeded(f.value)
+		if vs, ok := valueStyleFor(f.key, f.value, p); ok {
+			line += " " + keyStyle.Render(f.key) + "=" + vs.Render(valText)
+		} else {
+			line += " " + keyStyle.Render(f.key) + "=" + s.Out.Render(valText)
+		}
 	}
 
 	os.Stdout.WriteString(line + "\n")
@@ -89,6 +102,36 @@ func keyColor(key string, p theme.Palette) lipgloss.Style {
 		return bold.Foreground(p.Info)
 	}
 	return lipgloss.NewStyle().Foreground(p.Dim)
+}
+
+// valueStyleFor returns the style for a structured field's VALUE, keyed on
+// the field name (and value) — mirroring how keyColor styles the key. It
+// makes the run recap readable at a glance: the status word is colored by
+// outcome (ok green, failed red, cancelled/skipped amber) and the cmd is
+// tinted by its action (the first token), reusing the logger pastel
+// rotation so each action keeps a stable color. Returns ok=false to fall
+// back to the default foreground.
+func valueStyleFor(key, value string, p theme.Palette) (lipgloss.Style, bool) {
+	switch key {
+	case "status":
+		switch value {
+		case "ok":
+			return lipgloss.NewStyle().Foreground(p.Success).Bold(true), true
+		case "failed":
+			return lipgloss.NewStyle().Foreground(p.Error).Bold(true), true
+		case "cancelled", "skipped":
+			return lipgloss.NewStyle().Foreground(p.Warning), true
+		}
+	case "cmd":
+		action := value
+		if i := strings.IndexByte(action, ' '); i >= 0 {
+			action = action[:i]
+		}
+		if action != "" {
+			return lipgloss.NewStyle().Foreground(loggerColor(action)), true
+		}
+	}
+	return lipgloss.Style{}, false
 }
 
 // quoteIfNeeded wraps values that contain whitespace or quotes so the
@@ -115,8 +158,11 @@ func plainOdooLog(level, logger, msg, db string) string {
 	if db == "" {
 		db = "-"
 	}
-	return ts + " " + pid + " " + shortLevelName(level) + " " +
-		db + " " + logger + ": " + msg
+	base := ts + " " + pid + " " + shortLevelName(level) + " " + db + " " + logger + ":"
+	if msg != "" {
+		base += " " + msg
+	}
+	return base
 }
 
 // plainOdooLogFields is plainOdooLog plus the ` key=val` tail, used to
@@ -157,45 +203,15 @@ func failureLogger(cmd string, resolved []string) string {
 	return echoCommandLogger(cmd, resolved) + ".error"
 }
 
-// startLogger builds the logger path for the start line emitted right
-// when a command begins executing. For module commands the path
-// embeds the resolved module(s) just like the success/failure paths,
-// so a sequence of three lines (start → completed / error) shares the
-// same prefix and reads as one event group:
-//
-//	echo.update.module.sale.start
-//	echo.update.module.sale          (success) or .error
-//
-// For non-module commands the path collapses to `echo.<cmd>.start` —
-// their positional args (if any) ride along as a structured field on
-// the start line instead of being baked into the logger.
-func startLogger(name string, args []string) string {
-	if isModuleCommand(name) {
-		return echoCommandLogger(name, resolvedFromArgs(args)) + ".start"
-	}
+// startLogger builds the logger path for the start line of a non-module
+// command: `echo.<cmd>.start`. Their positional args (if any) ride along
+// as a structured field on the start line. Module commands (install /
+// update / uninstall / test) no longer use this — their start line is
+// emitted by startResolved once the module set is resolved, so it can
+// name the actual modules (picker / --last) in both the logger and the
+// modules= field.
+func startLogger(name string) string {
 	return "echo." + name + ".start"
-}
-
-// resolvedFromArgs mirrors what the cmd-layer RunInstall/Update/
-// Uninstall would return after picker resolution, but inferred from
-// the raw args alone — used at start time, before any picker runs.
-func resolvedFromArgs(args []string) []string {
-	var positional []string
-	all := false
-	for _, a := range args {
-		if a == "--all" {
-			all = true
-			continue
-		}
-		if strings.HasPrefix(a, "-") {
-			continue
-		}
-		positional = append(positional, a)
-	}
-	if all {
-		return []string{"--all"}
-	}
-	return positional
 }
 
 func isModuleCommand(name string) bool {

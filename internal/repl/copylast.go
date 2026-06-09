@@ -71,6 +71,7 @@ func (sess *session) runCopyLast(args []string) {
 // exact same visual frame and slot in next to Odoo's own log stream.
 func (sess *session) copyFailureLog(name string, resolved []string, runErr error, errCount, warnCount int) {
 	sess.exitCode = scriptExitCode(runErr, errCount)
+	sess.lastErrors, sess.lastWarnings = errCount, warnCount
 	sess.print(Line{Kind: "out", Text: ""})
 
 	logger := failureLogger(name, resolved)
@@ -180,6 +181,7 @@ func (sess *session) shellFailureLog(name, captured string, runErr error) {
 // onwards, or the full buffer when no err/warn was logged.
 func (sess *session) commandFailureLog(name string, runErr error, errCount, warnCount int) {
 	sess.exitCode = scriptExitCode(runErr, errCount)
+	sess.lastErrors, sess.lastWarnings = errCount, warnCount
 	sess.print(Line{Kind: "out", Text: ""})
 
 	logger := failureLogger(name, nil)
@@ -274,7 +276,7 @@ func (sess *session) shellCancelledLog(name string) {
 // module commands the path embeds the resolved targets; for other
 // commands the positional args ride as a structured field.
 func (sess *session) startLog(name string, args []string) {
-	logger := startLogger(name, args)
+	logger := startLogger(name)
 	var fields []logField
 	if !isModuleCommand(name) {
 		var positional []string
@@ -292,11 +294,25 @@ func (sess *session) startLog(name string, args []string) {
 		sess.styles, sess.palette, sess.cfg.DBName)
 }
 
+// startResolved emits the start line for a module command once its final
+// module set is known (after picker / --last resolution), so the line
+// names the actual modules — closing the gap where `update --last` or a
+// picker selection produced a generic `echo.update.start`. The logger
+// encodes the target (echo.<cmd>.module.<mod> / .modules / .all) and the
+// modules= field always spells out the full set.
+func (sess *session) startResolved(name string, resolved []string) {
+	logger := echoCommandLogger(name, resolved) + ".start"
+	emitOdooLog("INFO", logger, name,
+		[]logField{{"modules", moduleField(resolved)}},
+		sess.styles, sess.palette, sess.cfg.DBName)
+}
+
 // successLog emits the post-command ✓ entry for module commands as
 // the Odoo-style INFO line, with the hierarchical logger naming the
 // module(s) targeted (echo.update.module.<mod> / .modules / .all).
 func (sess *session) successLog(name string, resolved []string, warnCount int) {
 	sess.exitCode = exitOK
+	sess.lastWarnings = warnCount
 	sess.print(Line{Kind: "out", Text: ""})
 	var fields []logField
 	if warnCount > 0 {

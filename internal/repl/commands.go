@@ -12,7 +12,7 @@ var Registry = []string{
 	"db-backup", "db-restore", "db-drop", "db-neutralize", "db-list",
 	"bash", "psql", "shell", "connect",
 	"up", "down", "stop", "restart", "ps", "logs",
-	"copy-last",
+	"copy-last", "report",
 	"clear", "help", "exit", "quit",
 }
 
@@ -22,7 +22,7 @@ var Registry = []string{
 // no known flags. Powers flag highlighting and Tab flag completion.
 var commandFlags = map[string][]string{
 	"install":       {"--with-demo", "--level"},
-	"update":        {"--all", "--level"},
+	"update":        {"--all", "--last", "--level"},
 	"uninstall":     {"--level"},
 	"test":          {"--update", "--tags"},
 	"modules":       {"--config"},
@@ -36,6 +36,7 @@ var commandFlags = map[string][]string{
 	"logs":          {"-t", "--no-follow", "-c", "--copy", "--all"},
 	"connect":       {"--all", "--force", "--fresh", "--new-window"},
 	"copy-last":     {"--errors"},
+	"report":        {"--step", "--level", "--min-level", "--copy"},
 }
 
 func init() {

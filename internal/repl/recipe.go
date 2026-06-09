@@ -3,14 +3,17 @@ package repl
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/pascualchavez/echo/internal/cmd"
 	"github.com/pascualchavez/echo/internal/config"
 	"github.com/pascualchavez/echo/internal/theme"
 )
@@ -22,10 +25,22 @@ import (
 // process exit code: the failing step's code under fail-fast, exitError
 // if any step failed under --continue-on-error, else exitOK.
 func RunRecipe(s theme.Styles, p theme.Palette, project, id string, stage theme.Stage, version, themeName, username, cwd string, cfg *config.Config, args []string) int {
-	path, continueOnError, logDest, logEnabled, err := parseRecipeArgs(args)
+	path, continueOnError, logDest, logEnabled, pick, err := parseRecipeArgs(args)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "echo run: "+err.Error())
 		return exitUsage
+	}
+
+	if pick {
+		selected, perr := pickRecipeFile(cwd, p)
+		if perr != nil {
+			fmt.Fprintln(os.Stderr, "echo run: "+perr.Error())
+			if errors.Is(perr, cmd.ErrCancelled) {
+				return exitCancelled
+			}
+			return exitUsage
+		}
+		path = selected
 	}
 
 	steps, err := readRecipe(path)
@@ -46,19 +61,76 @@ func RunRecipe(s theme.Styles, p theme.Palette, project, id string, stage theme.
 		}
 	}
 
-	runStep := func(name string, sargs []string) int {
+	// Capture a structured record of the run so a later `report` can query
+	// it by step and level. Persisted (best-effort) after the run.
+	report := config.RunReport{Recipe: recipeLabel(path)}
+	stepNum := 0
+
+	runStep := func(name string, sargs []string, suppress int) stepOutcome {
+		stepNum++
+		start := time.Now()
+		suppressLevel = suppress
 		sess.dispatchParsed(ctx, name, sargs)
-		return sess.exitCode
+		suppressLevel = -1
+		out := stepOutcome{
+			code:     sess.exitCode,
+			errors:   sess.lastErrors,
+			warnings: sess.lastWarnings,
+			duration: time.Since(start),
+		}
+		lines := sess.lastOutput.Filtered(nil)
+		rls := make([]config.ReportLine, 0, len(lines))
+		for _, l := range lines {
+			// Prefer the exact level token from the text (keeps ERROR vs
+			// CRITICAL distinct); fall back to the line's classified Kind so
+			// Echo's own leveled lines and inherited traceback frames still
+			// carry a level.
+			lvl := lineLevel(l.Text)
+			if lvl == "" {
+				lvl = levelFromKind(l.Kind)
+			}
+			rls = append(rls, config.ReportLine{Level: lvl, Text: l.Text})
+		}
+		// Isolate steps: meta commands (help/clear) don't reset the buffer,
+		// so clear it here to keep each step's capture to its own lines.
+		sess.lastOutput.Reset()
+		report.Steps = append(report.Steps, config.StepReport{
+			Index:  stepNum,
+			Cmd:    strings.TrimSpace(name + " " + strings.Join(sargs, " ")),
+			Status: stepStatus(out.code),
+			Lines:  rls,
+		})
+		return out
 	}
-	return runRecipeSteps(steps, continueOnError, runStep, sess.runLog)
+	code := runRecipeSteps(steps, continueOnError, runStep, sess.runLog)
+	_ = config.SaveRunReport(report) // best-effort; never fails the run
+	return code
+}
+
+// resolveLogDest turns a `--log=` value into a concrete file path. An
+// empty value yields "" (the caller falls back to the default location). A
+// value that is an existing directory — e.g. `--log=.` for the current
+// directory — becomes `<dir>/<recipe>.log`, named after the recipe, so you
+// can drop a result file next to the recipe without spelling out the name.
+// Any other value is taken as an explicit file path, unchanged.
+func resolveLogDest(dest, recipePath string) string {
+	if dest == "" {
+		return ""
+	}
+	if info, err := os.Stat(dest); err == nil && info.IsDir() {
+		return filepath.Join(dest, recipeLabel(recipePath)+".log")
+	}
+	return dest
 }
 
 // openRunLog resolves the log destination, creates the file, sets the
 // package-level run-log sink, and returns (dest, closer, ok). When ok is
 // false the caller proceeds without logging. The closer flushes, closes,
 // and clears the sink. `dest` empty means the default location under
-// ~/.config/echo/run-logs/.
+// ~/.config/echo/run-logs/; a directory (e.g. `.`) means a `<recipe>.log`
+// in that directory.
 func (sess *session) openRunLog(dest, recipePath string) (string, func(), bool) {
+	dest = resolveLogDest(dest, recipePath)
 	if dest == "" {
 		dir, err := config.RunLogsDir()
 		if err != nil {
@@ -108,52 +180,176 @@ func (sess *session) runLog(level, msg string, fields ...logField) {
 	emitOdooLog(level, "echo.run", msg, fields, sess.styles, sess.palette, sess.cfg.DBName)
 }
 
+// stepOutcome is one recipe step's result, captured by the runStep
+// closure after dispatchParsed: the exit code plus the command's runStats
+// (surfaced on the session) and the wall-clock duration.
+type stepOutcome struct {
+	code     int
+	errors   int
+	warnings int
+	duration time.Duration
+}
+
 // runRecipeSteps is the fail-fast (or continue-on-error) loop, decoupled
 // from session/IO so it can be tested with a stubbed step runner. runStep
-// returns each step's exit code; log emits progress/summary lines.
-func runRecipeSteps(steps []string, continueOnError bool, runStep func(name string, args []string) int, log func(level, msg string, fields ...logField)) int {
+// returns each step's outcome; log emits the live progress lines, the
+// per-step recap, and the totals line. The process exit code is unchanged
+// from the bare-int era: all-pass → exitOK, fail-fast → the failing step's
+// code, continue-on-error → exitError if any step failed.
+func runRecipeSteps(steps []string, continueOnError bool, runStep func(name string, args []string, suppress int) stepOutcome, log func(level, msg string, fields ...logField)) int {
 	total := len(steps)
-	failed := 0
-	var lastCode int
+
+	type result struct {
+		step   string
+		out    stepOutcome
+		status string
+		silent string // suppression label ("all"/level) when --silent was used
+	}
+	var results []result
+	failed, skipped := 0, 0
+	lastCode := exitOK
+	stopped := -1
 
 	for i, step := range steps {
 		log("INFO", fmt.Sprintf("step %d/%d → %s", i+1, total, step))
 		fields := strings.Fields(step)
-		code := runStep(fields[0], fields[1:])
-		if code != exitOK {
-			lastCode = code
+		clean, suppress, label, bad := stripSilent(fields[1:])
+		if bad != "" {
+			log("WARNING", "ignoring invalid --silent="+bad+" — running without suppression")
+		}
+		out := runStep(fields[0], clean, suppress)
+		results = append(results, result{step: step, out: out, status: stepStatus(out.code), silent: label})
+		if out.code != exitOK {
+			lastCode = out.code
 			failed++
 			if !continueOnError {
-				log("ERROR", fmt.Sprintf("stopped at step %d/%d", i+1, total),
-					logField{"exit", strconv.Itoa(code)})
-				return code
+				stopped = i
+				break
 			}
 		}
 	}
-
-	if failed > 0 {
-		log("ERROR", "finished with errors",
-			logField{"failed", strconv.Itoa(failed)},
-			logField{"steps", strconv.Itoa(total)})
-		if lastCode != exitOK {
-			return exitError
+	// Under fail-fast the steps after the failure never ran — record them
+	// as skipped so the recap accounts for all N steps.
+	if stopped >= 0 {
+		for j := stopped + 1; j < total; j++ {
+			results = append(results, result{step: steps[j], status: "skipped"})
+			skipped++
 		}
 	}
-	log("INFO", fmt.Sprintf("%d steps completed", total))
-	return exitOK
+
+	// Per-step recap + running totals.
+	var errTot, warnTot int
+	var durTot time.Duration
+	for i, r := range results {
+		errTot += r.out.errors
+		warnTot += r.out.warnings
+		durTot += r.out.duration
+		fields := append([]logField{
+			{"step", fmt.Sprintf("%d/%d", i+1, total)},
+			{"status", r.status},
+		}, stepFields(r.step, r.out, r.status, r.silent)...)
+		log(recapLevel(r.status), "", fields...)
+	}
+
+	okN := total - failed - skipped
+	totFields := []logField{{"steps", strconv.Itoa(total)}, {"ok", strconv.Itoa(okN)}}
+	if failed > 0 {
+		totFields = append(totFields, logField{"failed", strconv.Itoa(failed)})
+	}
+	if skipped > 0 {
+		totFields = append(totFields, logField{"skipped", strconv.Itoa(skipped)})
+	}
+	// Always report the error/warning totals so the summary states the
+	// counts even when they're zero.
+	totFields = append(totFields,
+		logField{"errors", strconv.Itoa(errTot)},
+		logField{"warnings", strconv.Itoa(warnTot)})
+	totFields = append(totFields, logField{"took", fmtDur(durTot)})
+	totLevel := "INFO"
+	if failed > 0 {
+		totLevel = "ERROR"
+	}
+	log(totLevel, "run summary", totFields...)
+
+	switch {
+	case stopped >= 0:
+		return lastCode
+	case failed > 0:
+		return exitError
+	default:
+		return exitOK
+	}
+}
+
+// stepStatus maps a step's exit code to its recap status word.
+func stepStatus(code int) string {
+	switch code {
+	case exitOK:
+		return "ok"
+	case exitCancelled:
+		return "cancelled"
+	default:
+		return "failed"
+	}
+}
+
+// recapLevel maps a recap status to the log level its line is emitted at.
+func recapLevel(status string) string {
+	switch status {
+	case "failed":
+		return "ERROR"
+	case "cancelled", "skipped":
+		return "WARNING"
+	default:
+		return "INFO"
+	}
+}
+
+// stepFields builds the recap fields for one step: always the cmd; the
+// warning count when non-zero; on failure the error count + exit code; and
+// the duration for any step that actually ran (skipped steps have none).
+func stepFields(step string, out stepOutcome, status, silent string) []logField {
+	fields := []logField{{"cmd", step}}
+	if silent != "" {
+		fields = append(fields, logField{"silent", silent})
+	}
+	if out.warnings > 0 {
+		fields = append(fields, logField{"warnings", strconv.Itoa(out.warnings)})
+	}
+	if status == "failed" {
+		if out.errors > 0 {
+			fields = append(fields, logField{"errors", strconv.Itoa(out.errors)})
+		}
+		fields = append(fields, logField{"exit", strconv.Itoa(out.code)})
+	}
+	if status != "skipped" {
+		fields = append(fields, logField{"took", fmtDur(out.duration)})
+	}
+	return fields
+}
+
+// fmtDur renders a step/total duration compactly (e.g. "1.23s", "180ms").
+func fmtDur(d time.Duration) string {
+	return d.Round(time.Millisecond).String()
 }
 
 // parseRecipeArgs extracts the recipe path (first positional; empty or `-`
-// means stdin), the --continue-on-error flag, and the --log destination.
+// means stdin), the --continue-on-error flag, the --log destination, and
+// --pick (open a picker of *.echo recipes instead of taking a path).
 // `--log` (bare) enables logging to the default location (logDest == "");
-// `--log=<path>` enables it to an explicit path. The space form
-// `--log <path>` is intentionally NOT supported so it can't be confused
-// with the recipe positional. Unknown flags error.
-func parseRecipeArgs(args []string) (path string, continueOnError bool, logDest string, logEnabled bool, err error) {
+// `--log=<path>` enables it to an explicit path, or — when the value is a
+// directory like `.` — to a `<recipe>.log` file in it (resolved later in
+// openRunLog). The space form `--log <path>` is intentionally NOT
+// supported so it can't be confused with the recipe positional. Unknown
+// flags error. `--pick` is mutually exclusive with a positional path /
+// stdin.
+func parseRecipeArgs(args []string) (path string, continueOnError bool, logDest string, logEnabled bool, pick bool, err error) {
 	for _, a := range args {
 		switch {
 		case a == "--continue-on-error":
 			continueOnError = true
+		case a == "--pick":
+			pick = true
 		case a == "--log":
 			logEnabled = true
 		case strings.HasPrefix(a, "--log="):
@@ -162,15 +358,54 @@ func parseRecipeArgs(args []string) (path string, continueOnError bool, logDest 
 		case a == "-":
 			path = a
 		case strings.HasPrefix(a, "-"):
-			return "", false, "", false, fmt.Errorf("unknown flag: %s", a)
+			return "", false, "", false, false, fmt.Errorf("unknown flag: %s", a)
 		default:
 			if path != "" && path != "-" {
-				return "", false, "", false, fmt.Errorf("multiple recipe files given")
+				return "", false, "", false, false, fmt.Errorf("multiple recipe files given")
 			}
 			path = a
 		}
 	}
-	return path, continueOnError, logDest, logEnabled, nil
+	if pick && path != "" {
+		return "", false, "", false, false, fmt.Errorf("--pick takes no recipe path")
+	}
+	return path, continueOnError, logDest, logEnabled, pick, nil
+}
+
+// echoRecipesIn returns the names of the *.echo recipe files directly in
+// dir (top-level, no recursion), sorted. Subdirectories and non-.echo
+// files are skipped. Pure over the filesystem so it's unit-testable.
+func echoRecipesIn(dir string) ([]string, error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, err
+	}
+	var names []string
+	for _, e := range entries {
+		if !e.IsDir() && strings.HasSuffix(e.Name(), ".echo") {
+			names = append(names, e.Name())
+		}
+	}
+	sort.Strings(names)
+	return names, nil
+}
+
+// pickRecipeFile lists the *.echo recipes in dir and opens a single-select
+// picker, returning the absolute path of the chosen recipe. Returns a
+// clear error when none are found, or ErrCancelled on Esc.
+func pickRecipeFile(dir string, p theme.Palette) (string, error) {
+	names, err := echoRecipesIn(dir)
+	if err != nil {
+		return "", err
+	}
+	if len(names) == 0 {
+		return "", fmt.Errorf("no .echo recipes found in %s", dir)
+	}
+	name, err := cmd.PickOne("Recipe to run", names, p)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, name), nil
 }
 
 // readRecipe opens the recipe (stdin when path is empty or `-`) and parses

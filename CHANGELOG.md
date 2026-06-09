@@ -8,13 +8,72 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Per-step `--silent` in `echo run` (Unit 41): append `--silent` to a
+  recipe step to suppress its output on screen **and** in the `--log`
+  transcript, or `--silent=<lvl>` to drop that level and below while still
+  showing more severe lines (`stop --silent=info` hides DEBUG/INFO, keeps
+  WARNING/ERROR). The runner's `step N/M →` line and the recap stay visible
+  (the recap shows `silent=<all|lvl>`), and silenced lines are still
+  captured for `report`, so `report --step=N` can pull them up. `--silent`
+  is recipe-only — intercepted by the runner, never passed to the command —
+  so it works on any non-interactive step.
+- New `report` command (Unit 40) inspects or copies the **last run's** logs
+  by step and level, across process boundaries: every `echo run` now
+  persists a structured `~/.config/echo/run-logs/last-run.json` (per step:
+  command, status, and its captured lines tagged with a log level), and
+  `report` queries it. `report --step=<N>` selects a step (default: all);
+  `--level=<lvl>` matches that level exactly, `--min-level=<lvl>` matches
+  it and more severe (`ERROR` and `CRITICAL` stay distinct); `--copy` puts
+  the matched lines on the clipboard (OSC 52-aware), otherwise they print
+  to stdout colored by level. Works one-shot (`echo report …`) and in the
+  REPL (`report …`). Example: `echo report --step=1 --level=warn --copy`.
+- `echo run --pick` (Unit 39) opens a single-select picker of the `*.echo`
+  recipe files in the current directory and runs the chosen one — so you
+  can launch a recipe without typing its path. Top-level only (no
+  recursion); composes with `--continue-on-error` and `--log`. With no
+  matches it prints `no .echo recipes found in <dir>`; `--pick` plus a path
+  is a usage error; a non-TTY invocation fails closed (exit 2).
+- `echo run <file>` now ends with a per-step run summary (Unit 37): one
+  `echo.run` line per step with its status (`ok` / `failed` / `cancelled`
+  / `skipped`), warning count, and duration (`took`), plus a final
+  `run summary` totals line (`steps` / `ok` / `failed` / `skipped` /
+  `errors` / `warnings` / `took`; `errors` and `warnings` are always
+  reported, even at zero). Under fail-fast the steps after the failure are
+  reported as `skipped`. The recap is captured by `--log` like the rest of
+  the run. Process exit codes are unchanged.
+- Loose-severity stderr lines now reformat into Echo's Odoo log style
+  (Unit 36). A line whose first token is a bare severity keyword + `:` —
+  e.g. wkhtmltopdf's `Warn: Can't find .pfb for face 'Courier'` or
+  `Error: Failed loading page` — is rendered with a timestamp, level chip
+  and the synthetic `report.wkhtmltopdf` logger instead of leaking through
+  as raw, unstyled text. A loose `Warn:` counts toward the run's warning
+  total; a loose `Error:`/`Critical:` is colored but **not** counted as a
+  failure, so a noisy tool's stderr can't flip a finished update to ✗.
+  Lines inside an active traceback (err/warn inheritance) are left grouped,
+  not hijacked. Applies to module (`update`/…) and `logs` output.
+- `update --last` repeats the last `update` for the current project and
+  database (Unit 35) — the resolved module list, or `--all` if that was
+  last — bypassing the picker and running directly. The target is
+  persisted on disk (`~/.config/echo/last-updates/<key>.toml`, one record
+  per database), so it survives a REPL restart, and is recorded even when
+  the update fails, so re-running after a fix just works. The previous
+  `--level` is inherited unless overridden on the repeat.
+- In the interactive REPL, the `update` fuzzy picker now highlights the
+  previous run's modules (Unit 35), and confirming the picker with nothing
+  selected offers a brief confirmation to repeat that last update —
+  listing the modules — so the empty picker and `--last` are two routes to
+  the same "repeat last". Explicit `update <mods>` and `update --all` run
+  directly with no confirmation, and script mode (`echo run <file>`,
+  `echo update …`) never prompts.
 - `echo run <file> --log[=<path>]` writes the whole recipe run to a
   plain-text transcript (Unit 34) — every step's streamed output plus the
   `echo.run` step/summary lines, ANSI-stripped — so an update routine
   leaves an auditable record. Opt-in: bare `--log` writes a timestamped
   file under `~/.config/echo/run-logs/`; `--log=<path>` writes to an
-  explicit path. Without the flag, nothing is written. A log-file error
-  warns but never aborts the run, and the final line reports the path.
+  explicit path; and `--log=<dir>` (e.g. `--log=.` for the current
+  directory) writes a `<recipe>.log` named after the recipe into that
+  directory. Without the flag, nothing is written. A log-file error warns
+  but never aborts the run, and the final line reports the path.
 - `--level <lvl>` flag on `update` / `install` / `uninstall` (Unit 33),
   mapping to Odoo's native `--log-level` so a developer can raise or lower
   the verbosity of a module operation (e.g. `update sale --level debug_sql`
@@ -53,6 +112,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   command at a real terminal still gets the prompt. New `-C` /
   `--project-dir <dir>` flag runs a one-shot command from outside the
   project directory (like `git -C`).
+
+### Changed
+- The `echo run` per-step recap is now fully structured and color-cued:
+  `step` and `status` are key=value fields (`step=1/4 status=ok`), the
+  status value is colored by outcome (ok green, failed red,
+  cancelled/skipped amber), and the `cmd` value is tinted by its action
+  (`up`/`stop`/`update`… each a stable color). `report --copy` collapses to
+  a single Odoo-style line (`echo.report: copied N lines to clipboard …`)
+  instead of a log line plus a separate plain confirmation. Structured log
+  lines with an empty message no longer render a stray double space.
+- The `update` / `install` / `uninstall` / `test` **start line** now names
+  the resolved module(s) — including picker selections and `update --last`,
+  which previously logged a generic `echo.update.start`. The line is
+  emitted once the module set is known (after the picker / `--last` disk
+  read), with the modules in both the logger (`echo.update.module.<mod>` /
+  `.modules` / `.all`) and a `modules=` field, so you can tell what's
+  running from the start, not only from the end-of-run line.
 
 ## [0.6.0] — 2026-06-09
 

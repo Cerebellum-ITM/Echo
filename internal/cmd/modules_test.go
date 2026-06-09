@@ -1,10 +1,58 @@
 package cmd
 
 import (
+	"context"
 	"errors"
 	"reflect"
 	"testing"
+
+	"github.com/pascualchavez/echo/internal/config"
 )
+
+func TestEmitResolved(t *testing.T) {
+	var got []string
+	called := 0
+	opts := ModulesOpts{OnResolve: func(r []string) { called++; got = r }}
+	emitResolved(opts, []string{"sale", "account"})
+	if called != 1 || !reflect.DeepEqual(got, []string{"sale", "account"}) {
+		t.Fatalf("OnResolve called=%d got=%v", called, got)
+	}
+	// No-op (no panic) when OnResolve is nil.
+	emitResolved(ModulesOpts{}, []string{"x"})
+}
+
+// TestRunUpdateLastNotifiesResolved asserts that `update --last` reports
+// the resolved module set (loaded from disk) through OnResolve before the
+// Odoo subprocess runs — the start-line fix. The subprocess itself can't
+// run without docker, so ComposeCmd points at a missing binary: runOdoo
+// fails fast, but OnResolve has already fired by then.
+func TestRunUpdateLastNotifiesResolved(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	const key, db = "abc123", "demo"
+	if err := config.SaveLastUpdate(key, db, config.LastUpdate{Modules: []string{"sale", "account"}}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	var resolved []string
+	opts := ModulesOpts{
+		Cfg: &config.Config{
+			ProjectKey:    key,
+			DBName:        db,
+			OdooContainer: "odoo",
+			ComposeCmd:    "/nonexistent-echo-test-binary",
+		},
+		Root:      t.TempDir(),
+		Args:      []string{"--last"},
+		StreamOut: func(string) {},
+		OnResolve: func(r []string) { resolved = r },
+	}
+	// The run errors at the (missing) subprocess; we only care that
+	// OnResolve fired with the disk-resolved set first.
+	_, _ = RunUpdate(context.Background(), opts)
+	if !reflect.DeepEqual(resolved, []string{"sale", "account"}) {
+		t.Fatalf("OnResolve got %v, want [sale account]", resolved)
+	}
+}
 
 func TestExtractLevel(t *testing.T) {
 	cases := []struct {

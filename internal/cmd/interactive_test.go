@@ -35,6 +35,9 @@ func TestInteractiveHelpersFailClosed(t *testing.T) {
 	if _, err := runFuzzyPicker("t", []string{"a"}, pal); !errors.Is(err, ErrNonInteractive) {
 		t.Errorf("runFuzzyPicker: want ErrNonInteractive, got %v", err)
 	}
+	if _, _, err := runFuzzyPickerCore("t", []string{"a"}, nil, pal); !errors.Is(err, ErrNonInteractive) {
+		t.Errorf("runFuzzyPickerCore: want ErrNonInteractive, got %v", err)
+	}
 	if _, err := runSingleFuzzyPicker("t", []string{"a"}, pal); !errors.Is(err, ErrNonInteractive) {
 		t.Errorf("runSingleFuzzyPicker: want ErrNonInteractive, got %v", err)
 	}

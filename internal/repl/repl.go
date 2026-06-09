@@ -51,11 +51,21 @@ type session struct {
 	projectDir string
 	lastOutput *lastOutputBuffer
 	prompt     *promptBuilder
+	// interactive is true only in the live REPL prompt loop (Start), not
+	// in one-shot (RunOnce) or recipe (RunRecipe) dispatch. Gates the
+	// `update` empty-picker "repeat last" confirmation.
+	interactive bool
 	// exitCode records the outcome of the last dispatched command for
 	// one-shot (script) mode. It is set by the terminal log helpers
 	// (finalize, *FailureLog, readonlyFinalize, …) and read by RunOnce /
 	// RunRecipe. In the interactive REPL it is set but never read.
 	exitCode int
+	// lastErrors / lastWarnings mirror the last dispatched command's
+	// runStats (the ERROR/CRITICAL and WARNING line counts). Set by the
+	// same terminal helpers that set exitCode, reset at dispatch start,
+	// and read by RunRecipe to build the per-step run summary (Unit 37).
+	lastErrors   int
+	lastWarnings int
 }
 
 // Exit codes returned by one-shot (script) dispatch. The interactive REPL
@@ -122,6 +132,7 @@ func newSession(s theme.Styles, p theme.Palette, project, id string, stage theme
 // Start renders the header and enters the interactive prompt loop.
 func Start(s theme.Styles, p theme.Palette, project, id string, stage theme.Stage, version, themeName, username, cwd string, cfg *config.Config) {
 	sess, unknown := newSession(s, p, project, id, stage, version, themeName, username, cwd, cfg)
+	sess.interactive = true
 
 	sess.clearAndRenderHeader()
 	for _, u := range unknown {
@@ -168,7 +179,7 @@ func (sess *session) renderPrompt() string {
 // registry_test.go; `exit` and `quit` are handled in Start (above) and
 // are therefore not part of this slice.
 var dispatchNames = []string{
-	"help", "clear", "copy-last",
+	"help", "clear", "copy-last", "report",
 	"init", "reset",
 	"up", "down", "stop", "restart", "ps", "logs",
 	"install", "update", "uninstall", "test", "modules",
@@ -202,6 +213,7 @@ func (sess *session) dispatch(ctx context.Context, input string) {
 // recipe runners, which call it directly to avoid re-splitting.
 func (sess *session) dispatchParsed(ctx context.Context, cmd string, args []string) {
 	sess.exitCode = exitOK
+	sess.lastErrors, sess.lastWarnings = 0, 0
 
 	if !isMetaCommand(cmd) {
 		sess.lastOutput.Reset()
@@ -214,6 +226,8 @@ func (sess *session) dispatchParsed(ctx context.Context, cmd string, args []stri
 		sess.clearAndRenderHeader()
 	case "copy-last":
 		sess.runCopyLast(args)
+	case "report":
+		sess.runReport(args)
 	case "init":
 		sess.runInit()
 	case "reset":
@@ -254,6 +268,7 @@ func helpSections() []helpSection {
 			{"  --level <lvl>", "Odoo --log-level (debug…critical; default info)"},
 			{"update <mod...>", "Update modules"},
 			{"  --all", "Update every installed module"},
+			{"  --last", "Repeat the last update for this database"},
 			{"  --level <lvl>", "Odoo --log-level (debug…critical; default info)"},
 			{"uninstall <mod...>", "Uninstall modules"},
 			{"  --level <lvl>", "Odoo --log-level (debug…critical; default info)"},
@@ -307,6 +322,11 @@ func helpSections() []helpSection {
 		{"Shell", []helpEntry{
 			{"copy-last", "Copy the last command's output to clipboard"},
 			{"  --errors", "Only copy error/warning lines"},
+			{"report", "Inspect/copy the last run's logs by step and level"},
+			{"  --step=<N>", "Only that step (default: all)"},
+			{"  --level=<lvl>", "Only lines of that level (debug…critical)"},
+			{"  --min-level=<lvl>", "That level and more severe"},
+			{"  --copy", "Copy the matched lines (default: print)"},
 			{"clear", "Clear screen and reprint header"},
 			{"help", "Show this help"},
 			{"exit, quit, Ctrl+D", "Quit Echo"},
@@ -334,8 +354,10 @@ func (sess *session) runHelp() {
 	for _, it := range []helpEntry{
 		{"echo <cmd> [args]", "Run one command and exit with a status code"},
 		{"echo run <file>", "Run a recipe (one command per line); - reads stdin"},
+		{"  --pick", "Pick a .echo recipe from the current directory"},
 		{"  --continue-on-error", "Run every step instead of stopping at the first failure"},
-		{"  --log[=<path>]", "Save a plain transcript (default: ~/.config/echo/run-logs/)"},
+		{"  --log[=<path>]", "Save a plain transcript (default dir, a file, or --log=. for ./<recipe>.log)"},
+		{"  <step> --silent[=lvl]", "Silence a step's output (screen+log); =lvl keeps that level and above"},
 		{"echo -C <dir> <cmd>", "Run from outside the project directory"},
 	} {
 		label := lipgloss.NewStyle().Width(22).Render(it.cmd)
@@ -419,18 +441,20 @@ func confLine(icon, label, value string) string {
 // reprints the welcome banner. Any command can call this to reset the
 // visible context.
 func (sess *session) runModules(ctx context.Context, name string, args []string) {
-	sess.startLog(name, args)
-
 	lc := &logColorer{}
 	stats := &runStats{}
 	opts := cmd.ModulesOpts{
-		Cfg:     sess.cfg,
-		Root:    sess.projectDir,
-		Args:    args,
-		Palette: sess.palette,
+		Cfg:         sess.cfg,
+		Root:        sess.projectDir,
+		Args:        args,
+		Palette:     sess.palette,
+		Interactive: sess.interactive,
 		StreamOut: stats.wrap(func(line string) {
-			sess.print(Line{Kind: lc.classify(line), Text: line})
+			sess.emitStreamLine(lc, line)
 		}),
+		// The start line is emitted here, once the module set is resolved
+		// (after picker / --last), so it names the actual modules.
+		OnResolve: func(resolved []string) { sess.startResolved(name, resolved) },
 	}
 
 	var err error
@@ -445,6 +469,7 @@ func (sess *session) runModules(ctx context.Context, name string, args []string)
 	case "test":
 		resolved, err = cmd.RunTest(ctx, opts)
 	case "modules":
+		sess.startLog(name, args)
 		err = cmd.RunModules(ctx, opts)
 		sess.readonlyFinalize(name, err)
 		return
@@ -504,13 +529,7 @@ func (sess *session) runDocker(ctx context.Context, name string, args []string) 
 		Args:    args,
 		Palette: sess.palette,
 		StreamOut: stats.wrap(func(line string) {
-			if cl, ok := parseComposeProgress(line); ok {
-				emitOdooLog(cl.level, "docker."+cl.resource, cl.state,
-					[]logField{{"name", cl.name}},
-					sess.styles, sess.palette, sess.cfg.DBName)
-				return
-			}
-			sess.print(Line{Kind: lc.classify(line), Text: line})
+			sess.emitStreamLine(lc, line)
 		}),
 	}
 
@@ -557,6 +576,7 @@ func (sess *session) runDocker(ctx context.Context, name string, args []string) 
 // by module commands and shell sessions.
 func (sess *session) finalize(name string, errorCount, warnCount int, err error) {
 	sess.exitCode = scriptExitCode(err, errorCount)
+	sess.lastErrors, sess.lastWarnings = errorCount, warnCount
 	sess.print(Line{Kind: "out", Text: ""})
 	switch {
 	case errors.Is(err, cmd.ErrCancelled), errors.Is(err, huh.ErrUserAborted):
@@ -750,7 +770,40 @@ func (sess *session) runReset() {
 	}
 }
 
+// emitStreamLine renders one streamed subprocess line. Foreign lines that
+// Echo can normalize — docker compose progress, and loose-severity stderr
+// (Warn:/Error: … from tools like wkhtmltopdf) — are reformatted into the
+// Odoo log style; everything else goes through the kind classifier (which
+// also keeps traceback continuations grouped via err/warn inheritance).
+func (sess *session) emitStreamLine(lc *logColorer, line string) {
+	if cl, ok := parseComposeProgress(line); ok {
+		emitOdooLog(cl.level, "docker."+cl.resource, cl.state,
+			[]logField{{"name", cl.name}},
+			sess.styles, sess.palette, sess.cfg.DBName)
+		return
+	}
+	// Don't hijack a line out of an active traceback (err/warn inheritance):
+	// a bare `SomeError: …` tail must stay grouped with its frames.
+	if lc.last != "err" && lc.last != "warn" {
+		if ll, ok := parseLooseSeverity(line); ok {
+			emitOdooLog(ll.level, looseSeverityLogger, ll.message, nil,
+				sess.styles, sess.palette, sess.cfg.DBName)
+			return
+		}
+	}
+	sess.print(Line{Kind: lc.classify(line), Text: line})
+}
+
 func (sess *session) print(l Line) {
+	// Capture for `report` even when the line is silenced — suppression is
+	// about live noise, not losing the data.
+	if sess.lastOutput != nil {
+		sess.lastOutput.Add(l)
+	}
+	if outputSuppressed(levelFromKind(l.Kind)) {
+		return
+	}
+
 	s := sess.styles
 	var text string
 	if rendered, ok := renderLogLine(l.Text, s, sess.palette); ok {
@@ -778,9 +831,6 @@ func (sess *session) print(l Line) {
 		default:
 			text = l.Text
 		}
-	}
-	if sess.lastOutput != nil {
-		sess.lastOutput.Add(l)
 	}
 	fmt.Println(text)
 	teeRunLog(l.Text)
