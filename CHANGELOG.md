@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] — 2026-06-09
+
 ### Added
 - `db-neutralize [name]` command and a `--neutralize` flag on `db-restore`
   (Unit 30). Both run Odoo's native `odoo neutralize` CLI inside the Odoo
@@ -379,6 +381,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   REPL prompt, and the `ls` command.
 
 [Unreleased]: #unreleased
+[0.6.0]: #060--2026-06-09
 [0.3.1]: #031--2026-05-18
 [0.3.0]: #030--2026-05-18
 [0.2.0]: #020--2026-05-12
