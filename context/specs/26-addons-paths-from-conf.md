@@ -73,9 +73,11 @@ explicitly. The conf path itself is configurable per instance
   `addons_path` (ignores section headers/comments `#`/`;`), splits the
   value on `=` once, splits the RHS on `,`, trims each entry, drops
   empties. Returns absolute container paths in declared order. Entries
-  whose base name is `enterprise` (case-insensitive, trailing-slash
-  tolerant via `filepath.Base`) are **dropped by default** — the
-  Enterprise addons are noise in the update/install picker.
+  whose base name **starts with** `enterprise` (case-insensitive,
+  trailing-slash tolerant via `filepath.Base` — e.g. `enterprise`,
+  `enterprise-addons`) are **dropped by default**, since the Enterprise
+  addons are noise in the update/install picker. (A future mode may let
+  the user opt into updating any Odoo module, including Enterprise.)
 
 ### Module listing inside the container (`internal/cmd/modules.go`)
 
@@ -168,8 +170,9 @@ and the existing config TOML layer.
 - [ ] `parseAddonsPath` is covered by table tests (single path, multiple
       comma-separated, spaces, commented line, missing key, section
       header present, `enterprise` entry skipped).
-- [ ] An `addons_path` entry named `enterprise` (any case, with or without
-      a trailing slash) is excluded from the discovered modules.
+- [ ] An `addons_path` entry whose base name starts with `enterprise`
+      (`enterprise`, `enterprise-addons`, any case, with or without a
+      trailing slash) is excluded from the discovered modules.
 - [ ] A module list longer than the terminal height scrolls in the picker
       (window follows the cursor, `pgup`/`pgdn` page, `↑/↓ N more` hints)
       instead of overflowing the screen.

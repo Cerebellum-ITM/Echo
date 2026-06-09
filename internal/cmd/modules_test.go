@@ -62,8 +62,13 @@ func TestParseAddonsPath(t *testing.T) {
 			want: []string{"/odoo/addons", "/mnt/extra-addons"},
 		},
 		{
+			name: "enterprise prefix skipped (enterprise-addons), spaces after commas",
+			conf: "addons_path = /mnt/extra-addons, /mnt/addons-sam, /mnt/enterprise-addons, /mnt/addons-client\n",
+			want: []string{"/mnt/extra-addons", "/mnt/addons-sam", "/mnt/addons-client"},
+		},
+		{
 			name: "enterprise match is case-insensitive and trailing-slash tolerant",
-			conf: "addons_path = /mnt/Enterprise/,/mnt/custom\n",
+			conf: "addons_path = /mnt/Enterprise-Addons/,/mnt/custom\n",
 			want: []string{"/mnt/custom"},
 		},
 	}

@@ -312,8 +312,9 @@ func readContainerFile(ctx context.Context, opts ModulesOpts, path string) (stri
 // It finds the (first) line whose trimmed form starts with `addons_path`,
 // splits the value after `=` on commas, and trims each entry. Comment
 // lines (`#` / `;`) and section headers are ignored. Entries whose base
-// name is "enterprise" are skipped by default — the Enterprise addons are
-// noise in the module picker for most update/install workflows.
+// name starts with "enterprise" (e.g. `enterprise`, `enterprise-addons`)
+// are skipped by default — the Enterprise addons are noise in the module
+// picker for most update/install workflows.
 func parseAddonsPath(conf string) []string {
 	for _, raw := range strings.Split(conf, "\n") {
 		line := strings.TrimSpace(raw)
@@ -332,8 +333,8 @@ func parseAddonsPath(conf string) []string {
 			if p = strings.TrimSpace(p); p == "" {
 				continue
 			}
-			if strings.EqualFold(filepath.Base(p), "enterprise") {
-				continue // skip the Enterprise addons dir by default
+			if strings.HasPrefix(strings.ToLower(filepath.Base(p)), "enterprise") {
+				continue // skip Enterprise addons dirs by default
 			}
 			out = append(out, p)
 		}

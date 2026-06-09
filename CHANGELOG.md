@@ -56,9 +56,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   without manually running `down odoo` first. Without `--force`, `db-drop`
   still guards against active connections (now pointing at `--force` in
   the error) so a live DB isn't dropped by accident.
-- `addons_path` entries whose base name is `enterprise` are now skipped by
-  default when discovering modules from `odoo.conf`, keeping the Enterprise
-  addons out of the update/install picker.
+- `addons_path` entries whose base name starts with `enterprise` (e.g.
+  `enterprise`, `enterprise-addons`) are now skipped by default when
+  discovering modules from `odoo.conf`, keeping the Enterprise addons out
+  of the update/install picker.
 - Live command highlighting in the REPL (Unit 21). As you type, the first
   token (the command) is colored fish-style: green/bold when it's an exact
   command, red when it can no longer become one, and the default color
