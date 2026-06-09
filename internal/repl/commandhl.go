@@ -81,3 +81,98 @@ func commandStyle(state cmdState, p theme.Palette) (lipgloss.Style, bool) {
 		return lipgloss.Style{}, false
 	}
 }
+
+// flagState is the highlight state of a `-`-prefixed token.
+type flagState int
+
+const (
+	flagUnknown flagState = iota // a flag, but not one this command declares
+	flagKnown                    // a declared flag of the current command
+)
+
+// isKnownFlag reports whether name is a declared flag of command.
+func isKnownFlag(command, name string) bool {
+	for _, f := range commandFlags[command] {
+		if f == name {
+			return true
+		}
+	}
+	return false
+}
+
+// classifyFlag validates a flag token against the current command. The
+// value part of `--flag=value` is ignored for the lookup.
+func classifyFlag(command, token string) flagState {
+	name := token
+	if i := strings.IndexByte(name, '='); i >= 0 {
+		name = name[:i]
+	}
+	if isKnownFlag(command, name) {
+		return flagKnown
+	}
+	return flagUnknown
+}
+
+// flagsWithPrefix returns the command's flags that start with prefix,
+// preserving declaration order. Used by Tab flag completion.
+func flagsWithPrefix(command, prefix string) []string {
+	var out []string
+	for _, f := range commandFlags[command] {
+		if strings.HasPrefix(f, prefix) {
+			out = append(out, f)
+		}
+	}
+	return out
+}
+
+// flagStyle colors a flag token: accent+bold when it's a known flag of
+// the command, faint otherwise. Never red — forwarded/unknown flags
+// should read as "unrecognized", not "wrong".
+func flagStyle(state flagState, p theme.Palette) lipgloss.Style {
+	if state == flagKnown {
+		return lipgloss.NewStyle().Foreground(p.Accent).Bold(true)
+	}
+	return lipgloss.NewStyle().Faint(true)
+}
+
+// lineStyles returns, for each rune of buf, the style to render it with
+// (nil = default text style). Token 0 is the command (Unit 21 states);
+// later tokens starting with `-` are flags; everything else is default.
+func lineStyles(buf string, p theme.Palette) []*lipgloss.Style {
+	runes := []rune(buf)
+	styles := make([]*lipgloss.Style, len(runes))
+
+	command := ""
+	tokenIdx := 0
+	i := 0
+	for i < len(runes) {
+		if runes[i] == ' ' {
+			i++
+			continue
+		}
+		start := i
+		for i < len(runes) && runes[i] != ' ' {
+			i++
+		}
+		tok := string(runes[start:i])
+
+		var st *lipgloss.Style
+		switch {
+		case tokenIdx == 0:
+			command = tok
+			if s, ok := commandStyle(classifyCommand(tok), p); ok {
+				st = &s
+			}
+		case strings.HasPrefix(tok, "-"):
+			s := flagStyle(classifyFlag(command, tok), p)
+			st = &s
+		}
+		if st != nil {
+			for j := start; j < i; j++ {
+				styles[j] = st
+			}
+		}
+		tokenIdx++
+	}
+	return styles
+}

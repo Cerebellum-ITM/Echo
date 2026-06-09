@@ -108,58 +108,86 @@ func (m lineModel) View() string {
 		return m.input.View() // placeholder + cursor, unchanged
 	}
 
-	token, _ := firstToken(val)
-	style, recolor := commandStyle(classifyCommand(token), m.palette)
-	tokenLen := len([]rune(token))
+	runes := []rune(val)
+	styles := lineStyles(val, m.palette)
 	textStyle := m.input.TextStyle.Inline(true)
 	cur := m.input.Cursor
 	pos := m.input.Position()
 
 	var b strings.Builder
 	b.WriteString(m.input.Prompt)
-	for i, r := range []rune(val) {
+	for i, r := range runes {
 		if i == pos {
 			cur.SetChar(string(r))
 			b.WriteString(cur.View())
 			continue
 		}
-		if recolor && i < tokenLen {
-			b.WriteString(style.Render(string(r)))
+		if styles[i] != nil {
+			b.WriteString(styles[i].Render(string(r)))
 		} else {
 			b.WriteString(textStyle.Render(string(r)))
 		}
 	}
-	if pos >= len([]rune(val)) {
+	if pos >= len(runes) {
 		cur.SetChar(" ")
 		b.WriteString(cur.View())
 	}
 	return b.String()
 }
 
-// handleTab implements bash-style prefix completion against Registry,
-// limited to the first token of the buffer.
+// handleTab implements bash-style prefix completion. On the first token
+// it completes commands (against Registry); when the last token is a
+// flag (`-…`) preceded by a command, it completes that command's flags.
 func (m lineModel) handleTab() (tea.Model, tea.Cmd) {
 	buf := m.input.Value()
-	if buf == "" || strings.Contains(buf, " ") {
+	if buf == "" {
 		m.lastWasTab = false
 		return m, nil
 	}
-	matches := matchPrefix(buf)
+
+	// Command completion: still on the first token.
+	if !strings.Contains(buf, " ") {
+		return m.tabComplete(matchPrefix(buf), buf, func(c string) string { return c })
+	}
+
+	// Flag completion: the last token must be a `-`-prefixed flag and a
+	// command must precede it. A trailing space means no current token.
+	if strings.HasSuffix(buf, " ") {
+		m.lastWasTab = false
+		return m, nil
+	}
+	fields := strings.Fields(buf)
+	last := fields[len(fields)-1]
+	if !strings.HasPrefix(last, "-") {
+		m.lastWasTab = false
+		return m, nil
+	}
+	prefix := buf[:len(buf)-len(last)] // everything up to (incl. trailing space) the flag
+	matches := flagsWithPrefix(fields[0], last)
+	return m.tabComplete(matches, last, func(c string) string { return prefix + c })
+}
+
+// tabComplete runs the shared 1-match / longest-common-prefix / list
+// flow. prefix is the token currently being completed; makeBuf builds the
+// new buffer value from a chosen completion (identity for commands, or a
+// last-token swap for flags).
+func (m lineModel) tabComplete(matches []string, prefix string, makeBuf func(string) string) (tea.Model, tea.Cmd) {
 	switch len(matches) {
 	case 0:
 		m.lastWasTab = false
 		return m, nil
 	case 1:
-		full := matches[0] + " "
+		full := makeBuf(matches[0] + " ")
 		m.input.SetValue(full)
 		m.input.SetCursor(len(full))
 		m.lastWasTab = false
 		return m, nil
 	default:
 		lcp := longestCommonPrefix(matches)
-		if lcp != buf {
-			m.input.SetValue(lcp)
-			m.input.SetCursor(len(lcp))
+		if lcp != prefix {
+			nb := makeBuf(lcp)
+			m.input.SetValue(nb)
+			m.input.SetCursor(len(nb))
 			m.lastWasTab = true
 			return m, nil
 		}

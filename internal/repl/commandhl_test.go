@@ -59,3 +59,47 @@ func TestAllRegistryCommandsValid(t *testing.T) {
 		}
 	}
 }
+
+func TestClassifyFlag(t *testing.T) {
+	cases := []struct {
+		command, token string
+		want           flagState
+	}{
+		{"db-restore", "--force", flagKnown},
+		{"db-restore", "--as", flagKnown},
+		{"update", "--all", flagKnown},
+		{"test", "--tags=:TestX.test_y", flagKnown}, // value part ignored
+		{"logs", "-t", flagKnown},
+		{"update", "--nope", flagUnknown},   // not a flag of update
+		{"db-restore", "--all", flagUnknown}, // valid elsewhere, not here
+		{"down", "--whatever", flagUnknown},  // passthrough → unknown, not error
+		{"bash", "--anything", flagUnknown},  // command with no declared flags
+	}
+	for _, c := range cases {
+		if got := classifyFlag(c.command, c.token); got != c.want {
+			t.Errorf("classifyFlag(%q, %q) = %d, want %d", c.command, c.token, got, c.want)
+		}
+	}
+}
+
+func TestFlagsWithPrefix(t *testing.T) {
+	got := flagsWithPrefix("db-restore", "--")
+	if len(got) != 2 || got[0] != "--as" || got[1] != "--force" {
+		t.Errorf("flagsWithPrefix(db-restore, --) = %v, want [--as --force]", got)
+	}
+	if g := flagsWithPrefix("db-restore", "--f"); len(g) != 1 || g[0] != "--force" {
+		t.Errorf("flagsWithPrefix(db-restore, --f) = %v, want [--force]", g)
+	}
+	if g := flagsWithPrefix("ps", "-"); len(g) != 0 {
+		t.Errorf("flagsWithPrefix(ps, -) = %v, want []", g)
+	}
+}
+
+// Guard: every command that declares flags is a real REPL command.
+func TestCommandFlagsKeysAreCommands(t *testing.T) {
+	for cmd := range commandFlags {
+		if !isCommandName(cmd) {
+			t.Errorf("commandFlags key %q is not a known command", cmd)
+		}
+	}
+}

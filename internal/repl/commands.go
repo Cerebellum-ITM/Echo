@@ -16,6 +16,26 @@ var Registry = []string{
 	"clear", "help", "exit", "quit",
 }
 
+// commandFlags maps each command to the user-facing flags it accepts.
+// Internal flags Echo builds itself (e.g. `-e`, `--no-http`, chrome
+// flags) are intentionally excluded. Commands absent from the map have
+// no known flags. Powers flag highlighting and Tab flag completion.
+var commandFlags = map[string][]string{
+	"install":     {"--with-demo"},
+	"update":      {"--all"},
+	"test":        {"--update", "--tags"},
+	"modules":     {"--config"},
+	"i18n-export": {"--out"},
+	"i18n-update": {"--force"},
+	"db-backup":   {"--with-filestore"},
+	"db-restore":  {"--as", "--force"},
+	"db-drop":     {"--force"},
+	"down":        {"--force"},
+	"logs":        {"-t", "--no-follow", "-c", "--copy", "--all"},
+	"connect":     {"--all", "--force"},
+	"copy-last":   {"--errors"},
+}
+
 func init() {
 	seen := map[string]bool{}
 	for _, name := range Registry {
@@ -23,6 +43,11 @@ func init() {
 			panic("repl: duplicate command in Registry: " + name)
 		}
 		seen[name] = true
+	}
+	for cmd := range commandFlags {
+		if !seen[cmd] {
+			panic("repl: commandFlags references unknown command: " + cmd)
+		}
 	}
 }
 

@@ -17,6 +17,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the error) so a live DB isn't dropped by accident.
 
 ### Added
+- Flag highlighting and flag autocomplete in the REPL (Unit 24), building
+  on the command highlighting. Flag tokens are now colored too: a known
+  flag of the typed command shows in the accent color (bold), an unknown
+  or forwarded flag shows faint — never red, so passthrough commands like
+  `down`/`logs`/`connect` don't get falsely flagged. Tab now also completes
+  flags: when the token under the cursor starts with `-` and a command
+  precedes it, Tab fills the command's flags (single match completes,
+  several share a common prefix then list on a second Tab), exactly like
+  command completion. Backed by a new per-command flag registry
+  (`commandFlags`) kept consistent with `Registry` by an init guard.
 - Live command highlighting in the REPL (Unit 21). As you type, the first
   token (the command) is colored fish-style: green/bold when it's an exact
   command, red when it can no longer become one, and the default color
