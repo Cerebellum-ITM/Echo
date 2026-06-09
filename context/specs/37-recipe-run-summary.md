@@ -1,5 +1,12 @@
 # Unit 37: recipe run summary
 
+> Note (later refinement): the per-step recap is emitted with an empty
+> message and `step`/`status` as key=value fields (`step=1/4 status=ok
+> cmd=stop took=…`). `emitOdooLog` colors the `status` value by outcome
+> (ok green / failed red / cancelled·skipped amber) and the `cmd` value by
+> its action, and skips the message segment when it's empty. The sketch
+> below predates that change.
+
 ## Goal
 
 At the end of `echo run <file>`, emit a per-step summary so the operator

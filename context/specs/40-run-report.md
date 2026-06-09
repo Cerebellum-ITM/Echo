@@ -1,5 +1,10 @@
 # Unit 40: `report` — query the last run's logs by step and level
 
+> Note (later refinement): `report --copy` emits a single Odoo-style line
+> (`echo.report: copied N lines to clipboard run=… step=… level=…`) rather
+> than a header plus a separate plain confirmation; the no-match and
+> copy-failed cases are likewise single WARNING/ERROR lines.
+
 ## Goal
 
 After `echo run`, let the operator inspect or copy the previous run's

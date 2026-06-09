@@ -244,9 +244,11 @@ func runRecipeSteps(steps []string, continueOnError bool, runStep func(name stri
 		errTot += r.out.errors
 		warnTot += r.out.warnings
 		durTot += r.out.duration
-		log(recapLevel(r.status),
-			fmt.Sprintf("step %d/%d %s", i+1, total, r.status),
-			stepFields(r.step, r.out, r.status, r.silent)...)
+		fields := append([]logField{
+			{"step", fmt.Sprintf("%d/%d", i+1, total)},
+			{"status", r.status},
+		}, stepFields(r.step, r.out, r.status, r.silent)...)
+		log(recapLevel(r.status), "", fields...)
 	}
 
 	okN := total - failed - skipped

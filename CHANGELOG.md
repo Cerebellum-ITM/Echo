@@ -114,6 +114,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   project directory (like `git -C`).
 
 ### Changed
+- The `echo run` per-step recap is now fully structured and color-cued:
+  `step` and `status` are key=value fields (`step=1/4 status=ok`), the
+  status value is colored by outcome (ok green, failed red,
+  cancelled/skipped amber), and the `cmd` value is tinted by its action
+  (`up`/`stop`/`update`… each a stable color). `report --copy` collapses to
+  a single Odoo-style line (`echo.report: copied N lines to clipboard …`)
+  instead of a log line plus a separate plain confirmation. Structured log
+  lines with an empty message no longer render a stray double space.
 - The `update` / `install` / `uninstall` / `test` **start line** now names
   the resolved module(s) — including picker selections and `update --last`,
   which previously logged a generic `echo.update.start`. The line is

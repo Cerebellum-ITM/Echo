@@ -292,6 +292,17 @@ func findCall(calls []logCall, msg string) (logCall, bool) {
 	return logCall{}, false
 }
 
+// findRecap finds a per-step recap line (empty msg) by its step field
+// (e.g. "2/3"). Recap lines carry step/status as structured fields.
+func findRecap(calls []logCall, step string) (logCall, bool) {
+	for _, c := range calls {
+		if c.msg == "" && c.fields["step"] == step {
+			return c, true
+		}
+	}
+	return logCall{}, false
+}
+
 func TestRunRecipeStepsSummaryFailFast(t *testing.T) {
 	steps := []string{"stop", "update bad", "restart"}
 	runStep := func(name string, args []string, _ int) stepOutcome {
@@ -306,22 +317,22 @@ func TestRunRecipeStepsSummaryFailFast(t *testing.T) {
 	var calls []logCall
 	runRecipeSteps(steps, false, runStep, captureLog(&calls))
 
-	// Step 1 ran ok with warnings; recap line present at INFO.
-	if c, ok := findCall(calls, "step 1/3 ok"); !ok {
+	// Step 1 ran ok with warnings; status=ok, cmd + warnings fields.
+	if c, ok := findRecap(calls, "1/3"); !ok {
 		t.Error("missing recap for step 1")
-	} else if c.level != "INFO" || c.fields["cmd"] != "stop" || c.fields["warnings"] != "3" {
+	} else if c.level != "INFO" || c.fields["status"] != "ok" || c.fields["cmd"] != "stop" || c.fields["warnings"] != "3" {
 		t.Errorf("step 1 recap = %+v", c)
 	}
-	// Step 2 failed: ERROR, exit + errors fields.
-	if c, ok := findCall(calls, "step 2/3 failed"); !ok {
+	// Step 2 failed: ERROR, status=failed, exit + errors fields.
+	if c, ok := findRecap(calls, "2/3"); !ok {
 		t.Error("missing recap for failed step 2")
-	} else if c.level != "ERROR" || c.fields["exit"] != strconv.Itoa(exitError) || c.fields["errors"] != "2" {
+	} else if c.level != "ERROR" || c.fields["status"] != "failed" || c.fields["exit"] != strconv.Itoa(exitError) || c.fields["errors"] != "2" {
 		t.Errorf("step 2 recap = %+v", c)
 	}
-	// Step 3 never ran → skipped, WARNING, no took.
-	if c, ok := findCall(calls, "step 3/3 skipped"); !ok {
+	// Step 3 never ran → status=skipped, WARNING, no took.
+	if c, ok := findRecap(calls, "3/3"); !ok {
 		t.Error("missing recap for skipped step 3")
-	} else if c.level != "WARNING" || c.fields["cmd"] != "restart" {
+	} else if c.level != "WARNING" || c.fields["status"] != "skipped" || c.fields["cmd"] != "restart" {
 		t.Errorf("step 3 recap = %+v", c)
 	} else if _, has := c.fields["took"]; has {
 		t.Error("skipped step must not carry a took field")

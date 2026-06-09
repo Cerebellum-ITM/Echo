@@ -148,21 +148,20 @@ func (sess *session) runReport(args []string) {
 		levelField = ">=" + r.minLevel
 	}
 
-	header := func(extra ...logField) {
-		fields := append([]logField{
-			{"run", rep.Recipe},
-			{"step", stepField},
-			{"level", levelField},
-			{"lines", strconv.Itoa(len(lines))},
-		}, extra...)
-		emitOdooLog("INFO", "echo.report", "report", fields,
+	fields := []logField{
+		{"run", rep.Recipe},
+		{"step", stepField},
+		{"level", levelField},
+		{"lines", strconv.Itoa(len(lines))},
+	}
+	emit := func(level, msg string) {
+		emitOdooLog(level, "echo.report", msg, fields,
 			sess.styles, sess.palette, sess.cfg.DBName)
 	}
 
 	if r.copy {
 		if len(lines) == 0 {
-			header()
-			sess.print(Line{Kind: "warn", Text: "report: no lines match — nothing copied"})
+			emit("WARNING", "no lines match — nothing copied")
 			sess.exitCode = exitOK
 			return
 		}
@@ -172,8 +171,7 @@ func (sess *session) runReport(args []string) {
 			b.WriteByte('\n')
 		}
 		if err := clipboard.WriteAll(b.String()); err != nil {
-			header()
-			sess.print(Line{Kind: "err", Text: "report: copy failed: " + err.Error()})
+			emit("ERROR", "copy failed: "+err.Error())
 			sess.exitCode = exitError
 			return
 		}
@@ -181,13 +179,12 @@ func (sess *session) runReport(args []string) {
 		if len(lines) == 1 {
 			plural = ""
 		}
-		header(logField{"copied", "true"})
-		sess.print(Line{Kind: "ok", Text: fmt.Sprintf("copied %d line%s to clipboard", len(lines), plural)})
+		emit("INFO", fmt.Sprintf("copied %d line%s to clipboard", len(lines), plural))
 		sess.exitCode = exitOK
 		return
 	}
 
-	header()
+	emit("INFO", "report")
 	for _, l := range lines {
 		sess.print(Line{Kind: kindFromLevel(l.Level), Text: l.Text})
 	}

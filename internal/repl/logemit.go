@@ -67,12 +67,19 @@ func emitOdooLog(level, logger, msg string, fields []logField, s theme.Styles, p
 		s.Faint.Render(pid) + " " +
 		levelStyle.Render(short) + " " +
 		dbStyle.Render(db) + " " +
-		loggerStyle.Render(logger+":") + " " +
-		s.Out.Render(msg)
+		loggerStyle.Render(logger+":")
+	if msg != "" {
+		line += " " + s.Out.Render(msg)
+	}
 
 	for _, f := range fields {
 		keyStyle := keyColor(f.key, p)
-		line += " " + keyStyle.Render(f.key) + "=" + s.Out.Render(quoteIfNeeded(f.value))
+		valText := quoteIfNeeded(f.value)
+		if vs, ok := valueStyleFor(f.key, f.value, p); ok {
+			line += " " + keyStyle.Render(f.key) + "=" + vs.Render(valText)
+		} else {
+			line += " " + keyStyle.Render(f.key) + "=" + s.Out.Render(valText)
+		}
 	}
 
 	os.Stdout.WriteString(line + "\n")
@@ -95,6 +102,36 @@ func keyColor(key string, p theme.Palette) lipgloss.Style {
 		return bold.Foreground(p.Info)
 	}
 	return lipgloss.NewStyle().Foreground(p.Dim)
+}
+
+// valueStyleFor returns the style for a structured field's VALUE, keyed on
+// the field name (and value) — mirroring how keyColor styles the key. It
+// makes the run recap readable at a glance: the status word is colored by
+// outcome (ok green, failed red, cancelled/skipped amber) and the cmd is
+// tinted by its action (the first token), reusing the logger pastel
+// rotation so each action keeps a stable color. Returns ok=false to fall
+// back to the default foreground.
+func valueStyleFor(key, value string, p theme.Palette) (lipgloss.Style, bool) {
+	switch key {
+	case "status":
+		switch value {
+		case "ok":
+			return lipgloss.NewStyle().Foreground(p.Success).Bold(true), true
+		case "failed":
+			return lipgloss.NewStyle().Foreground(p.Error).Bold(true), true
+		case "cancelled", "skipped":
+			return lipgloss.NewStyle().Foreground(p.Warning), true
+		}
+	case "cmd":
+		action := value
+		if i := strings.IndexByte(action, ' '); i >= 0 {
+			action = action[:i]
+		}
+		if action != "" {
+			return lipgloss.NewStyle().Foreground(loggerColor(action)), true
+		}
+	}
+	return lipgloss.Style{}, false
 }
 
 // quoteIfNeeded wraps values that contain whitespace or quotes so the
@@ -121,8 +158,11 @@ func plainOdooLog(level, logger, msg, db string) string {
 	if db == "" {
 		db = "-"
 	}
-	return ts + " " + pid + " " + shortLevelName(level) + " " +
-		db + " " + logger + ": " + msg
+	base := ts + " " + pid + " " + shortLevelName(level) + " " + db + " " + logger + ":"
+	if msg != "" {
+		base += " " + msg
+	}
+	return base
 }
 
 // plainOdooLogFields is plainOdooLog plus the ` key=val` tail, used to
