@@ -94,7 +94,7 @@ func RunInstall(ctx context.Context, opts ModulesOpts) ([]string, error) {
 		}
 	}
 	if len(modules) == 0 {
-		picked, err := pickModulesInteractive(opts, "Modules to install")
+		picked, err := pickModulesInteractive(ctx, opts, "Modules to install")
 		if err != nil {
 			return nil, err
 		}
@@ -124,7 +124,7 @@ func RunUpdate(ctx context.Context, opts ModulesOpts) ([]string, error) {
 		return []string{"--all"}, runOdoo(ctx, opts, odoo.UpdateAll(buildConn(opts)))
 	}
 	if len(modules) == 0 {
-		picked, err := pickModulesInteractive(opts, "Modules to update")
+		picked, err := pickModulesInteractive(ctx, opts, "Modules to update")
 		if err != nil {
 			return nil, err
 		}
@@ -140,7 +140,7 @@ func RunUninstall(ctx context.Context, opts ModulesOpts) ([]string, error) {
 	}
 	modules := opts.Args
 	if len(modules) == 0 {
-		picked, err := pickModulesInteractive(opts, "Modules to uninstall")
+		picked, err := pickModulesInteractive(ctx, opts, "Modules to uninstall")
 		if err != nil {
 			return nil, err
 		}
@@ -193,7 +193,7 @@ func RunTest(ctx context.Context, opts ModulesOpts) ([]string, error) {
 	}
 
 	if len(modules) == 0 {
-		picked, err := pickModulesInteractive(opts, "Modules to test")
+		picked, err := pickModulesInteractive(ctx, opts, "Modules to test")
 		if err != nil {
 			return nil, err
 		}
@@ -207,13 +207,177 @@ func RunTest(ctx context.Context, opts ModulesOpts) ([]string, error) {
 }
 
 // pickModulesInteractive opens an fzf-style fuzzy picker with always-on
-// filter for locally available modules.
-func pickModulesInteractive(opts ModulesOpts, title string) ([]string, error) {
-	available := listAvailableModules(opts.Cfg, opts.Root)
+// filter for the available modules (resolved from host folders or, in
+// conf mode / as a fallback, from the instance's odoo.conf).
+func pickModulesInteractive(ctx context.Context, opts ModulesOpts, title string) ([]string, error) {
+	available, err := resolveModules(ctx, opts)
+	if err != nil {
+		return nil, err
+	}
 	if len(available) == 0 {
 		return nil, ErrNoModulesAvailable
 	}
 	return runFuzzyPicker(title, available, opts.Palette)
+}
+
+// addons modes recorded in the per-project config.
+const (
+	addonsModeHost = "host"
+	addonsModeConf = "conf"
+)
+
+// resolveModules returns the available module names for the project,
+// dispatching on the addons mode:
+//
+//   - conf mode: re-read addons_path from the instance's odoo.conf inside
+//     the container (live, so edits are picked up), refreshing the saved
+//     paths when they changed, and list modules there.
+//   - host mode (default): scan the configured host folders. If that
+//     yields modules, return them.
+//   - fallback: when the host scan is empty, probe the container's
+//     odoo.conf. If it yields modules, switch the project to conf mode and
+//     persist it, so subsequent runs skip the host scan.
+//
+// On any conf-read failure the host result is returned unchanged, so the
+// existing ErrNoModulesAvailable / "(no modules found…)" paths are
+// preserved verbatim.
+func resolveModules(ctx context.Context, opts ModulesOpts) ([]string, error) {
+	if opts.Cfg.AddonsMode == addonsModeConf {
+		paths, mods, err := modulesFromConf(ctx, opts)
+		if err != nil {
+			return nil, err
+		}
+		if !equalStrings(paths, opts.Cfg.AddonsPaths) {
+			opts.Cfg.AddonsPaths = paths
+			_ = config.SaveProject(opts.Cfg)
+		}
+		return mods, nil
+	}
+
+	host := listAvailableModules(opts.Cfg, opts.Root)
+	if len(host) > 0 {
+		return host, nil
+	}
+
+	// Fallback: the host scan found nothing — try the instance's conf.
+	paths, mods, err := modulesFromConf(ctx, opts)
+	if err != nil || len(mods) == 0 {
+		return host, nil
+	}
+	opts.Cfg.AddonsMode = addonsModeConf
+	opts.Cfg.AddonsPaths = paths
+	_ = config.SaveProject(opts.Cfg)
+	if opts.StreamOut != nil {
+		opts.StreamOut(fmt.Sprintf("(addons paths read from %s — %d paths, %d modules)",
+			opts.Cfg.ConfPath, len(paths), len(mods)))
+	}
+	return mods, nil
+}
+
+// modulesFromConf reads odoo.conf from the Odoo container, parses its
+// addons_path, and lists the modules in those container directories.
+// Returns the parsed paths and the sorted module names.
+func modulesFromConf(ctx context.Context, opts ModulesOpts) (paths, modules []string, err error) {
+	conf, err := readContainerFile(ctx, opts, opts.Cfg.ConfPath)
+	if err != nil {
+		return nil, nil, err
+	}
+	paths = parseAddonsPath(conf)
+	if len(paths) == 0 {
+		return nil, nil, fmt.Errorf("no addons_path in %s", opts.Cfg.ConfPath)
+	}
+	modules, err = listModulesInContainer(ctx, opts, paths)
+	if err != nil {
+		return nil, nil, err
+	}
+	return paths, modules, nil
+}
+
+// readContainerFile cats a file inside the Odoo container and returns its
+// full contents. A missing file (non-zero exit) surfaces as an error.
+func readContainerFile(ctx context.Context, opts ModulesOpts, path string) (string, error) {
+	var b strings.Builder
+	err := docker.Exec(ctx, opts.Cfg.ComposeCmd, opts.Root, opts.Cfg.OdooContainer,
+		[]string{"cat", path}, func(line string) {
+			b.WriteString(line)
+			b.WriteByte('\n')
+		})
+	if err != nil {
+		return "", err
+	}
+	return b.String(), nil
+}
+
+// parseAddonsPath extracts the addons_path entries from odoo.conf text.
+// It finds the (first) line whose trimmed form starts with `addons_path`,
+// splits the value after `=` on commas, and trims each entry. Comment
+// lines (`#` / `;`) and section headers are ignored. Entries whose base
+// name is "enterprise" are skipped by default — the Enterprise addons are
+// noise in the module picker for most update/install workflows.
+func parseAddonsPath(conf string) []string {
+	for _, raw := range strings.Split(conf, "\n") {
+		line := strings.TrimSpace(raw)
+		if line == "" || strings.HasPrefix(line, "#") || strings.HasPrefix(line, ";") {
+			continue
+		}
+		if !strings.HasPrefix(line, "addons_path") {
+			continue
+		}
+		eq := strings.IndexByte(line, '=')
+		if eq < 0 {
+			continue
+		}
+		var out []string
+		for _, p := range strings.Split(line[eq+1:], ",") {
+			if p = strings.TrimSpace(p); p == "" {
+				continue
+			}
+			if strings.EqualFold(filepath.Base(p), "enterprise") {
+				continue // skip the Enterprise addons dir by default
+			}
+			out = append(out, p)
+		}
+		return out
+	}
+	return nil
+}
+
+// listModulesInContainer lists, inside the Odoo container, the directories
+// under each addons path that contain a __manifest__.py — the same rule
+// the host scan uses, one level deep. Names are deduplicated and sorted.
+func listModulesInContainer(ctx context.Context, opts ModulesOpts, paths []string) ([]string, error) {
+	const script = `for d in "$@"; do for m in "$d"/*/__manifest__.py; do [ -f "$m" ] && basename "$(dirname "$m")"; done; done`
+	argv := append([]string{"sh", "-c", script, "_"}, paths...)
+
+	seen := map[string]bool{}
+	var found []string
+	err := docker.Exec(ctx, opts.Cfg.ComposeCmd, opts.Root, opts.Cfg.OdooContainer, argv,
+		func(line string) {
+			name := strings.TrimSpace(line)
+			if name == "" || seen[name] {
+				return
+			}
+			seen[name] = true
+			found = append(found, name)
+		})
+	if err != nil {
+		return nil, err
+	}
+	sort.Strings(found)
+	return found, nil
+}
+
+// equalStrings reports whether two string slices are element-wise equal.
+func equalStrings(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 // listAvailableModules walks the configured addons paths (or defaults)
@@ -260,7 +424,10 @@ func RunModules(ctx context.Context, opts ModulesOpts) error {
 		}
 	}
 
-	found := listAvailableModules(opts.Cfg, opts.Root)
+	found, err := resolveModules(ctx, opts)
+	if err != nil {
+		found = nil
+	}
 	if len(found) == 0 {
 		if opts.StreamOut != nil {
 			opts.StreamOut("(no modules found — run `modules --config` to set addons paths)")
@@ -332,6 +499,7 @@ func runModulesConfig(opts ModulesOpts) error {
 	}
 
 	opts.Cfg.AddonsPaths = picked
+	opts.Cfg.AddonsMode = addonsModeHost // picking host folders pins host mode
 	if err := config.SaveProject(opts.Cfg); err != nil {
 		return err
 	}
