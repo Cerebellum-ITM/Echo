@@ -18,6 +18,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   itself while the embedded `textinput` keeps owning the (still-blinking)
   cursor. Colors come from `palette.Success` / `palette.Error`, so all four
   themes are covered.
+- `db-restore` now also accepts a **standard Odoo backup `.zip`** (the kind
+  downloaded from Odoo's database manager / odoo.sh), not just Echo's own
+  archives (Unit 22). The restore auto-detects the archive flavor: a
+  `dump.sql` (plain SQL) is loaded with `psql` while a `dump.backup`
+  (pg_dump custom) keeps using `pg_restore`, and the filestore is copied
+  correctly whether it's sharded directly under `filestore/<XX>/…` (Odoo)
+  or nested under `filestore/<db>/…` (Echo). The Odoo download timestamp
+  `_YYYY-MM-DD_HH-MM-SS` is now stripped when deriving the target db name,
+  so `habitta_prod_2026-06-08_23-42-53.zip` restores into `habitta_prod`
+  instead of the full timestamped name.
 
 ## [0.5.0] — 2026-06-08
 

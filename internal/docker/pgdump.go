@@ -66,3 +66,34 @@ func Restore(ctx context.Context, composeCmd, dir, dbContainer, user, db, inPath
 	return nil
 }
 
+// RestoreSQL loads a plain-SQL dump (e.g. an Odoo backup's dump.sql) into
+// db by piping it to `psql` inside dbContainer. Used for archives that
+// carry SQL text rather than a pg_dump custom-format file. psql exits
+// non-zero only on fatal/connection errors (no ON_ERROR_STOP), matching a
+// manual `psql < dump.sql` against a freshly-created, --no-owner dump.
+func RestoreSQL(ctx context.Context, composeCmd, dir, dbContainer, user, db, inPath string) error {
+	if user == "" {
+		user = "postgres"
+	}
+	args := append(SplitCompose(composeCmd),
+		"exec", "-T", dbContainer,
+		"psql", "-q", "-U", user, "-d", db,
+	)
+	cmd := exec.CommandContext(ctx, args[0], args[1:]...)
+	cmd.Dir = dir
+
+	f, err := os.Open(inPath)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	var stderr strings.Builder
+	cmd.Stdin = f
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("psql restore: %s: %s", err, strings.TrimSpace(stderr.String()))
+	}
+	return nil
+}
+

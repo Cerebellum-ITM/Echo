@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -308,12 +309,20 @@ func restoreFromZip(ctx context.Context, opts DBOpts, target, zipPath string) er
 		return err
 	}
 
-	dumpFile := filepath.Join(tmpDir, "dump.backup")
-	if _, err := os.Stat(dumpFile); err != nil {
-		return fmt.Errorf("dump.backup not found in archive: %w", err)
-	}
-	if err := docker.Restore(ctx, opts.Cfg.ComposeCmd, opts.Root, opts.Cfg.DBContainer, dbUser(opts), target, dumpFile); err != nil {
-		return err
+	// Pick the restore path by which dump the archive carries: Echo's own
+	// backups ship a pg_dump custom-format `dump.backup` (pg_restore),
+	// while a native Odoo backup ships a plain `dump.sql` (psql).
+	switch {
+	case fileExists(filepath.Join(tmpDir, "dump.backup")):
+		if err := docker.Restore(ctx, opts.Cfg.ComposeCmd, opts.Root, opts.Cfg.DBContainer, dbUser(opts), target, filepath.Join(tmpDir, "dump.backup")); err != nil {
+			return err
+		}
+	case fileExists(filepath.Join(tmpDir, "dump.sql")):
+		if err := docker.RestoreSQL(ctx, opts.Cfg.ComposeCmd, opts.Root, opts.Cfg.DBContainer, dbUser(opts), target, filepath.Join(tmpDir, "dump.sql")); err != nil {
+			return err
+		}
+	default:
+		return fmt.Errorf("no dump.backup or dump.sql found in archive")
 	}
 
 	// Find a filestore/<somename>/ entry and copy it to the host
@@ -451,16 +460,25 @@ func listBackupFiles(root string) ([]string, error) {
 	return files, nil
 }
 
-// dbNameFromBackup parses `<db>_<YYYYMMDD-HHMMSS>.{dump,zip}` and
-// returns the db prefix. Falls back to the basename without extension.
+// odooBackupTS matches the timestamp Odoo's database manager appends to a
+// backup download: `_YYYY-MM-DD_HH-MM-SS` at the end of the name.
+var odooBackupTS = regexp.MustCompile(`_\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}$`)
+
+// dbNameFromBackup returns the db prefix from a backup filename, stripping
+// either Echo's `<db>_YYYYMMDD-HHMMSS` suffix or Odoo's
+// `<db>_YYYY-MM-DD_HH-MM-SS` suffix. Falls back to the basename without
+// extension.
 func dbNameFromBackup(name string) string {
 	base := strings.TrimSuffix(strings.TrimSuffix(name, ".dump"), ".zip")
+	if loc := odooBackupTS.FindStringIndex(base); loc != nil {
+		return base[:loc[0]]
+	}
 	idx := strings.LastIndex(base, "_")
 	if idx <= 0 {
 		return base
 	}
 	suffix := base[idx+1:]
-	// timestamp = 8 digits + '-' + 6 digits = 15 chars
+	// Echo timestamp = 8 digits + '-' + 6 digits = 15 chars
 	if len(suffix) == 15 && suffix[8] == '-' {
 		return base[:idx]
 	}
@@ -475,6 +493,26 @@ func odooFilestorePath(db string) string {
 func dirExists(p string) bool {
 	info, err := os.Stat(p)
 	return err == nil && info.IsDir()
+}
+
+func fileExists(p string) bool {
+	info, err := os.Stat(p)
+	return err == nil && !info.IsDir()
+}
+
+// isHexPrefix reports whether name is a 2-character lowercase-hex
+// directory name — the shape Odoo uses to shard a filestore
+// (`filestore/<XX>/<sha>`).
+func isHexPrefix(name string) bool {
+	if len(name) != 2 {
+		return false
+	}
+	for _, c := range name {
+		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')) {
+			return false
+		}
+	}
+	return true
 }
 
 func maybeAppendGitignore(root, line string) {
@@ -566,18 +604,37 @@ func unzip(src, dst string) error {
 	return nil
 }
 
+// findFilestoreInDir returns the directory that directly holds the
+// 2-char filestore prefix dirs, handling both layouts: an Odoo backup
+// shards them straight under `filestore/<XX>/…`, while an Echo backup
+// nests them under the db name (`filestore/<db>/<XX>/…`).
 func findFilestoreInDir(root string) (string, bool) {
 	fs := filepath.Join(root, "filestore")
 	entries, err := os.ReadDir(fs)
 	if err != nil {
 		return "", false
 	}
+	dirs, prefixDirs := 0, 0
+	firstDir := ""
 	for _, e := range entries {
-		if e.IsDir() {
-			return filepath.Join(fs, e.Name()), true
+		if !e.IsDir() {
+			continue
+		}
+		dirs++
+		if firstDir == "" {
+			firstDir = e.Name()
+		}
+		if isHexPrefix(e.Name()) {
+			prefixDirs++
 		}
 	}
-	return "", false
+	if dirs == 0 {
+		return "", false
+	}
+	if prefixDirs == dirs {
+		return fs, true // Odoo: prefix dirs directly under filestore/
+	}
+	return filepath.Join(fs, firstDir), true // Echo: filestore/<db>/<XX>/…
 }
 
 func copyDir(src, dst string) error {
