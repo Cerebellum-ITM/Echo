@@ -47,14 +47,15 @@ All three run as `cd <remote_path> && <compose> exec -T <odoo> <argv…>`
 is emitted raw so a two-word `docker compose` splits correctly.
 
 **Module scope.** A single module by default (fuzzy picker when omitted,
-TTY-guarded); `--all` pulls every module the project exposes. Candidates
-come from `resolveModules` — the same conf-aware source as `modules`/
-`modinfo`/`view` — so a conf-mode project (addons discovered from the
-container's `odoo.conf`, not host folders) lists correctly instead of
-failing "no modules found". Under `--all`, a module whose remote export
-fails is skipped with a warning and the run continues; a single-module run
-surfaces the error. An empty `.po` (no translations for that lang) is
-skipped rather than clobbering the local file.
+TTY-guarded); `--all` pulls every one. Candidates come from the **remote**
+instance — `listRemoteModules` queries its installed `ir_module_module`
+over SSH (in the remote Postgres container) — because that's where the
+modules and their translations live. The local project we run from is often
+unrelated (or has no addons), so a local scan is wrong and produced the
+"no modules found" failure. Under `--all`, a module whose remote export
+fails is skipped with a warning; a single-module run surfaces the error. An
+empty `.po` (no translations for that lang) is skipped rather than
+clobbering the local file.
 
 **Destination.** `pullDest` writes to the module's real addons dir on the
 host (`<addons>/<mod>/i18n/<lang>.po`, via `resolveModuleDir`) when the

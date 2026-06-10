@@ -152,6 +152,15 @@ func TestRemoteContainerCmd(t *testing.T) {
 			t.Errorf("got  %q\nwant %q", got, want)
 		}
 	})
+	t.Run("db variant targets the db container", func(t *testing.T) {
+		got := remoteDBCmd("/srv/odoo",
+			connectTarget{composeCmd: "docker compose", odooContainer: "odoo", dbContainer: "db"},
+			odoo.Cmd{"psql", "-U", "odoo", "-d", "prod", "-At", "-c", "SELECT 1"})
+		want := "cd '/srv/odoo' && docker compose exec -T 'db' 'psql' '-U' 'odoo' '-d' 'prod' '-At' '-c' 'SELECT 1'"
+		if got != want {
+			t.Errorf("got  %q\nwant %q", got, want)
+		}
+	})
 	t.Run("quotes a path with spaces", func(t *testing.T) {
 		got := remoteContainerCmd("/srv/my odoo",
 			connectTarget{composeCmd: "docker-compose", odooContainer: "web"},

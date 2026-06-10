@@ -182,24 +182,36 @@ func RunI18nPull(ctx context.Context, opts I18nPullOpts) error {
 	conn.User = pg["POSTGRES_USER"]
 	conn.Password = pg["POSTGRES_PASSWORD"]
 
-	// Module candidates come from the same conf-aware source as `modules`
-	// (host folders, or the odoo.conf addons paths stored in the project
-	// when the host doesn't expose them) — not a host-only scan.
-	mopts := ModulesOpts{Cfg: opts.Cfg, Root: opts.Root, Palette: opts.Palette}
+	// Module candidates come from the REMOTE instance — that's where the
+	// modules (and their translations) live. The local project we run from
+	// may be unrelated (or have no addons at all), so a local scan is wrong;
+	// we query the remote's installed modules over SSH.
+	listRemote := func() ([]string, error) {
+		if opts.StreamOut != nil {
+			opts.StreamOut("listing modules on " + sshHost)
+		}
+		return listRemoteModules(ctx, sshHost, remotePath, target, conn.User, target.dbName)
+	}
 
 	var modules []string
 	switch {
 	case p.all:
-		avail, err := resolveModules(ctx, mopts)
-		if err != nil || len(avail) == 0 {
+		avail, err := listRemote()
+		if err != nil {
+			return fmt.Errorf("list remote modules: %w", err)
+		}
+		if len(avail) == 0 {
 			return ErrNoModulesAvailable
 		}
 		modules = avail
 	case p.module != "":
 		modules = []string{p.module}
 	default:
-		avail, err := resolveModules(ctx, mopts)
-		if err != nil || len(avail) == 0 {
+		avail, err := listRemote()
+		if err != nil {
+			return fmt.Errorf("list remote modules: %w", err)
+		}
+		if len(avail) == 0 {
 			return ErrNoModulesAvailable
 		}
 		picked, err := runSingleFuzzyPicker("Module to pull translations for", avail, opts.Palette)
@@ -294,21 +306,53 @@ func pullRemotePO(ctx context.Context, sshHost, remotePath string, t connectTarg
 	return data, nil
 }
 
-// remoteContainerCmd builds the SSH command that runs argv inside the
-// remote Odoo container: `cd <path> && <compose> exec -T <odoo> <argv...>`.
-// Every argv token is shell-quoted; the compose command is emitted raw so
-// a two-word "docker compose" splits into its two tokens.
-func remoteContainerCmd(remotePath string, t connectTarget, argv odoo.Cmd) string {
+// remoteExec builds the SSH command that runs argv inside a remote compose
+// service: `cd <path> && <compose> exec -T <container> <argv...>`. Every
+// argv token is shell-quoted; the compose command is emitted raw so a
+// two-word "docker compose" splits into its two tokens.
+func remoteExec(remotePath, composeCmd, container string, argv odoo.Cmd) string {
 	var b strings.Builder
 	b.WriteString("cd ")
 	b.WriteString(shellQuote(remotePath))
 	b.WriteString(" && ")
-	b.WriteString(t.composeCmd)
+	b.WriteString(composeCmd)
 	b.WriteString(" exec -T ")
-	b.WriteString(shellQuote(t.odooContainer))
+	b.WriteString(shellQuote(container))
 	for _, a := range argv {
 		b.WriteString(" ")
 		b.WriteString(shellQuote(a))
 	}
 	return b.String()
+}
+
+// remoteContainerCmd runs argv in the remote Odoo container.
+func remoteContainerCmd(remotePath string, t connectTarget, argv odoo.Cmd) string {
+	return remoteExec(remotePath, t.composeCmd, t.odooContainer, argv)
+}
+
+// remoteDBCmd runs argv in the remote Postgres container.
+func remoteDBCmd(remotePath string, t connectTarget, argv odoo.Cmd) string {
+	return remoteExec(remotePath, t.composeCmd, t.dbContainer, argv)
+}
+
+// listRemoteModules queries the remote database for the names of installed
+// modules — the set whose translations can be pulled. Run over SSH inside
+// the remote Postgres container.
+func listRemoteModules(ctx context.Context, sshHost, remotePath string, t connectTarget, pgUser, db string) ([]string, error) {
+	if pgUser == "" {
+		pgUser = "odoo"
+	}
+	q := "SELECT name FROM ir_module_module WHERE state = 'installed' ORDER BY name"
+	argv := odoo.Cmd{"psql", "-U", pgUser, "-d", db, "-At", "-c", q}
+	out, err := runSSH(ctx, sshHost, remoteDBCmd(remotePath, t, argv), nil)
+	if err != nil {
+		return nil, err
+	}
+	var mods []string
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		if line = strings.TrimSpace(line); line != "" {
+			mods = append(mods, line)
+		}
+	}
+	return mods, nil
 }
