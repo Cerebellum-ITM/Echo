@@ -322,6 +322,29 @@ func (sess *session) successLog(name string, resolved []string, warnCount int) {
 		fields, sess.styles, sess.palette, sess.cfg.DBName)
 }
 
+// emitMigrations prints one Odoo-style summary line per module migration
+// detected in the command's output, after the success/failure recap so it
+// closes the run. The logger encodes the command and `.migration`, and the
+// fields name the module, the version it migrated to, and which phases ran
+// (pre/post/end) — mirroring Odoo's own `odoo.modules.migration` semantics.
+func (sess *session) emitMigrations(name string, resolved []string, migs []migration) {
+	if len(migs) == 0 {
+		return
+	}
+	logger := echoCommandLogger(name, resolved) + ".migration"
+	for _, mg := range migs {
+		fields := []logField{
+			{"module", mg.module},
+			{"version", mg.version},
+		}
+		if len(mg.phases) > 0 {
+			fields = append(fields, logField{"phases", strings.Join(mg.phases, ",")})
+		}
+		emitOdooLog("INFO", logger, "migration detected", fields,
+			sess.styles, sess.palette, sess.cfg.DBName)
+	}
+}
+
 // moduleField returns the comma-joined module list to expose as a log
 // field. Accepts the resolved-modules slice from RunInstall/Update/
 // Uninstall, so it covers picker selections and the `--all` sentinel.

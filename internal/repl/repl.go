@@ -26,7 +26,7 @@ import (
 // `0.5.0+abc1234` or `0.5.0+abc1234.dirty`. A plain `go build` without
 // the Makefile leaves VersionMeta empty (bare semver).
 var (
-	Version     = "0.7.0"
+	Version     = "0.8.0"
 	VersionMeta = ""
 )
 
@@ -460,6 +460,7 @@ func confLine(icon, label, value string) string {
 func (sess *session) runModules(ctx context.Context, name string, args []string) {
 	lc := &logColorer{}
 	stats := &runStats{}
+	migs := &migrationTracker{}
 	opts := cmd.ModulesOpts{
 		Cfg:         sess.cfg,
 		Root:        sess.projectDir,
@@ -467,6 +468,7 @@ func (sess *session) runModules(ctx context.Context, name string, args []string)
 		Palette:     sess.palette,
 		Interactive: sess.interactive,
 		StreamOut: stats.wrap(func(line string) {
+			migs.observe(line)
 			sess.emitStreamLine(lc, line)
 		}),
 		// The start line is emitted here, once the module set is resolved
@@ -500,6 +502,8 @@ func (sess *session) runModules(ctx context.Context, name string, args []string)
 	default:
 		sess.successLog(name, resolved, stats.warnings)
 	}
+	// Migration summary closes the run, after the success/failure recap.
+	sess.emitMigrations(name, resolved, migs.migrations())
 }
 
 func (sess *session) runI18n(ctx context.Context, name string, args []string) {
@@ -676,6 +680,31 @@ func (sess *session) runShell(ctx context.Context, name string, args []string) {
 	case "psql":
 		captured, interrupted, err = cmd.RunPsql(ctx, opts)
 	case "shell":
+		// Colorize Odoo's startup logs (printed raw through the PTY) so they
+		// match the rest of Echo's Odoo-styled output; non-log lines (IPython
+		// banner, prompt, eval output) pass through verbatim. Under a TTY
+		// (docker exec -t) Odoo colors its own logs, so strip its ANSI first
+		// — otherwise the level/logger SGR codes break the log-line match and
+		// the line would slip through wearing Odoo's coloring, not Echo's.
+		opts.LineTransform = func(line string) (string, bool) {
+			clean := stripANSISeq(line)
+			if styled, ok := renderLogLine(clean, sess.styles, sess.palette); ok {
+				return styled, true
+			}
+			// Restyle the shell's namespace globals and fade the
+			// Python/IPython banner so the block reads as Echo's.
+			if styled, ok := styleShellBanner(clean, sess.styles, sess.palette); ok {
+				return styled, true
+			}
+			// Loose-severity stderr (wkhtmltopdf `Warn:`/`Error:` …): reformat
+			// to Echo's Odoo style under the synthetic report.wkhtmltopdf
+			// logger — same fallback the update/install stream uses (Unit 36).
+			if ll, ok := parseLooseSeverity(clean); ok {
+				return renderOdooLog(ll.level, looseSeverityLogger, ll.message, nil,
+					sess.styles, sess.palette, sess.cfg.DBName), true
+			}
+			return "", false
+		}
 		captured, interrupted, err = cmd.RunOdooShell(ctx, opts)
 	}
 	switch {

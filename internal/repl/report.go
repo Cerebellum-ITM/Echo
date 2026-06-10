@@ -188,7 +188,30 @@ func (sess *session) runReport(args []string) {
 	for _, l := range lines {
 		sess.print(Line{Kind: kindFromLevel(l.Level), Text: l.Text})
 	}
+	// Migration summary: scan the whole run (every step, regardless of the
+	// step/level filter, since migrations are INFO lines a --min-level filter
+	// would hide) and close the report by naming each module that migrated.
+	for _, mg := range collectMigrations(reportTexts(rep)) {
+		fields := []logField{{"module", mg.module}, {"version", mg.version}}
+		if len(mg.phases) > 0 {
+			fields = append(fields, logField{"phases", strings.Join(mg.phases, ",")})
+		}
+		emitOdooLog("INFO", "echo.report.migration", "migration detected", fields,
+			sess.styles, sess.palette, sess.cfg.DBName)
+	}
 	sess.exitCode = exitOK
+}
+
+// reportTexts flattens every captured line's text across all steps of a run,
+// for migration detection over the full transcript.
+func reportTexts(rep config.RunReport) []string {
+	var out []string
+	for _, s := range rep.Steps {
+		for _, l := range s.Lines {
+			out = append(out, l.Text)
+		}
+	}
+	return out
 }
 
 // levelFromKind maps a classified line Kind back to a level token, used as

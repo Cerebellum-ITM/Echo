@@ -3,6 +3,7 @@ package repl
 import (
 	"hash/fnv"
 	"regexp"
+	"strings"
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/pascualchavez/echo/internal/theme"
@@ -102,6 +103,21 @@ func formatLoguruLine(line string, s theme.Styles, p theme.Palette) (string, boo
 		moduleStyle.Render(module) +
 		s.Faint.Render(":"+fn+":"+lineno+":") + " " +
 		s.Out.Render(msg), true
+}
+
+// ansiSeq matches an ANSI CSI escape sequence (SGR color codes and the
+// like). Odoo's ColoredFormatter wraps the level/logger in SGR codes when
+// its stdout is a TTY — which happens under `shell` (docker exec -t) but
+// not under `update`/`install` (exec -T). Stripping them lets the plain
+// log-line regexes match so Echo can re-style the line coherently.
+var ansiSeq = regexp.MustCompile(`\x1b\[[0-9;?]*[ -/]*[@-~]`)
+
+// stripANSISeq removes ANSI CSI escape sequences from s.
+func stripANSISeq(s string) string {
+	if !strings.Contains(s, "\x1b") {
+		return s
+	}
+	return ansiSeq.ReplaceAllString(s, "")
 }
 
 // renderLogLine tries the standard Odoo format first, then loguru.
