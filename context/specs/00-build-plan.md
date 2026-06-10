@@ -53,6 +53,7 @@ Decomposition of Echo into ordered, scoped, verifiable units.
 | 35 | update-last-recall          | `update --last` repeats the last update per (project, db) — persisted at `~/.config/echo/last-updates/<key>.toml`, repeats `--all` too. Without `--last`, an interactive confirmation lists the modules to update with previous-run modules highlighted (picker + confirm). REPL-only; never fires under `echo run`/script mode | 05, 06, 33 |
 | 42 | modinfo-version-check       | `modinfo [<mod>]` compares the DB-installed version (`ir_module_module.latest_version` + `state`) against the manifest version (normalized via Odoo's `adapt_version`), printing a verdict (`in sync` / `update pending` / `not installed` / `db ahead`) as `echo.modinfo` log lines; single-select picker when no module given; `--copy`; one-shot eligible | 05, 06, 09 |
 | 43 | view-module-file            | `view [<mod>]` opens a fuzzy picker of a module's files and displays the chosen one through `bat`/`batcat` (syntax highlight) with a plain-print fallback; `--copy` to clipboard; reads host files or container files per addons mode | 05, 06, 16 |
+| 44 | migration-detection         | Detect Odoo migration runs in the streamed log (`odoo.modules.migration: module <mod>: Running migration [<ver>] <phase>-migration`) during `install`/`update`/`uninstall` and close the command with one `echo.<cmd>.migration` line per migrated module (module + version + phases); `report` mirrors the summary by scanning the whole last run | 05, 08, 40 |
 
 ## Notes
 

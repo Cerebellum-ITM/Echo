@@ -460,6 +460,7 @@ func confLine(icon, label, value string) string {
 func (sess *session) runModules(ctx context.Context, name string, args []string) {
 	lc := &logColorer{}
 	stats := &runStats{}
+	migs := &migrationTracker{}
 	opts := cmd.ModulesOpts{
 		Cfg:         sess.cfg,
 		Root:        sess.projectDir,
@@ -467,6 +468,7 @@ func (sess *session) runModules(ctx context.Context, name string, args []string)
 		Palette:     sess.palette,
 		Interactive: sess.interactive,
 		StreamOut: stats.wrap(func(line string) {
+			migs.observe(line)
 			sess.emitStreamLine(lc, line)
 		}),
 		// The start line is emitted here, once the module set is resolved
@@ -500,6 +502,8 @@ func (sess *session) runModules(ctx context.Context, name string, args []string)
 	default:
 		sess.successLog(name, resolved, stats.warnings)
 	}
+	// Migration summary closes the run, after the success/failure recap.
+	sess.emitMigrations(name, resolved, migs.migrations())
 }
 
 func (sess *session) runI18n(ctx context.Context, name string, args []string) {

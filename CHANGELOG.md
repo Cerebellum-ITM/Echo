@@ -8,6 +8,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Migration detection on `install`/`update`/`uninstall`: Echo now watches the
+  streamed Odoo log for `odoo.modules.migration` lines (`module <mod>: Running
+  migration [<version>] <phase>-migration`) and, after the success/failure
+  recap, closes the run with one `echo.<cmd>.migration` INFO line per migrated
+  module — `migration detected module=<mod> version=<ver> phases=pre,post`.
+  The per-phase lines (pre/post/end) collapse into a single record keyed by
+  module + version, and the trailing range marker (`18.0.0.6>`) is trimmed.
+  `report` mirrors this: it scans the whole last run (every step, regardless
+  of the step/level filter) and appends the same `echo.report.migration`
+  summary lines so a migration that happened inside `echo run` is surfaced.
 - New `modinfo [<mod>]` command (Unit 42): compare the version Odoo
   recorded as installed in the database (`ir_module_module.latest_version`
   + `state`) against the version declared in the module's
