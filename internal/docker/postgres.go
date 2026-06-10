@@ -219,6 +219,60 @@ func ModuleVersion(ctx context.Context, composeCmd, dir, dbContainer, user, db, 
 	return parts[0], parts[1], parts[2], true, nil
 }
 
+// ModuleStateRow is one row from ir_module_module: a module's name, its
+// state, and its recorded latest_version. VersionNull is true when the
+// latest_version column is SQL NULL (so callers can serialize JSON null
+// rather than an empty string).
+type ModuleStateRow struct {
+	Name        string
+	State       string
+	Version     string
+	VersionNull bool
+}
+
+// ModuleStates returns name/state/latest_version for modules in
+// ir_module_module, ordered by name. When installedOnly is true the query
+// filters to state = 'installed'. An empty result is not an error.
+func ModuleStates(ctx context.Context, composeCmd, dir, dbContainer, user, db string, installedOnly bool) ([]ModuleStateRow, error) {
+	where := ""
+	if installedOnly {
+		where = " WHERE state = 'installed'"
+	}
+	// Select the NULL flag as the LAST column so the version split stays
+	// unambiguous even if a value contained a '|'. psql -At joins columns
+	// with '|'; module names and states never contain it.
+	q := "SELECT name, state, COALESCE(latest_version, ''), (latest_version IS NULL)" +
+		" FROM ir_module_module" + where + " ORDER BY name"
+	out, err := psqlScalar(ctx, composeCmd, dir, dbContainer, user, db, q)
+	if err != nil {
+		return nil, err
+	}
+	return parseModuleStates(out), nil
+}
+
+// parseModuleStates decodes the `psql -At` output of ModuleStates' query
+// (four pipe-joined columns: name, state, version, NULL-flag) into rows.
+// Blank/short lines are skipped; an empty input yields a nil slice.
+func parseModuleStates(out string) []ModuleStateRow {
+	var rows []ModuleStateRow
+	for _, line := range strings.Split(strings.TrimRight(out, "\n"), "\n") {
+		if line == "" {
+			continue
+		}
+		parts := strings.SplitN(line, "|", 4)
+		if len(parts) < 4 {
+			continue
+		}
+		rows = append(rows, ModuleStateRow{
+			Name:        parts[0],
+			State:       parts[1],
+			Version:     parts[2],
+			VersionNull: parts[3] == "t",
+		})
+	}
+	return rows
+}
+
 func psqlScalar(ctx context.Context, composeCmd, dir, dbContainer, user, db, query string) (string, error) {
 	args := append(SplitCompose(composeCmd),
 		"exec", "-T", dbContainer,
