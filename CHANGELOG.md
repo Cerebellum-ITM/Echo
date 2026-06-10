@@ -8,6 +8,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Universal `--build` / `-b` flag (Unit 51): `<cmd> --build` walks you
+  through composing the command interactively, then asks what to do with
+  the result. Step 1 runs the command's positional picker(s) — modules
+  (`install`/`update`/`uninstall`/`test`/`modinfo`/`view`/`i18n-export`/
+  `i18n-update`), database (`db-backup`/`db-drop`/`db-neutralize`), backup
+  file (`db-restore`), or compose service (`logs`/`restart`); i18n-export/
+  i18n-update also prompt for the lang (prefilled `es_MX`). Step 2 is a
+  multi-select over the command's known flags (Tab to toggle, Enter to
+  confirm, Enter with none selected = no flags). Step 3 prompts for a value
+  on each flag that takes one — a picker when the options are known
+  (`--level`, report `--level`/`--min-level`, i18n-pull `--from`) or a text
+  field otherwise (`--tags`, logs `-t`, `--out`, report `--step`,
+  db-restore `--as`); cancelling a value drops just that flag. Step 4 shows
+  the composed line and offers **Run it now** (dispatches it through the
+  normal command frame), **Copy to clipboard** (the recipe-style line,
+  without the `echo ` prefix, ready to paste into a `.echo` file), or
+  **Cancel**. `--build`/`-b` highlight as known flags and Tab-complete on
+  every command. Build mode is interactive: a non-TTY invocation (recipe,
+  CI) fails closed with exit 2. `--build` must be the only argument
+  (extra args → exit 2), and a command with no picker and no flags reports
+  "nothing to build" (exit 2). The composer does not encode mutual flag
+  exclusions — the commands still validate those at run time.
 - New `i18n-pull [<mod>] [<lang>] [--from <target>] [--all]` command
   (Unit 50): export a module's translations **from a remote Odoo instance**
   (reached over SSH like `connect`) and write the resulting `.po` into the

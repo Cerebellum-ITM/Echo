@@ -226,6 +226,14 @@ func (sess *session) dispatchParsed(ctx context.Context, cmd string, args []stri
 		sess.lastOutput.Reset()
 	}
 
+	// Build mode (--build / -b) is universal: intercept before the switch,
+	// but only for commands the switch actually routes — an unknown command
+	// with --build falls through to the unknown-command path.
+	if clean, build := stripBuildFlag(args); build && isDispatchName(cmd) {
+		sess.runBuild(ctx, cmd, clean)
+		return
+	}
+
 	switch cmd {
 	case "help":
 		sess.runHelp()
@@ -393,6 +401,14 @@ func (sess *session) runHelp() {
 		label := lipgloss.NewStyle().Width(22).Render(it.cmd)
 		fmt.Println("  " + s.Info.Render(label) + s.Out.Render(it.desc))
 	}
+
+	// Build mode is universal (any routed command) and interactive, so it
+	// lives outside helpSections() — keeping the Registry cross-check clean.
+	sess.print(Line{Kind: "out", Text: ""})
+	sess.print(Line{Kind: "accent", Text: "Build mode (compose interactively)"})
+	buildLabel := lipgloss.NewStyle().Width(22).Render("<cmd> --build")
+	fmt.Println("  " + s.Info.Render(buildLabel) +
+		s.Out.Render("Interactively compose the command (pickers + flags), then run/copy it"))
 }
 
 // helpCommandNames extracts the flat set of top-level command names
