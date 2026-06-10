@@ -687,7 +687,13 @@ func (sess *session) runShell(ctx context.Context, name string, args []string) {
 		// — otherwise the level/logger SGR codes break the log-line match and
 		// the line would slip through wearing Odoo's coloring, not Echo's.
 		opts.LineTransform = func(line string) (string, bool) {
-			return renderLogLine(stripANSISeq(line), sess.styles, sess.palette)
+			clean := stripANSISeq(line)
+			if styled, ok := renderLogLine(clean, sess.styles, sess.palette); ok {
+				return styled, true
+			}
+			// Not an Odoo log line: restyle the shell's namespace globals and
+			// fade the Python/IPython banner so the block reads as Echo's.
+			return styleShellBanner(clean, sess.styles, sess.palette)
 		}
 		captured, interrupted, err = cmd.RunOdooShell(ctx, opts)
 	}

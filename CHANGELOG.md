@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `shell` now also restyles the Odoo Python shell's startup block (not just
+  the Odoo logs): the injected namespace globals (`env:`, `odoo:`,
+  `openerp:`, `self:`) render as Echo structured fields — accent key + dim
+  value — and the stock Python/IPython banner lines (`Python …`, `Type '…`,
+  `IPython …`, `Tip: …`) are faded so the noise recedes and the prompt
+  stands out. New `styleShellBanner` plugged into the shell `LineTransform`
+  after the log-line match.
+
 ### Fixed
 - `shell` log colorization now also catches Odoo's *own* colored logs. Under
   `shell` (`docker compose exec -t`) Odoo's stdout is a TTY, so its
