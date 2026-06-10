@@ -23,7 +23,7 @@ var Registry = []string{
 var commandFlags = map[string][]string{
 	"alias":         {"--list", "--rm", "--migrate"},
 	"install":       {"--with-demo", "--level"},
-	"update":        {"--all", "--last", "--level"},
+	"update":        {"--all", "--last", "--level", "--i18n"},
 	"uninstall":     {"--level"},
 	"test":          {"--update", "--tags"},
 	"modules":       {"--config"},

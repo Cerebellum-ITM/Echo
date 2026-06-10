@@ -8,6 +8,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `update --i18n` (Unit 49): overwrite the updated modules' translations
+  from their `.po` files. The flag adds Odoo's `--i18n-overwrite` to the
+  `-u` run, so terms already translated in the database are replaced by the
+  modules' shipped translations instead of being kept. It applies to every
+  active language (Odoo's `-l` only scopes `i18n-export`/`i18n-import`, not
+  a module update — for a single language use `i18n-update <mod> <lang>`).
+  Composes with `--all`, `--last`, and `--level`; flag spelling is the same
+  across Odoo 17/18/19.
 - Project aliases (Unit 48): `-C` now accepts a short alias in place of a
   directory, so `echo -C habitta modstate` works from anywhere. Aliases are
   a user-level `name → local-path` registry in `global.toml` under
