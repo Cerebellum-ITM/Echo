@@ -17,6 +17,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   after the log-line match.
 
 ### Fixed
+- `shell` now also applies the loose-severity fallback (Unit 36) that the
+  `update`/`install` stream already had: standalone stderr lines like
+  `Warn: Can't find .pfb for face 'Courier'` (wkhtmltopdf/Qt) are reformatted
+  into Echo's Odoo style under the synthetic `report.wkhtmltopdf` logger
+  instead of leaking raw. The shell `LineTransform` now chains
+  `renderLogLine` → `styleShellBanner` → loose-severity → verbatim, mirroring
+  `emitStreamLine`. Extracted `renderOdooLog` (the string-returning core of
+  `emitOdooLog`) so the transform can reformat without printing directly.
 - `shell` log colorization now also catches Odoo's *own* colored logs. Under
   `shell` (`docker compose exec -t`) Odoo's stdout is a TTY, so its
   `ColoredFormatter` wraps the level/logger in ANSI SGR codes — which broke

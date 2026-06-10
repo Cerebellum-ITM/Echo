@@ -52,6 +52,15 @@ func emitOdooLog(level, logger, msg string, fields []logField, s theme.Styles, p
 	if outputSuppressed(level) {
 		return
 	}
+	os.Stdout.WriteString(renderOdooLog(level, logger, msg, fields, s, p, db) + "\n")
+	teeRunLog(plainOdooLogFields(level, logger, msg, fields, db))
+}
+
+// renderOdooLog builds the styled Odoo-format line emitOdooLog prints, but
+// returns it as a string (generating a fresh timestamp + pid). Used both by
+// emitOdooLog and by the `shell` line transform, which reformats loose
+// stderr (wkhtmltopdf `Warn:`/`Error:`) into this style on the fly.
+func renderOdooLog(level, logger, msg string, fields []logField, s theme.Styles, p theme.Palette, db string) string {
 	ts := time.Now().Format("2006-01-02 15:04:05.000")
 	ts = strings.Replace(ts, ".", ",", 1)
 	pid := strconv.Itoa(os.Getpid())
@@ -81,9 +90,7 @@ func emitOdooLog(level, logger, msg string, fields []logField, s theme.Styles, p
 			line += " " + keyStyle.Render(f.key) + "=" + s.Out.Render(valText)
 		}
 	}
-
-	os.Stdout.WriteString(line + "\n")
-	teeRunLog(plainOdooLogFields(level, logger, msg, fields, db))
+	return line
 }
 
 // keyColor returns the lipgloss style for a known structured-field

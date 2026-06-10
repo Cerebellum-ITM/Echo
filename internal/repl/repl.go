@@ -691,9 +691,19 @@ func (sess *session) runShell(ctx context.Context, name string, args []string) {
 			if styled, ok := renderLogLine(clean, sess.styles, sess.palette); ok {
 				return styled, true
 			}
-			// Not an Odoo log line: restyle the shell's namespace globals and
-			// fade the Python/IPython banner so the block reads as Echo's.
-			return styleShellBanner(clean, sess.styles, sess.palette)
+			// Restyle the shell's namespace globals and fade the
+			// Python/IPython banner so the block reads as Echo's.
+			if styled, ok := styleShellBanner(clean, sess.styles, sess.palette); ok {
+				return styled, true
+			}
+			// Loose-severity stderr (wkhtmltopdf `Warn:`/`Error:` …): reformat
+			// to Echo's Odoo style under the synthetic report.wkhtmltopdf
+			// logger — same fallback the update/install stream uses (Unit 36).
+			if ll, ok := parseLooseSeverity(clean); ok {
+				return renderOdooLog(ll.level, looseSeverityLogger, ll.message, nil,
+					sess.styles, sess.palette, sess.cfg.DBName), true
+			}
+			return "", false
 		}
 		captured, interrupted, err = cmd.RunOdooShell(ctx, opts)
 	}
