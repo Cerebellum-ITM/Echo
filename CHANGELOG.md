@@ -30,7 +30,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   project you run from is unrelated or has no addons. The `.po` lands in the
   module's real addons dir when it's on the host, falling back to a
   cwd-relative `<mod>/i18n/<lang>.po` when it isn't (conf-mode / staging
-  whose addons live only in the container). Default language `es_MX`; one-shot eligible
+  whose addons live only in the container). Progress is reported as
+  Odoo-style `echo.i18n-pull` log lines (matching `connect`) — `target
+  resolved`, `reading remote profile`, `connected`, `listing modules`, and
+  an `exporting`/`pulled` line per module — so the SSH waits aren't silent. Default language `es_MX`; one-shot eligible
   (`echo i18n-pull sale es_MX`). Like `connect`, it does **not** require a
   local compose project: run from outside a `docker-compose.yml` directory
   (it writes into the current repo using cwd, or `-C <dir>`) — only a

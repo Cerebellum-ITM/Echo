@@ -8,7 +8,6 @@ import (
 
 	"github.com/pascualchavez/echo/internal/config"
 	"github.com/pascualchavez/echo/internal/odoo"
-	"github.com/pascualchavez/echo/internal/theme"
 )
 
 func TestParseI18nPullArgs(t *testing.T) {
@@ -118,21 +117,23 @@ func TestDedupeSortedLines(t *testing.T) {
 
 func TestPickPullTarget(t *testing.T) {
 	// Zero targets → ErrNoPullRemote.
-	if _, err := pickPullTarget(&config.Config{}, theme.Palette{}, nil); !errors.Is(err, ErrNoPullRemote) {
+	if _, err := pickPullTarget(I18nPullOpts{Cfg: &config.Config{}}); !errors.Is(err, ErrNoPullRemote) {
 		t.Errorf("0 targets err = %v, want ErrNoPullRemote", err)
 	}
 
-	// Exactly one target → auto-used, streamed.
-	var streamed string
+	// Exactly one target → auto-used, logged.
+	var loggedMsg string
 	cfg1 := &config.Config{ConnectTargets: []config.ConnectTarget{
 		{Name: "prod", SSHHost: "erp", RemotePath: "/opt/odoo"},
 	}}
-	name, err := pickPullTarget(cfg1, theme.Palette{}, func(s string) { streamed = s })
+	name, err := pickPullTarget(I18nPullOpts{Cfg: cfg1, Log: func(level, sub, msg, db string, fields ...[2]string) {
+		loggedMsg = msg
+	}})
 	if err != nil || name != "prod" {
 		t.Fatalf("1 target = (%q, %v), want (prod, nil)", name, err)
 	}
-	if streamed != "using connect target prod" {
-		t.Errorf("stream = %q, want the auto-use line", streamed)
+	if loggedMsg != "using connect target" {
+		t.Errorf("logged msg = %q, want the auto-use line", loggedMsg)
 	}
 
 	// Several targets without a TTY → fails closed (picker is guarded).
@@ -140,7 +141,7 @@ func TestPickPullTarget(t *testing.T) {
 		{Name: "prod", SSHHost: "erp", RemotePath: "/opt/odoo"},
 		{Name: "stg", SSHHost: "stg", RemotePath: "/opt/stg"},
 	}}
-	if _, err := pickPullTarget(cfg2, theme.Palette{}, nil); err == nil {
+	if _, err := pickPullTarget(I18nPullOpts{Cfg: cfg2}); err == nil {
 		t.Error("multiple targets without TTY should error, got nil")
 	}
 }

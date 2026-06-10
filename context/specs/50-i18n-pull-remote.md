@@ -82,9 +82,15 @@ positionals are module then language.
 `MkdirAll` on the parent, overwrite on write — the whole point is to bring
 the remote translations into the working tree.
 
-Output is the standard streamed/`finalize` frame (`echo.i18n-pull`), with a
-`pulling <lang> from <host>:<path>` line, a `→ <dest>` per module, and a
-`pulled N skipped M` summary under `--all`.
+**Progress output.** Like `connect`, `i18n-pull` emits Odoo-style log lines
+through a `Log func(level, sub, msg, db string, fields ...[2]string)`
+callback on `I18nPullOpts` (the REPL renders them via `emitOdooLog` under
+`echo.i18n-pull[.sub]`, with `db` = the remote database). The events bracket
+the slow SSH steps so the waits aren't silent: `target resolved` →
+`reading remote profile` → `connected` → `listing modules` / `N module(s)
+found` → per module `exporting translations` then `pulled` (or a
+`WARNING skipped`), and a `pull complete pulled=N skipped=M` under `--all`.
+This replaced the earlier plain `StreamOut` text lines.
 
 **No local compose project required.** `i18n-pull` never drives a local
 docker stack — it only reads/writes local files and talks to the remote.

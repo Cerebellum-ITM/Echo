@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/pascualchavez/echo/internal/config"
@@ -23,11 +24,21 @@ var ErrNoPullRemote = errors.New(
 
 // I18nPullOpts configures an `i18n-pull` run.
 type I18nPullOpts struct {
-	Cfg       *config.Config
-	Root      string
-	Args      []string
-	Palette   theme.Palette
-	StreamOut func(string)
+	Cfg     *config.Config
+	Root    string
+	Args    []string
+	Palette theme.Palette
+	// Log emits one Odoo-style progress line (rendered by the REPL through
+	// emitOdooLog under `echo.i18n-pull[.sub]`), mirroring connect's logger.
+	// `db` overrides the line's database segment; nil is a no-op.
+	Log func(level, sub, msg, db string, fields ...[2]string)
+}
+
+// log emits a progress line when a logger is set; a no-op otherwise.
+func (o I18nPullOpts) log(level, sub, msg, db string, fields ...[2]string) {
+	if o.Log != nil {
+		o.Log(level, sub, msg, db, fields...)
+	}
 }
 
 // i18nPullArgs is the parsed shape of the i18n-pull input.
@@ -113,22 +124,20 @@ func resolvePullRemote(cfg *config.Config, from string) (sshHost, remotePath str
 // target is used automatically (with an info line), several open a picker,
 // none yields ErrNoPullRemote. The picker is TTY-guarded, so a headless
 // run with several targets fails closed asking for --from.
-func pickPullTarget(cfg *config.Config, palette theme.Palette, stream func(string)) (string, error) {
-	targets := cfg.ConnectTargets
+func pickPullTarget(opts I18nPullOpts) (string, error) {
+	targets := opts.Cfg.ConnectTargets
 	switch len(targets) {
 	case 0:
 		return "", ErrNoPullRemote
 	case 1:
-		if stream != nil {
-			stream("using connect target " + targets[0].Name)
-		}
+		opts.log("INFO", "remote", "using connect target", "", [2]string{"target", targets[0].Name})
 		return targets[0].Name, nil
 	}
 	labels := make([]string, len(targets))
 	for i, t := range targets {
 		labels[i] = fmt.Sprintf("%-16s  %s:%s", t.Name, t.SSHHost, t.RemotePath)
 	}
-	chosen, err := runSingleFuzzyPicker("Select connect target to pull from", labels, palette)
+	chosen, err := runSingleFuzzyPicker("Select connect target to pull from", labels, opts.Palette)
 	if err != nil {
 		return "", err
 	}
@@ -155,7 +164,7 @@ func RunI18nPull(ctx context.Context, opts I18nPullOpts) error {
 	// No --from and no project [connect]: fall back to the named connect
 	// targets from global.toml (one → auto, several → picker).
 	if errors.Is(err, ErrNoPullRemote) && p.from == "" {
-		name, perr := pickPullTarget(opts.Cfg, opts.Palette, opts.StreamOut)
+		name, perr := pickPullTarget(opts)
 		if perr != nil {
 			return perr
 		}
@@ -164,6 +173,8 @@ func RunI18nPull(ctx context.Context, opts I18nPullOpts) error {
 	if err != nil {
 		return err
 	}
+	opts.log("INFO", "remote", "target resolved", "",
+		[2]string{"host", sshHost}, [2]string{"path", remotePath})
 
 	// Resolve the remote container/db mapping AND its addons config from the
 	// server's own Echo profile, then its Postgres credentials from the
@@ -171,6 +182,7 @@ func RunI18nPull(ctx context.Context, opts I18nPullOpts) error {
 	cfgRemote := *opts.Cfg
 	cfgRemote.ConnectSSHHost = sshHost
 	cfgRemote.ConnectRemotePath = remotePath
+	opts.log("INFO", "remote", "reading remote profile", "", [2]string{"host", sshHost})
 	prof, err := fetchRemoteProfile(ctx, ConnectOpts{Cfg: &cfgRemote, Root: opts.Root})
 	if err != nil {
 		return err
@@ -183,6 +195,8 @@ func RunI18nPull(ctx context.Context, opts I18nPullOpts) error {
 		dbName:        prof.DBName,
 		stage:         prof.Stage,
 	}
+	opts.log("INFO", "remote", "connected", prof.DBName,
+		[2]string{"odoo", prof.OdooContainer}, [2]string{"db", prof.DBName})
 	conn := odoo.Conn{DB: target.dbName, Host: target.dbContainer}
 	pg := remotePullEnv(ctx, sshHost, remotePath)
 	conn.Port = pg["POSTGRES_PORT"]
@@ -196,13 +210,24 @@ func RunI18nPull(ctx context.Context, opts I18nPullOpts) error {
 	// --installed the candidates are instead every installed module
 	// (`ir_module_module`), kept as an escape hatch.
 	listRemote := func() ([]string, error) {
-		if opts.StreamOut != nil {
-			opts.StreamOut("listing modules on " + sshHost)
-		}
+		src := "project addons"
 		if p.installed {
-			return listRemoteModules(ctx, sshHost, remotePath, target, conn.User, target.dbName)
+			src = "installed (db)"
 		}
-		return listRemoteConfModules(ctx, sshHost, remotePath, target, prof.ConfPath, prof.AddonsPaths)
+		opts.log("INFO", "remote", "listing modules", prof.DBName, [2]string{"source", src})
+		var (
+			mods []string
+			err  error
+		)
+		if p.installed {
+			mods, err = listRemoteModules(ctx, sshHost, remotePath, target, conn.User, target.dbName)
+		} else {
+			mods, err = listRemoteConfModules(ctx, sshHost, remotePath, target, prof.ConfPath, prof.AddonsPaths)
+		}
+		if err == nil {
+			opts.log("INFO", "remote", fmt.Sprintf("%d module(s) found", len(mods)), prof.DBName)
+		}
+		return mods, err
 	}
 
 	var modules []string
@@ -233,27 +258,23 @@ func RunI18nPull(ctx context.Context, opts I18nPullOpts) error {
 		modules = []string{picked}
 	}
 
-	if opts.StreamOut != nil {
-		opts.StreamOut(fmt.Sprintf("pulling %s from %s:%s", p.lang, sshHost, remotePath))
-	}
-
 	var pulled, skipped int
 	for _, mod := range modules {
+		opts.log("INFO", "", "exporting translations", prof.DBName,
+			[2]string{"module", mod}, [2]string{"lang", p.lang})
 		data, err := pullRemotePO(ctx, sshHost, remotePath, target, conn, mod, p.lang)
 		if err != nil {
 			if p.all {
-				if opts.StreamOut != nil {
-					opts.StreamOut("skip " + mod + ": " + err.Error())
-				}
+				opts.log("WARNING", "", "skipped", prof.DBName,
+					[2]string{"module", mod}, [2]string{"reason", err.Error()})
 				skipped++
 				continue
 			}
 			return err
 		}
 		if len(bytes.TrimSpace(data)) == 0 {
-			if opts.StreamOut != nil {
-				opts.StreamOut("skip " + mod + ": empty .po returned")
-			}
+			opts.log("WARNING", "", "skipped", prof.DBName,
+				[2]string{"module", mod}, [2]string{"reason", "no translations for " + p.lang})
 			skipped++
 			continue
 		}
@@ -265,13 +286,13 @@ func RunI18nPull(ctx context.Context, opts I18nPullOpts) error {
 			return fmt.Errorf("write %s: %w", dest, err)
 		}
 		pulled++
-		if opts.StreamOut != nil {
-			opts.StreamOut("→ " + dest)
-		}
+		opts.log("INFO", "", "pulled", prof.DBName,
+			[2]string{"module", mod}, [2]string{"file", dest})
 	}
 
-	if opts.StreamOut != nil && (p.all || skipped > 0) {
-		opts.StreamOut(fmt.Sprintf("pulled %d module(s), skipped %d", pulled, skipped))
+	if p.all || skipped > 0 {
+		opts.log("INFO", "", "pull complete", prof.DBName,
+			[2]string{"pulled", strconv.Itoa(pulled)}, [2]string{"skipped", strconv.Itoa(skipped)})
 	}
 	return nil
 }
