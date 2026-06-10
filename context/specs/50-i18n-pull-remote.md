@@ -63,6 +63,17 @@ Output is the standard streamed/`finalize` frame (`echo.i18n-pull`), with a
 `pulling <lang> from <host>:<path>` line, a `→ <dest>` per module, and a
 `pulled N skipped M` summary under `--all`.
 
+**No local compose project required.** `i18n-pull` never drives a local
+docker stack — it only reads/writes local files and talks to the remote.
+So, like `connect`, it must run even outside a `docker-compose.yml`
+directory (the common case is a pure addons repo whose Odoo runs on a
+server). `main.go` treats it as a `projectlessOneShot`: when `FindRoot`
+fails for a one-shot `i18n-pull`, the working directory falls back to cwd
+(or `-C <dir>`) instead of exiting "not inside a project". Without a
+project there is no `[connect]`, so `--from <target>` is required (else the
+clean `ErrNoPullRemote`). Inside a project it behaves as before (project
+root + the project's `[connect]`).
+
 ## Implementation
 
 ### `internal/cmd/i18n_pull.go`

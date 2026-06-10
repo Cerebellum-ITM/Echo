@@ -70,13 +70,21 @@ func main() {
 
 	root, err := project.FindRoot(cwd)
 	if err != nil {
-		if oneShot {
+		// Some one-shot commands (e.g. `i18n-pull`) talk only to a remote
+		// instance and write into the local repo — they never touch a local
+		// docker stack, so they don't need a compose project. Fall back to
+		// cwd as the working directory instead of failing.
+		switch {
+		case oneShot && projectlessOneShot(args[0]):
+			root = cwd
+		case oneShot:
 			log.Error("not inside a project", "cwd", cwd,
 				"hint", "run echo from a directory containing docker-compose.yml, or pass -C <dir>")
 			os.Exit(exitUsage)
+		default:
+			log.Fatal("not inside a project", "cwd", cwd,
+				"hint", "run echo from a directory containing docker-compose.yml")
 		}
-		log.Fatal("not inside a project", "cwd", cwd,
-			"hint", "run echo from a directory containing docker-compose.yml")
 	}
 
 	cfg, err := config.Load(root)
@@ -162,4 +170,16 @@ func extractProjectDir(args []string) (dir string, rest []string, err error) {
 func isDir(path string) bool {
 	info, err := os.Stat(path)
 	return err == nil && info.IsDir()
+}
+
+// projectlessOneShot reports whether a one-shot command can run outside a
+// compose project (using cwd as the working directory). These commands
+// reach a remote instance and only read/write local files — they never
+// drive a local docker stack, so a missing docker-compose.yml is fine.
+func projectlessOneShot(name string) bool {
+	switch name {
+	case "i18n-pull":
+		return true
+	}
+	return false
 }

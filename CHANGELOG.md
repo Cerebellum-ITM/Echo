@@ -20,7 +20,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   A single module by default (fuzzy picker when omitted), `--all` pulls
   every module in the local repo (skipping unresolved/failed ones with a
   warning). Default language `es_MX`; one-shot eligible
-  (`echo i18n-pull sale es_MX`).
+  (`echo i18n-pull sale es_MX`). Like `connect`, it does **not** require a
+  local compose project: run from outside a `docker-compose.yml` directory
+  (it writes into the current repo using cwd, or `-C <dir>`) — only a
+  remote target is needed (the project's `[connect]` or `--from`).
 - `update --i18n` (Unit 49): overwrite the updated modules' translations
   from their `.po` files. The flag adds Odoo's `--i18n-overwrite` to the
   `-u` run, so terms already translated in the database are replaced by the
