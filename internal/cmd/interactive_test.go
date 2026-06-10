@@ -1,9 +1,11 @@
 package cmd
 
 import (
+	"context"
 	"errors"
 	"testing"
 
+	"github.com/pascualchavez/echo/internal/config"
 	"github.com/pascualchavez/echo/internal/theme"
 )
 
@@ -52,5 +54,10 @@ func TestInteractiveHelpersFailClosed(t *testing.T) {
 	}
 	if err := confirmI18nProd(pal, "db", "es_MX"); !errors.Is(err, ErrNonInteractive) {
 		t.Errorf("confirmI18nProd: want ErrNonInteractive, got %v", err)
+	}
+	if _, err := RunBuild(context.Background(), BuildOpts{
+		Cfg: &config.Config{}, Command: "update", Flags: []string{"--all"}, Palette: pal,
+	}); !errors.Is(err, ErrNonInteractive) {
+		t.Errorf("RunBuild: want ErrNonInteractive, got %v", err)
 	}
 }

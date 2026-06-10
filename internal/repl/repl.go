@@ -26,7 +26,7 @@ import (
 // `0.5.0+abc1234` or `0.5.0+abc1234.dirty`. A plain `go build` without
 // the Makefile leaves VersionMeta empty (bare semver).
 var (
-	Version     = "0.8.0"
+	Version     = "0.9.0"
 	VersionMeta = ""
 )
 
@@ -187,10 +187,10 @@ func (sess *session) renderPrompt() string {
 // are therefore not part of this slice.
 var dispatchNames = []string{
 	"help", "clear", "copy-last", "report",
-	"init", "reset",
+	"init", "reset", "alias",
 	"up", "down", "stop", "restart", "ps", "logs",
 	"install", "update", "uninstall", "test", "modules", "modinfo", "view",
-	"i18n-export", "i18n-update",
+	"i18n-export", "i18n-update", "i18n-pull",
 	"db-backup", "db-restore", "db-drop", "db-neutralize", "db-list",
 	"shell", "bash", "psql", "connect",
 }
@@ -226,6 +226,14 @@ func (sess *session) dispatchParsed(ctx context.Context, cmd string, args []stri
 		sess.lastOutput.Reset()
 	}
 
+	// Build mode (--build / -b) is universal: intercept before the switch,
+	// but only for commands the switch actually routes — an unknown command
+	// with --build falls through to the unknown-command path.
+	if clean, build := stripBuildFlag(args); build && isDispatchName(cmd) {
+		sess.runBuild(ctx, cmd, clean)
+		return
+	}
+
 	switch cmd {
 	case "help":
 		sess.runHelp()
@@ -239,6 +247,8 @@ func (sess *session) dispatchParsed(ctx context.Context, cmd string, args []stri
 		sess.runInit()
 	case "reset":
 		sess.runReset()
+	case "alias":
+		sess.runAlias(ctx, args)
 	case "up", "down", "stop", "restart", "ps", "logs":
 		sess.runDocker(ctx, cmd, args)
 	case "install", "update", "uninstall", "test", "modules":
@@ -249,6 +259,8 @@ func (sess *session) dispatchParsed(ctx context.Context, cmd string, args []stri
 		sess.runView(ctx, args)
 	case "i18n-export", "i18n-update":
 		sess.runI18n(ctx, cmd, args)
+	case "i18n-pull":
+		sess.runI18nPull(ctx, args)
 	case "db-backup", "db-restore", "db-drop", "db-neutralize", "db-list":
 		sess.runDB(ctx, cmd, args)
 	case "shell", "bash", "psql":
@@ -272,6 +284,10 @@ func helpSections() []helpSection {
 		{"Project", []helpEntry{
 			{"init", "Configure Odoo project (containers, version, DB)"},
 			{"reset", "Wipe Echo configuration (global / per-project / all)"},
+			{"alias [<name>]", "Register this project as `-C <name>` (no args: list)"},
+			{"  --list", "List all project aliases"},
+			{"  --rm <name>", "Remove an alias"},
+			{"  --migrate", "Backfill aliases from connect targets (local paths)"},
 		}},
 		{"Modules", []helpEntry{
 			{"install <mod...>", "Install modules in the current DB"},
@@ -280,6 +296,7 @@ func helpSections() []helpSection {
 			{"update <mod...>", "Update modules"},
 			{"  --all", "Update every installed module"},
 			{"  --last", "Repeat the last update for this database"},
+			{"  --i18n", "Overwrite the modules' translations from their .po (all langs)"},
 			{"  --level <lvl>", "Odoo --log-level (debug…critical; default info)"},
 			{"uninstall <mod...>", "Uninstall modules"},
 			{"  --level <lvl>", "Odoo --log-level (debug…critical; default info)"},
@@ -300,6 +317,10 @@ func helpSections() []helpSection {
 			{"  --out <path>", "Write to <path> instead of the module's i18n/"},
 			{"i18n-update <mod> [lang]", "Import the module's <lang>.po into the DB (--i18n-overwrite)"},
 			{"  --force", "Skip the prod-stage confirmation prompt"},
+			{"i18n-pull [<mod>] [lang]", "Pull a module's <lang>.po from a remote instance into the repo"},
+			{"  --from <target>", "Use a named connect target (default: project's [connect])"},
+			{"  --all", "Pull every candidate module"},
+			{"  --installed", "List candidates from the DB (all installed), not just the project's addons"},
 		}},
 		{"Database", []helpEntry{
 			{"db-backup [name]", "Dump DB (default: configured) to ./backups/"},
@@ -380,6 +401,14 @@ func (sess *session) runHelp() {
 		label := lipgloss.NewStyle().Width(22).Render(it.cmd)
 		fmt.Println("  " + s.Info.Render(label) + s.Out.Render(it.desc))
 	}
+
+	// Build mode is universal (any routed command) and interactive, so it
+	// lives outside helpSections() — keeping the Registry cross-check clean.
+	sess.print(Line{Kind: "out", Text: ""})
+	sess.print(Line{Kind: "accent", Text: "Build mode (compose interactively)"})
+	buildLabel := lipgloss.NewStyle().Width(22).Render("<cmd> --build")
+	fmt.Println("  " + s.Info.Render(buildLabel) +
+		s.Out.Render("Interactively compose the command (pickers + flags), then run/copy it"))
 }
 
 // helpCommandNames extracts the flat set of top-level command names

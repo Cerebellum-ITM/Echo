@@ -90,6 +90,22 @@ const (
 	flagKnown                    // a declared flag of the current command
 )
 
+// universalFlags are accepted by every routed command (build mode, Unit
+// 51) and highlight/complete as known regardless of the command's own
+// commandFlags entry. Kept out of commandFlags so per-command help and the
+// Registry cross-check stay clean.
+var universalFlags = []string{"--build", "-b"}
+
+// isUniversalFlag reports whether name is a universal (any-command) flag.
+func isUniversalFlag(name string) bool {
+	for _, f := range universalFlags {
+		if f == name {
+			return true
+		}
+	}
+	return false
+}
+
 // isKnownFlag reports whether name is a declared flag of command.
 func isKnownFlag(command, name string) bool {
 	for _, f := range commandFlags[command] {
@@ -107,7 +123,7 @@ func classifyFlag(command, token string) flagState {
 	if i := strings.IndexByte(name, '='); i >= 0 {
 		name = name[:i]
 	}
-	if isKnownFlag(command, name) {
+	if isKnownFlag(command, name) || isUniversalFlag(name) {
 		return flagKnown
 	}
 	return flagUnknown
@@ -118,6 +134,11 @@ func classifyFlag(command, token string) flagState {
 func flagsWithPrefix(command, prefix string) []string {
 	var out []string
 	for _, f := range commandFlags[command] {
+		if strings.HasPrefix(f, prefix) {
+			out = append(out, f)
+		}
+	}
+	for _, f := range universalFlags {
 		if strings.HasPrefix(f, prefix) {
 			out = append(out, f)
 		}

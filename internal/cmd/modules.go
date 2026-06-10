@@ -180,7 +180,7 @@ func RunUpdate(ctx context.Context, opts ModulesOpts) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	all, last := false, false
+	all, last, i18n := false, false, false
 	modules := make([]string, 0, len(rest))
 	for _, a := range rest {
 		switch a {
@@ -188,6 +188,8 @@ func RunUpdate(ctx context.Context, opts ModulesOpts) ([]string, error) {
 			all = true
 		case "--last":
 			last = true
+		case "--i18n":
+			i18n = true
 		default:
 			modules = append(modules, a)
 		}
@@ -208,17 +210,17 @@ func RunUpdate(ctx context.Context, opts ModulesOpts) ([]string, error) {
 		if prev.All {
 			saveLastUpdate(opts, nil, true, level)
 			emitResolved(opts, []string{"--all"})
-			return []string{"--all"}, runOdoo(ctx, opts, odoo.WithLogLevel(odoo.UpdateAll(buildConn(opts)), level))
+			return []string{"--all"}, runOdoo(ctx, opts, odoo.WithI18nOverwrite(odoo.WithLogLevel(odoo.UpdateAll(buildConn(opts)), level), i18n))
 		}
 		saveLastUpdate(opts, prev.Modules, false, level)
 		emitResolved(opts, prev.Modules)
-		return prev.Modules, runOdoo(ctx, opts, odoo.WithLogLevel(odoo.Update(buildConn(opts), prev.Modules), level))
+		return prev.Modules, runOdoo(ctx, opts, odoo.WithI18nOverwrite(odoo.WithLogLevel(odoo.Update(buildConn(opts), prev.Modules), level), i18n))
 	}
 
 	if all {
 		saveLastUpdate(opts, nil, true, level)
 		emitResolved(opts, []string{"--all"})
-		return []string{"--all"}, runOdoo(ctx, opts, odoo.WithLogLevel(odoo.UpdateAll(buildConn(opts)), level))
+		return []string{"--all"}, runOdoo(ctx, opts, odoo.WithI18nOverwrite(odoo.WithLogLevel(odoo.UpdateAll(buildConn(opts)), level), i18n))
 	}
 
 	prev, hasPrev := config.LoadLastUpdate(opts.Cfg.ProjectKey, opts.Cfg.DBName)
@@ -248,7 +250,7 @@ func RunUpdate(ctx context.Context, opts ModulesOpts) ([]string, error) {
 	}
 	saveLastUpdate(opts, modules, false, level)
 	emitResolved(opts, modules)
-	return modules, runOdoo(ctx, opts, odoo.WithLogLevel(odoo.Update(buildConn(opts), modules), level))
+	return modules, runOdoo(ctx, opts, odoo.WithI18nOverwrite(odoo.WithLogLevel(odoo.Update(buildConn(opts), modules), level), i18n))
 }
 
 // saveLastUpdate records the resolved target for the current

@@ -7,6 +7,96 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.0] — 2026-06-10
+
+### Added
+- Universal `--build` / `-b` flag (Unit 51): `<cmd> --build` walks you
+  through composing the command interactively, then asks what to do with
+  the result. Step 1 runs the command's positional picker(s) — modules
+  (`install`/`update`/`uninstall`/`test`/`modinfo`/`view`/`i18n-export`/
+  `i18n-update`), database (`db-backup`/`db-drop`/`db-neutralize`), backup
+  file (`db-restore`), or compose service (`logs`/`restart`); i18n-export/
+  i18n-update also prompt for the lang (prefilled `es_MX`). Step 2 is a
+  multi-select over the command's known flags (Tab to toggle, Enter to
+  confirm, Enter with none selected = no flags). Step 3 prompts for a value
+  on each flag that takes one — a picker when the options are known
+  (`--level`, report `--level`/`--min-level`) or a text
+  field otherwise (`--tags`, logs `-t`, `--out`, report `--step`,
+  db-restore `--as`); cancelling a value drops just that flag. Step 4 shows
+  the composed line and offers **Run it now** (dispatches it through the
+  normal command frame), **Copy to clipboard** (the recipe-style line,
+  without the `echo ` prefix, ready to paste into a `.echo` file), or
+  **Cancel**. `--build`/`-b` highlight as known flags and Tab-complete on
+  every command. Build mode is interactive: a non-TTY invocation (recipe,
+  CI) fails closed with exit 2. `--build` must be the only argument
+  (extra args → exit 2), and a command with no picker and no flags reports
+  "nothing to build" (exit 2). The composer does not encode mutual flag
+  exclusions — the commands still validate those at run time.
+  `i18n-pull --build` gets a dedicated remote-aware flow: its module
+  candidates live on the remote, so it first resolves a connect target
+  (one → auto, several → picker), **bakes `--from=<target>`** into the
+  composed line for reproducibility, lists that remote's own modules for
+  the picker, and prompts for the lang — composing
+  `i18n-pull <module> <lang> --from=<target>`. The SSH round-trips
+  (`reading remote profile`, `N module(s) found`) surface as INFO
+  `echo.build` lines so the waits aren't silent. `--all` / `--installed`
+  are not offered there — they would ignore the picked module.
+- New `i18n-pull [<mod>] [<lang>] [--from <target>] [--all]` command
+  (Unit 50): export a module's translations **from a remote Odoo instance**
+  (reached over SSH like `connect`) and write the resulting `.po` into the
+  **local repo** at `<addons>/<mod>/i18n/<lang>.po` — for bringing
+  translations edited in a remote prod/staging UI back into the working
+  tree. The remote is the project's own `[connect]` config by default, or a
+  named `connect_target` via `--from`; with neither set it falls back to
+  the global connect targets — using the only one automatically, or opening
+  a picker when there are several. Per module it runs
+  `odoo --i18n-export` inside the remote container, `cat`s the file back
+  over SSH, and cleans up the temp file — the remote DB is never modified.
+  A single module by default (fuzzy picker when omitted), `--all` pulls
+  every candidate (skipping failed ones with a warning). The module list
+  comes from the **remote** instance — by default the remote project's own
+  modules (the directories under its `addons_path`, read from its
+  `odoo.conf` or the addons paths stored in its Echo profile), so you get
+  the modules you maintain, not every stock Odoo module; `--installed`
+  switches to every installed module (`ir_module_module`) as an escape
+  hatch. Resolving over the remote means it works even when the local
+  project you run from is unrelated or has no addons. The `.po` lands in the
+  module's real addons dir when it's on the host, falling back to a
+  cwd-relative `<mod>/i18n/<lang>.po` when it isn't (conf-mode / staging
+  whose addons live only in the container). Progress is reported as
+  Odoo-style `echo.i18n-pull` log lines (matching `connect`) — `target
+  resolved`, `reading remote profile`, `connected`, `listing modules`, and
+  an `exporting`/`pulled` line per module — so the SSH waits aren't silent. Default language `es_MX`; one-shot eligible
+  (`echo i18n-pull sale es_MX`). Like `connect`, it does **not** require a
+  local compose project: run from outside a `docker-compose.yml` directory
+  (it writes into the current repo using cwd, or `-C <dir>`) — only a
+  remote target is needed (the project's `[connect]` or `--from`).
+- `update --i18n` (Unit 49): overwrite the updated modules' translations
+  from their `.po` files. The flag adds Odoo's `--i18n-overwrite` to the
+  `-u` run, so terms already translated in the database are replaced by the
+  modules' shipped translations instead of being kept. It applies to every
+  active language (Odoo's `-l` only scopes `i18n-export`/`i18n-import`, not
+  a module update — for a single language use `i18n-update <mod> <lang>`).
+  Composes with `--all`, `--last`, and `--level`; flag spelling is the same
+  across Odoo 17/18/19.
+- Project aliases (Unit 48): `-C` now accepts a short alias in place of a
+  directory, so `echo -C habitta modstate` works from anywhere. Aliases are
+  a user-level `name → local-path` registry in `global.toml` under
+  `[project_aliases]` (the same shape as `[connect_targets]`). A real
+  directory always wins, so `-C <dir>` is unchanged. Resolution order:
+  existing directory → `project_aliases` → a `connect_target` of the same
+  name whose `remote_path` is a local directory (free reuse of connect
+  names when you run Echo on the server) → otherwise a usage error (exit 2).
+- New `alias` command to manage the registry: `alias <name>` registers the
+  current project, `alias` / `alias --list` lists all, `alias --rm <name>`
+  removes one, and `alias --migrate` backfills aliases from connect targets
+  whose `remote_path` resolves locally (explicit and idempotent; reports
+  added/skipped). Output is `echo.alias` log lines; headless and one-shot
+  eligible (`echo alias --list`).
+- `init` now offers an optional alias step at the end (prefilled with the
+  project directory's basename); registering it makes `-C <alias>` work,
+  leaving it blank skips with no error.
+
 ## [0.8.0] — 2026-06-10
 
 ### Added
@@ -580,6 +670,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   REPL prompt, and the `ls` command.
 
 [Unreleased]: #unreleased
+[0.9.0]: #090--2026-06-10
 [0.6.0]: #060--2026-06-09
 [0.3.1]: #031--2026-05-18
 [0.3.0]: #030--2026-05-18

@@ -6,9 +6,9 @@ import "strings"
 // recognised by the REPL. The order matches the help output and
 // determines the order of the match list rendered on a double-Tab.
 var Registry = []string{
-	"init", "reset",
+	"init", "reset", "alias",
 	"install", "update", "uninstall", "test", "modules", "modinfo", "view",
-	"i18n-export", "i18n-update",
+	"i18n-export", "i18n-update", "i18n-pull",
 	"db-backup", "db-restore", "db-drop", "db-neutralize", "db-list",
 	"bash", "psql", "shell", "connect",
 	"up", "down", "stop", "restart", "ps", "logs",
@@ -21,8 +21,9 @@ var Registry = []string{
 // flags) are intentionally excluded. Commands absent from the map have
 // no known flags. Powers flag highlighting and Tab flag completion.
 var commandFlags = map[string][]string{
+	"alias":         {"--list", "--rm", "--migrate"},
 	"install":       {"--with-demo", "--level"},
-	"update":        {"--all", "--last", "--level"},
+	"update":        {"--all", "--last", "--level", "--i18n"},
 	"uninstall":     {"--level"},
 	"test":          {"--update", "--tags"},
 	"modules":       {"--config"},
@@ -30,6 +31,7 @@ var commandFlags = map[string][]string{
 	"view":          {"--copy", "--last"},
 	"i18n-export":   {"--out"},
 	"i18n-update":   {"--force"},
+	"i18n-pull":     {"--from", "--all", "--installed"},
 	"db-backup":     {"--with-filestore"},
 	"db-restore":    {"--as", "--force", "--neutralize"},
 	"db-drop":       {"--force"},

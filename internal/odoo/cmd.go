@@ -68,6 +68,19 @@ func WithLogLevel(cmd Cmd, level string) Cmd {
 	return append(cmd, "--log-level="+level)
 }
 
+// WithI18nOverwrite appends `--i18n-overwrite` to an argv when on is true;
+// a no-op otherwise. On a module update (`-u`) Odoo reloads the module's
+// translation terms from its .po files but keeps existing DB translations
+// unless this flag forces them to be overwritten. It applies to every
+// active language — Odoo's `-l` only scopes i18n-export/i18n-import, not a
+// `-u` update — and the flag spelling is identical across Odoo 17/18/19.
+func WithI18nOverwrite(cmd Cmd, on bool) Cmd {
+	if !on {
+		return cmd
+	}
+	return append(cmd, "--i18n-overwrite")
+}
+
 // Install builds the argv to install one or more modules.
 func Install(c Conn, modules []string, withDemo bool) Cmd {
 	args := append(Cmd{"odoo"}, c.flags()...)

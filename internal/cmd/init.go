@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/charmbracelet/huh"
@@ -18,6 +19,7 @@ const (
 	IconOdoo       = "\U000f01a6" // md-cube
 	IconContainers = ""           // oct-container
 	IconDatabase   = "\U000f01bc" // md-database
+	IconAlias      = ""          // fa-tag
 )
 
 type InitOpts struct {
@@ -79,6 +81,10 @@ func RunInit(ctx context.Context, opts InitOpts) (*config.Config, error) {
 	dbs, _ := docker.ListDatabases(ctx, cfg.ComposeCmd, opts.Root, dbSvc, pgUser)
 	dbName := firstNonEmpty(cfg.DBName, firstStr(dbs), pgDB, config.Defaults.DBName)
 
+	// Suggest an alias from the project dir basename; the user can edit or
+	// clear it. Registered after SaveProject so a bad value can't undo init.
+	aliasName := strings.ToLower(filepath.Base(opts.Root))
+
 	form := huh.NewForm(
 		huh.NewGroup(
 			huh.NewSelect[string]().
@@ -115,6 +121,15 @@ func RunInit(ctx context.Context, opts InitOpts) (*config.Config, error) {
 		).
 			Title(IconDatabase+"  Database").
 			Description("PostgreSQL database used by Odoo"),
+
+		huh.NewGroup(
+			huh.NewInput().
+				Title("Alias (optional)").
+				Description("Short name to run `echo -C <alias> <cmd>` from anywhere\nLeave blank to skip").
+				Value(&aliasName),
+		).
+			Title(IconAlias+"  Alias").
+			Description("Reach this project by name instead of its full path"),
 	).
 		WithTheme(huh.ThemeCharm()).
 		WithInput(os.Stdin).
@@ -134,6 +149,19 @@ func RunInit(ctx context.Context, opts InitOpts) (*config.Config, error) {
 	if err := config.SaveProject(cfg); err != nil {
 		return nil, err
 	}
+
+	// Optional alias — non-fatal: the project is already saved, so a bad
+	// alias name only warns and is skipped.
+	if alias := strings.TrimSpace(aliasName); alias != "" {
+		if err := config.SetProjectAlias(alias, opts.Root); err != nil {
+			if opts.StreamOut != nil {
+				opts.StreamOut("could not save alias: " + err.Error())
+			}
+		} else if opts.StreamOut != nil {
+			opts.StreamOut("alias registered: -C " + alias)
+		}
+	}
+
 	return cfg, nil
 }
 
