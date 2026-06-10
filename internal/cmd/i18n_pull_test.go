@@ -88,6 +88,34 @@ func TestResolvePullRemote(t *testing.T) {
 	}
 }
 
+func TestParseI18nPullInstalled(t *testing.T) {
+	got, err := parseI18nPullArgs([]string{"sale", "--installed"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.module != "sale" || !got.installed {
+		t.Errorf("got %+v, want module=sale installed=true", got)
+	}
+	def, _ := parseI18nPullArgs([]string{"sale"})
+	if def.installed {
+		t.Error("installed should default to false")
+	}
+}
+
+func TestDedupeSortedLines(t *testing.T) {
+	got := dedupeSortedLines("real_estate_bits\nccima\n\n real_estate_bits \nccima_crm\n")
+	want := []string{"ccima", "ccima_crm", "real_estate_bits"}
+	if len(got) != len(want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("got %v, want %v", got, want)
+			break
+		}
+	}
+}
+
 func TestPickPullTarget(t *testing.T) {
 	// Zero targets → ErrNoPullRemote.
 	if _, err := pickPullTarget(&config.Config{}, theme.Palette{}, nil); !errors.Is(err, ErrNoPullRemote) {

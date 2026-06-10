@@ -31,7 +31,7 @@ var commandFlags = map[string][]string{
 	"view":          {"--copy", "--last"},
 	"i18n-export":   {"--out"},
 	"i18n-update":   {"--force"},
-	"i18n-pull":     {"--from", "--all"},
+	"i18n-pull":     {"--from", "--all", "--installed"},
 	"db-backup":     {"--with-filestore"},
 	"db-restore":    {"--as", "--force", "--neutralize"},
 	"db-drop":       {"--force"},

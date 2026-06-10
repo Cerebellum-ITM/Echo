@@ -20,11 +20,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `odoo --i18n-export` inside the remote container, `cat`s the file back
   over SSH, and cleans up the temp file — the remote DB is never modified.
   A single module by default (fuzzy picker when omitted), `--all` pulls
-  every one (skipping failed ones with a warning). The module list comes
-  from the **remote** instance (its installed `ir_module_module`, queried
-  over SSH) — that's where the modules live, so it works even when the
-  local project you run from is unrelated or has no addons. The `.po` lands
-  in the module's real addons dir when it's on the host, falling back to a
+  every candidate (skipping failed ones with a warning). The module list
+  comes from the **remote** instance — by default the remote project's own
+  modules (the directories under its `addons_path`, read from its
+  `odoo.conf` or the addons paths stored in its Echo profile), so you get
+  the modules you maintain, not every stock Odoo module; `--installed`
+  switches to every installed module (`ir_module_module`) as an escape
+  hatch. Resolving over the remote means it works even when the local
+  project you run from is unrelated or has no addons. The `.po` lands in the
+  module's real addons dir when it's on the host, falling back to a
   cwd-relative `<mod>/i18n/<lang>.po` when it isn't (conf-mode / staging
   whose addons live only in the container). Default language `es_MX`; one-shot eligible
   (`echo i18n-pull sale es_MX`). Like `connect`, it does **not** require a

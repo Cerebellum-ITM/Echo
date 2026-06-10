@@ -225,6 +225,12 @@ type RemoteProfile struct {
 	DBContainer   string
 	DBName        string
 	Stage         string
+
+	// Addons discovery (conf-mode), used by i18n-pull to list the remote
+	// project's own modules rather than every installed module.
+	AddonsMode  string
+	AddonsPaths []string
+	ConfPath    string
 }
 
 // ParseRemoteProfile decodes a remote host's `global.toml` and
@@ -250,6 +256,9 @@ func ParseRemoteProfile(globalTOML, projectTOML []byte) RemoteProfile {
 		DBContainer:   p.DBContainer,
 		DBName:        p.DBName,
 		Stage:         p.Stage,
+		AddonsMode:    p.AddonsMode,
+		AddonsPaths:   p.AddonsPaths,
+		ConfPath:      p.ConfPath,
 	}
 }
 

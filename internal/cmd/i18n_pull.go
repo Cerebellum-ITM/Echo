@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/pascualchavez/echo/internal/config"
@@ -31,10 +32,11 @@ type I18nPullOpts struct {
 
 // i18nPullArgs is the parsed shape of the i18n-pull input.
 type i18nPullArgs struct {
-	module string
-	lang   string
-	from   string // connect target name; "" → project's own [connect]
-	all    bool
+	module    string
+	lang      string
+	from      string // connect target name; "" → project's own [connect]
+	all       bool
+	installed bool // list candidates from the DB (all installed) vs conf addons
 }
 
 // parseI18nPullArgs extracts --from/--all and up to two positionals. With
@@ -56,6 +58,8 @@ func parseI18nPullArgs(args []string) (i18nPullArgs, error) {
 			out.from = strings.TrimPrefix(a, "--from=")
 		case a == "--all":
 			out.all = true
+		case a == "--installed":
+			out.installed = true
 		case strings.HasPrefix(a, "-"):
 			return out, fmt.Errorf("unknown flag: %s", a)
 		default:
@@ -161,36 +165,44 @@ func RunI18nPull(ctx context.Context, opts I18nPullOpts) error {
 		return err
 	}
 
-	// Resolve the remote container/db mapping from the server's own Echo
-	// profile, then its Postgres credentials from the remote .env.
+	// Resolve the remote container/db mapping AND its addons config from the
+	// server's own Echo profile, then its Postgres credentials from the
+	// remote .env.
 	cfgRemote := *opts.Cfg
 	cfgRemote.ConnectSSHHost = sshHost
 	cfgRemote.ConnectRemotePath = remotePath
-	target, err := resolveConnectTarget(ctx, ConnectOpts{Cfg: &cfgRemote, Root: opts.Root})
+	prof, err := fetchRemoteProfile(ctx, ConnectOpts{Cfg: &cfgRemote, Root: opts.Root})
 	if err != nil {
 		return err
 	}
-	conn := odoo.Conn{
-		DB:       target.dbName,
-		Host:     target.dbContainer,
-		Port:     "",
-		User:     "",
-		Password: "",
+	target := connectTarget{
+		remote:        true,
+		composeCmd:    prof.ComposeCmd,
+		odooContainer: prof.OdooContainer,
+		dbContainer:   prof.DBContainer,
+		dbName:        prof.DBName,
+		stage:         prof.Stage,
 	}
+	conn := odoo.Conn{DB: target.dbName, Host: target.dbContainer}
 	pg := remotePullEnv(ctx, sshHost, remotePath)
 	conn.Port = pg["POSTGRES_PORT"]
 	conn.User = pg["POSTGRES_USER"]
 	conn.Password = pg["POSTGRES_PASSWORD"]
 
-	// Module candidates come from the REMOTE instance — that's where the
-	// modules (and their translations) live. The local project we run from
-	// may be unrelated (or have no addons at all), so a local scan is wrong;
-	// we query the remote's installed modules over SSH.
+	// Module candidates come from the REMOTE instance. By default they are
+	// the modules in the remote project's own addons (read from its
+	// odoo.conf, or the addons paths stored in its Echo profile) — i.e. the
+	// modules the developer maintains, not every stock Odoo module. With
+	// --installed the candidates are instead every installed module
+	// (`ir_module_module`), kept as an escape hatch.
 	listRemote := func() ([]string, error) {
 		if opts.StreamOut != nil {
 			opts.StreamOut("listing modules on " + sshHost)
 		}
-		return listRemoteModules(ctx, sshHost, remotePath, target, conn.User, target.dbName)
+		if p.installed {
+			return listRemoteModules(ctx, sshHost, remotePath, target, conn.User, target.dbName)
+		}
+		return listRemoteConfModules(ctx, sshHost, remotePath, target, prof.ConfPath, prof.AddonsPaths)
 	}
 
 	var modules []string
@@ -333,6 +345,54 @@ func remoteContainerCmd(remotePath string, t connectTarget, argv odoo.Cmd) strin
 // remoteDBCmd runs argv in the remote Postgres container.
 func remoteDBCmd(remotePath string, t connectTarget, argv odoo.Cmd) string {
 	return remoteExec(remotePath, t.composeCmd, t.dbContainer, argv)
+}
+
+// listRemoteConfModules lists the remote project's own modules: the
+// directories with a __manifest__.py under its addons paths. The paths come
+// from the addons paths stored in the remote Echo profile when present,
+// otherwise from parsing the remote odoo.conf. This is the default source —
+// it yields the modules the developer maintains, not every stock module.
+func listRemoteConfModules(ctx context.Context, sshHost, remotePath string, t connectTarget, confPath string, storedPaths []string) ([]string, error) {
+	paths := storedPaths
+	if len(paths) == 0 {
+		if confPath == "" {
+			confPath = "/etc/odoo/odoo.conf"
+		}
+		conf, err := runSSH(ctx, sshHost, remoteContainerCmd(remotePath, t, odoo.Cmd{"cat", confPath}), nil)
+		if err != nil {
+			return nil, fmt.Errorf("read %s: %w (try --installed to list from the database)", confPath, err)
+		}
+		paths = parseAddonsPath(string(conf))
+		if len(paths) == 0 {
+			return nil, fmt.Errorf("no addons_path in remote %s (try --installed)", confPath)
+		}
+	}
+	// Same one-deep manifest scan as the local conf-mode listing, run in the
+	// remote Odoo container.
+	const script = `for d in "$@"; do for m in "$d"/*/__manifest__.py; do [ -f "$m" ] && basename "$(dirname "$m")"; done; done`
+	argv := append(odoo.Cmd{"sh", "-c", script, "_"}, paths...)
+	out, err := runSSH(ctx, sshHost, remoteContainerCmd(remotePath, t, argv), nil)
+	if err != nil {
+		return nil, err
+	}
+	return dedupeSortedLines(string(out)), nil
+}
+
+// dedupeSortedLines splits output into trimmed non-empty lines, removing
+// duplicates and sorting the result.
+func dedupeSortedLines(out string) []string {
+	seen := map[string]bool{}
+	var names []string
+	for _, line := range strings.Split(out, "\n") {
+		name := strings.TrimSpace(line)
+		if name == "" || seen[name] {
+			continue
+		}
+		seen[name] = true
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
 }
 
 // listRemoteModules queries the remote database for the names of installed

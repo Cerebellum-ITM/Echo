@@ -311,7 +311,8 @@ func helpSections() []helpSection {
 			{"  --force", "Skip the prod-stage confirmation prompt"},
 			{"i18n-pull [<mod>] [lang]", "Pull a module's <lang>.po from a remote instance into the repo"},
 			{"  --from <target>", "Use a named connect target (default: project's [connect])"},
-			{"  --all", "Pull every module in the local repo"},
+			{"  --all", "Pull every candidate module"},
+			{"  --installed", "List candidates from the DB (all installed), not just the project's addons"},
 		}},
 		{"Database", []helpEntry{
 			{"db-backup [name]", "Dump DB (default: configured) to ./backups/"},

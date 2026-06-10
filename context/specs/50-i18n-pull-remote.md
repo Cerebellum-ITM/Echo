@@ -47,15 +47,26 @@ All three run as `cd <remote_path> && <compose> exec -T <odoo> <argv…>`
 is emitted raw so a two-word `docker compose` splits correctly.
 
 **Module scope.** A single module by default (fuzzy picker when omitted,
-TTY-guarded); `--all` pulls every one. Candidates come from the **remote**
-instance — `listRemoteModules` queries its installed `ir_module_module`
-over SSH (in the remote Postgres container) — because that's where the
-modules and their translations live. The local project we run from is often
-unrelated (or has no addons), so a local scan is wrong and produced the
-"no modules found" failure. Under `--all`, a module whose remote export
-fails is skipped with a warning; a single-module run surfaces the error. An
-empty `.po` (no translations for that lang) is skipped rather than
-clobbering the local file.
+TTY-guarded); `--all` pulls every candidate. Candidates come from the
+**remote** instance — the local project we run from is often unrelated (or
+has no addons), so a local scan is wrong and produced the "no modules
+found" failure. Two remote sources:
+
+- **default — the remote project's own modules** (`listRemoteConfModules`):
+  the directories with a `__manifest__.py` under the remote `addons_path`,
+  taken from the addons paths stored in the remote Echo profile, or by
+  reading and parsing the remote `odoo.conf` (`parseAddonsPath`, same as the
+  local conf-mode listing) when they aren't stored. This is the set the
+  developer maintains — not every stock Odoo module — which is what the
+  picker should show.
+- **`--installed`** (`listRemoteModules`): every installed module from
+  `ir_module_module`, queried over SSH in the remote Postgres container.
+  Kept as an escape hatch for when you really want the full set.
+
+Under `--all`, a module whose remote export fails is skipped with a
+warning; a single-module run surfaces the error. An empty `.po` (no
+translations for that lang) is skipped rather than clobbering the local
+file.
 
 **Destination.** `pullDest` writes to the module's real addons dir on the
 host (`<addons>/<mod>/i18n/<lang>.po`, via `resolveModuleDir`) when the
