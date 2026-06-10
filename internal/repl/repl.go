@@ -680,6 +680,12 @@ func (sess *session) runShell(ctx context.Context, name string, args []string) {
 	case "psql":
 		captured, interrupted, err = cmd.RunPsql(ctx, opts)
 	case "shell":
+		// Colorize Odoo's startup logs (printed raw through the PTY) so they
+		// match the rest of Echo's Odoo-styled output; non-log lines (IPython
+		// banner, prompt, eval output) pass through verbatim.
+		opts.LineTransform = func(line string) (string, bool) {
+			return renderLogLine(line, sess.styles, sess.palette)
+		}
 		captured, interrupted, err = cmd.RunOdooShell(ctx, opts)
 	}
 	switch {

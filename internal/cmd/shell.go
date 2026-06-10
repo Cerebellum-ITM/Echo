@@ -19,6 +19,10 @@ type ShellOpts struct {
 	Root    string
 	Args    []string
 	Palette theme.Palette
+	// LineTransform restyles complete output lines of an interactive
+	// session (used by `shell` to colorize Odoo's startup logs Echo-style).
+	// nil keeps the raw byte-for-byte passthrough.
+	LineTransform docker.LineTransform
 }
 
 // RunBash opens an interactive bash session inside the Odoo container.
@@ -31,7 +35,7 @@ func RunBash(ctx context.Context, opts ShellOpts) (string, bool, error) {
 	if err := maybeConfirmProd(opts, "bash"); err != nil {
 		return "", false, err
 	}
-	return docker.ExecInteractive(ctx, opts.Cfg.ComposeCmd, opts.Root, opts.Cfg.OdooContainer, []string{"bash"})
+	return docker.ExecInteractive(ctx, opts.Cfg.ComposeCmd, opts.Root, opts.Cfg.OdooContainer, []string{"bash"}, nil)
 }
 
 // RunPsql opens an interactive psql session against the configured DB.
@@ -51,7 +55,7 @@ func RunPsql(ctx context.Context, opts ShellOpts) (string, bool, error) {
 		user = "postgres"
 	}
 	argv := []string{"psql", "-U", user, opts.Cfg.DBName}
-	return docker.ExecInteractive(ctx, opts.Cfg.ComposeCmd, opts.Root, opts.Cfg.DBContainer, argv)
+	return docker.ExecInteractive(ctx, opts.Cfg.ComposeCmd, opts.Root, opts.Cfg.DBContainer, argv, nil)
 }
 
 // RunOdooShell opens the Odoo Python shell loaded against the
@@ -76,7 +80,7 @@ func RunOdooShell(ctx context.Context, opts ShellOpts) (string, bool, error) {
 	}
 	argv := append([]string{"odoo", "shell"}, conn.Flags()...)
 	argv = append(argv, "--no-http")
-	return docker.ExecInteractive(ctx, opts.Cfg.ComposeCmd, opts.Root, opts.Cfg.OdooContainer, argv)
+	return docker.ExecInteractive(ctx, opts.Cfg.ComposeCmd, opts.Root, opts.Cfg.OdooContainer, argv, opts.LineTransform)
 }
 
 // maybeConfirmProd shows a red huh.Confirm when stage=prod, unless

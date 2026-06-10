@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- `shell` now colorizes Odoo's startup logs to match the rest of Echo: the
+  Odoo log lines the interactive Python shell prints raw through the PTY
+  (`… INFO ? odoo: …`, `odoo.modules.loading: …`, `odoo.modules.registry:
+  …`) are restyled per-segment with the same renderer used for streamed
+  `update`/`install` output (level chip, pastel logger, accent db). The
+  interactive parts (IPython banner, prompt, eval output) pass through
+  verbatim, and the auto-copy capture keeps the raw ANSI-free text.
+  Implemented as an opt-in `LineTransform` on `docker.ExecInteractive`
+  (`bash`/`psql` keep the plain passthrough); a 30 ms partial-flush keyed on
+  a leading digit means keystroke echo never lags.
+
 ### Added
 - Migration detection on `install`/`update`/`uninstall`: Echo now watches the
   streamed Odoo log for `odoo.modules.migration` lines (`module <mod>: Running
