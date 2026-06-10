@@ -26,7 +26,7 @@ import (
 // `0.5.0+abc1234` or `0.5.0+abc1234.dirty`. A plain `go build` without
 // the Makefile leaves VersionMeta empty (bare semver).
 var (
-	Version     = "0.7.0"
+	Version     = "0.8.0"
 	VersionMeta = ""
 )
 

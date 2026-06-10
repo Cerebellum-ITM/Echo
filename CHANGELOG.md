@@ -7,44 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Added
-- `shell` now also restyles the Odoo Python shell's startup block (not just
-  the Odoo logs): the injected namespace globals (`env:`, `odoo:`,
-  `openerp:`, `self:`) render as Echo structured fields — accent key + dim
-  value — and the stock Python/IPython banner lines (`Python …`, `Type '…`,
-  `IPython …`, `Tip: …`) are faded so the noise recedes and the prompt
-  stands out. New `styleShellBanner` plugged into the shell `LineTransform`
-  after the log-line match.
-
-### Fixed
-- `shell` now also applies the loose-severity fallback (Unit 36) that the
-  `update`/`install` stream already had: standalone stderr lines like
-  `Warn: Can't find .pfb for face 'Courier'` (wkhtmltopdf/Qt) are reformatted
-  into Echo's Odoo style under the synthetic `report.wkhtmltopdf` logger
-  instead of leaking raw. The shell `LineTransform` now chains
-  `renderLogLine` → `styleShellBanner` → loose-severity → verbatim, mirroring
-  `emitStreamLine`. Extracted `renderOdooLog` (the string-returning core of
-  `emitOdooLog`) so the transform can reformat without printing directly.
-- `shell` log colorization now also catches Odoo's *own* colored logs. Under
-  `shell` (`docker compose exec -t`) Odoo's stdout is a TTY, so its
-  `ColoredFormatter` wraps the level/logger in ANSI SGR codes — which broke
-  the plain log-line regex, so each line slipped through wearing Odoo's
-  coloring instead of Echo's. The `shell` transform now strips ANSI
-  (`stripANSISeq`) before matching, so the lines re-render in Echo's style.
-  (`update`/`install` use `exec -T`, no TTY, so their logs were already
-  plain and unaffected.)
-
-### Changed
-- `shell` now colorizes Odoo's startup logs to match the rest of Echo: the
-  Odoo log lines the interactive Python shell prints raw through the PTY
-  (`… INFO ? odoo: …`, `odoo.modules.loading: …`, `odoo.modules.registry:
-  …`) are restyled per-segment with the same renderer used for streamed
-  `update`/`install` output (level chip, pastel logger, accent db). The
-  interactive parts (IPython banner, prompt, eval output) pass through
-  verbatim, and the auto-copy capture keeps the raw ANSI-free text.
-  Implemented as an opt-in `LineTransform` on `docker.ExecInteractive`
-  (`bash`/`psql` keep the plain passthrough); a 30 ms partial-flush keyed on
-  a leading digit means keystroke echo never lags.
+## [0.8.0] — 2026-06-10
 
 ### Added
 - Migration detection on `install`/`update`/`uninstall`: Echo now watches the
@@ -80,6 +43,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `--last` re-displays the session's last viewed file without the pickers
   (in-memory only, per session) — handy to copy a file first reached
   interactively with `view --last --copy`.
+- `shell` now restyles the Odoo Python shell's startup block too: the
+  injected namespace globals (`env:`, `odoo:`, `openerp:`, `self:`) render as
+  Echo structured fields — accent key + dim value — and the stock
+  Python/IPython banner lines (`Python …`, `Type '…`, `IPython …`, `Tip: …`)
+  are faded so the noise recedes and the prompt stands out. New
+  `styleShellBanner` plugged into the shell `LineTransform` after the
+  log-line match.
+
+### Changed
+- `shell` now colorizes Odoo's startup logs to match the rest of Echo: the
+  Odoo log lines the interactive Python shell prints raw through the PTY
+  (`… INFO ? odoo: …`, `odoo.modules.loading: …`, `odoo.modules.registry:
+  …`) are restyled per-segment with the same renderer used for streamed
+  `update`/`install` output (level chip, pastel logger, accent db). The
+  interactive parts (IPython banner, prompt, eval output) pass through
+  verbatim, and the auto-copy capture keeps the raw ANSI-free text.
+  Implemented as an opt-in `LineTransform` on `docker.ExecInteractive`
+  (`bash`/`psql` keep the plain passthrough); a 30 ms partial-flush keyed on
+  a leading digit means keystroke echo never lags.
+
+### Fixed
+- `shell` log colorization also catches Odoo's *own* colored logs. Under
+  `shell` (`docker compose exec -t`) Odoo's stdout is a TTY, so its
+  `ColoredFormatter` wraps the level/logger in ANSI SGR codes — which broke
+  the plain log-line regex, so each line slipped through wearing Odoo's
+  coloring instead of Echo's. The `shell` transform now strips ANSI
+  (`stripANSISeq`) before matching, so the lines re-render in Echo's style.
+  (`update`/`install` use `exec -T`, no TTY, so their logs were already
+  plain and unaffected.)
+- `shell` now applies the loose-severity fallback (Unit 36) that the
+  `update`/`install` stream already had: standalone stderr lines like
+  `Warn: Can't find .pfb for face 'Courier'` (wkhtmltopdf/Qt) are reformatted
+  into Echo's Odoo style under the synthetic `report.wkhtmltopdf` logger
+  instead of leaking raw. The shell `LineTransform` now chains
+  `renderLogLine` → `styleShellBanner` → loose-severity → verbatim, mirroring
+  `emitStreamLine`. Extracted `renderOdooLog` (the string-returning core of
+  `emitOdooLog`) so the transform can reformat without printing directly.
 
 ## [0.7.0] — 2026-06-09
 
