@@ -14,7 +14,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   **local repo** at `<addons>/<mod>/i18n/<lang>.po` — for bringing
   translations edited in a remote prod/staging UI back into the working
   tree. The remote is the project's own `[connect]` config by default, or a
-  named `connect_target` via `--from`. Per module it runs
+  named `connect_target` via `--from`; with neither set it falls back to
+  the global connect targets — using the only one automatically, or opening
+  a picker when there are several. Per module it runs
   `odoo --i18n-export` inside the remote container, `cat`s the file back
   over SSH, and cleans up the temp file — the remote DB is never modified.
   A single module by default (fuzzy picker when omitted), `--all` pulls

@@ -16,9 +16,9 @@ import (
 )
 
 // ErrNoPullRemote is returned when i18n-pull has no remote to pull from:
-// the project has no [connect] config and no --from target was given.
+// no project [connect], no named connect targets, and no --from given.
 var ErrNoPullRemote = errors.New(
-	"no remote configured — set [connect] (ssh_host/remote_path) for this project or pass --from <target>")
+	"no remote configured — add a connect target (`echo connect --add`), set this project's [connect], or pass --from <target>")
 
 // I18nPullOpts configures an `i18n-pull` run.
 type I18nPullOpts struct {
@@ -104,6 +104,38 @@ func resolvePullRemote(cfg *config.Config, from string) (sshHost, remotePath str
 	return cfg.ConnectSSHHost, cfg.ConnectRemotePath, nil
 }
 
+// pickPullTarget resolves a connect target name from the global registry
+// when there's no explicit --from and no project [connect]: a single
+// target is used automatically (with an info line), several open a picker,
+// none yields ErrNoPullRemote. The picker is TTY-guarded, so a headless
+// run with several targets fails closed asking for --from.
+func pickPullTarget(cfg *config.Config, palette theme.Palette, stream func(string)) (string, error) {
+	targets := cfg.ConnectTargets
+	switch len(targets) {
+	case 0:
+		return "", ErrNoPullRemote
+	case 1:
+		if stream != nil {
+			stream("using connect target " + targets[0].Name)
+		}
+		return targets[0].Name, nil
+	}
+	labels := make([]string, len(targets))
+	for i, t := range targets {
+		labels[i] = fmt.Sprintf("%-16s  %s:%s", t.Name, t.SSHHost, t.RemotePath)
+	}
+	chosen, err := runSingleFuzzyPicker("Select connect target to pull from", labels, palette)
+	if err != nil {
+		return "", err
+	}
+	for i, lbl := range labels {
+		if lbl == chosen {
+			return targets[i].Name, nil
+		}
+	}
+	return "", fmt.Errorf("picker returned unknown label %q", chosen)
+}
+
 // RunI18nPull exports a module's translations from a remote Odoo instance
 // (reached over SSH via the project's connect config or a --from target)
 // and writes the resulting .po into the local repo at
@@ -116,6 +148,15 @@ func RunI18nPull(ctx context.Context, opts I18nPullOpts) error {
 	}
 
 	sshHost, remotePath, err := resolvePullRemote(opts.Cfg, p.from)
+	// No --from and no project [connect]: fall back to the named connect
+	// targets from global.toml (one → auto, several → picker).
+	if errors.Is(err, ErrNoPullRemote) && p.from == "" {
+		name, perr := pickPullTarget(opts.Cfg, opts.Palette, opts.StreamOut)
+		if perr != nil {
+			return perr
+		}
+		sshHost, remotePath, err = resolvePullRemote(opts.Cfg, name)
+	}
 	if err != nil {
 		return err
 	}

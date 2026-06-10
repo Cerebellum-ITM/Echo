@@ -6,6 +6,7 @@ import (
 
 	"github.com/pascualchavez/echo/internal/config"
 	"github.com/pascualchavez/echo/internal/odoo"
+	"github.com/pascualchavez/echo/internal/theme"
 )
 
 func TestParseI18nPullArgs(t *testing.T) {
@@ -82,6 +83,35 @@ func TestResolvePullRemote(t *testing.T) {
 	// No connect config at all.
 	if _, _, err := resolvePullRemote(&config.Config{}, ""); !errors.Is(err, ErrNoPullRemote) {
 		t.Errorf("empty cfg err = %v, want ErrNoPullRemote", err)
+	}
+}
+
+func TestPickPullTarget(t *testing.T) {
+	// Zero targets → ErrNoPullRemote.
+	if _, err := pickPullTarget(&config.Config{}, theme.Palette{}, nil); !errors.Is(err, ErrNoPullRemote) {
+		t.Errorf("0 targets err = %v, want ErrNoPullRemote", err)
+	}
+
+	// Exactly one target → auto-used, streamed.
+	var streamed string
+	cfg1 := &config.Config{ConnectTargets: []config.ConnectTarget{
+		{Name: "prod", SSHHost: "erp", RemotePath: "/opt/odoo"},
+	}}
+	name, err := pickPullTarget(cfg1, theme.Palette{}, func(s string) { streamed = s })
+	if err != nil || name != "prod" {
+		t.Fatalf("1 target = (%q, %v), want (prod, nil)", name, err)
+	}
+	if streamed != "using connect target prod" {
+		t.Errorf("stream = %q, want the auto-use line", streamed)
+	}
+
+	// Several targets without a TTY → fails closed (picker is guarded).
+	cfg2 := &config.Config{ConnectTargets: []config.ConnectTarget{
+		{Name: "prod", SSHHost: "erp", RemotePath: "/opt/odoo"},
+		{Name: "stg", SSHHost: "stg", RemotePath: "/opt/stg"},
+	}}
+	if _, err := pickPullTarget(cfg2, theme.Palette{}, nil); err == nil {
+		t.Error("multiple targets without TTY should error, got nil")
 	}
 }
 

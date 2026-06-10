@@ -23,10 +23,13 @@ This bridges two existing pieces: `connect`'s remote-exec machinery
 `defaultExportDest`, `tmpPathInContainer`). No new transport or path code —
 it composes what's there.
 
-**Remote source.** By default the project's own `[connect]` config
-(`ssh_host` / `remote_path`) names the remote; `--from <target>` overrides
-it with a named `connect_target` from `global.toml`. With neither →
-`ErrNoPullRemote`. The remote's container/db mapping comes from the
+**Remote source.** Resolution order: `--from <target>` (a named
+`connect_target`) → the project's own `[connect]` config (`ssh_host` /
+`remote_path`) → the global connect targets as a fallback (a single one is
+used automatically, several open a TTY-guarded picker, none →
+`ErrNoPullRemote`). The fallback is what makes projectless `i18n-pull`
+usable whenever connect targets are configured — without it the command
+ignored them and demanded `[connect]`/`--from`. The remote's container/db mapping comes from the
 server's own Echo profile (`resolveConnectTarget` → `fetchRemoteProfile`),
 and its Postgres credentials from the remote `.env` (read over SSH), so the
 `odoo --i18n-export` invocation carries explicit `--db_*` flags (the same
