@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Project aliases (Unit 48): `-C` now accepts a short alias in place of a
+  directory, so `echo -C habitta modstate` works from anywhere. Aliases are
+  a user-level `name → local-path` registry in `global.toml` under
+  `[project_aliases]` (the same shape as `[connect_targets]`). A real
+  directory always wins, so `-C <dir>` is unchanged. Resolution order:
+  existing directory → `project_aliases` → a `connect_target` of the same
+  name whose `remote_path` is a local directory (free reuse of connect
+  names when you run Echo on the server) → otherwise a usage error (exit 2).
+- New `alias` command to manage the registry: `alias <name>` registers the
+  current project, `alias` / `alias --list` lists all, `alias --rm <name>`
+  removes one, and `alias --migrate` backfills aliases from connect targets
+  whose `remote_path` resolves locally (explicit and idempotent; reports
+  added/skipped). Output is `echo.alias` log lines; headless and one-shot
+  eligible (`echo alias --list`).
+- `init` now offers an optional alias step at the end (prefilled with the
+  project directory's basename); registering it makes `-C <alias>` work,
+  leaving it blank skips with no error.
+
 ## [0.8.0] — 2026-06-10
 
 ### Added

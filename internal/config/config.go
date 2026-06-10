@@ -59,6 +59,12 @@ type Config struct {
 	// <name>` direct mode. Sorted by Name.
 	ConnectTargets []ConnectTarget
 
+	// ProjectAliases map a short name to a local project directory, stored
+	// globally (in global.toml under [project_aliases]). They let `-C
+	// <alias>` stand in for `-C <dir>`. Distinct from ConnectTargets (which
+	// are remote) though they may share names by convention.
+	ProjectAliases map[string]string
+
 	// Prompt segmentation (global).
 	PromptSegments []string
 	PromptNameMax  int
@@ -71,6 +77,7 @@ type globalFile struct {
 	ComposeCmd     string                        `toml:"compose_cmd"`
 	Prompt         *promptFile                   `toml:"prompt"`
 	ConnectTargets map[string]*connectTargetFile `toml:"connect_targets"`
+	ProjectAliases map[string]string             `toml:"project_aliases"`
 }
 
 type connectTargetFile struct {
@@ -166,6 +173,7 @@ func Load(projectPath string) (*Config, error) {
 	cfg.Logo = g.Logo
 	cfg.ComposeCmd = g.ComposeCmd
 	cfg.ConnectTargets = sortedConnectTargets(g.ConnectTargets)
+	cfg.ProjectAliases = g.ProjectAliases
 	if g.Prompt != nil {
 		cfg.PromptSegments = g.Prompt.Segments
 		cfg.PromptNameMax = g.Prompt.NameMax
@@ -260,6 +268,7 @@ func SaveGlobal(cfg *Config) error {
 		Logo:           cfg.Logo,
 		ComposeCmd:     cfg.ComposeCmd,
 		ConnectTargets: connectTargetsToFile(cfg.ConnectTargets),
+		ProjectAliases: cfg.ProjectAliases,
 	}
 	if len(cfg.PromptSegments) > 0 || cfg.PromptNameMax > 0 || cfg.HealthTTL > 0 {
 		g.Prompt = &promptFile{
@@ -380,6 +389,7 @@ func LoadGlobal() (*Config, error) {
 	cfg.Logo = g.Logo
 	cfg.ComposeCmd = g.ComposeCmd
 	cfg.ConnectTargets = sortedConnectTargets(g.ConnectTargets)
+	cfg.ProjectAliases = g.ProjectAliases
 	applyDefaults(cfg)
 	return cfg, nil
 }

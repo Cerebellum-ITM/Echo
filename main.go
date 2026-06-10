@@ -33,6 +33,19 @@ func main() {
 		os.Exit(exitUsage)
 	}
 
+	// A `-C` value that isn't an existing directory may be a project alias
+	// (or a connect target whose remote_path is local). A real directory
+	// always wins, so this never changes the meaning of an existing path.
+	if projectDir != "" && !isDir(projectDir) {
+		if p, _, ok := config.ResolveProjectAlias(projectDir); ok {
+			projectDir = p
+		} else {
+			log.Error("unknown project alias or directory", "value", projectDir,
+				"hint", "pass a directory, or register one with `alias <name>`")
+			os.Exit(exitUsage)
+		}
+	}
+
 	// `echo connect …` is a projectless direct mode: it talks to a named
 	// remote target from the global config and never needs a local
 	// docker-compose.yml, so it runs before the project-root check.
@@ -143,4 +156,10 @@ func extractProjectDir(args []string) (dir string, rest []string, err error) {
 		return strings.TrimPrefix(a, "--project-dir="), args[1:], nil
 	}
 	return "", args, nil
+}
+
+// isDir reports whether path exists and is a directory.
+func isDir(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.IsDir()
 }

@@ -6,7 +6,7 @@ import "strings"
 // recognised by the REPL. The order matches the help output and
 // determines the order of the match list rendered on a double-Tab.
 var Registry = []string{
-	"init", "reset",
+	"init", "reset", "alias",
 	"install", "update", "uninstall", "test", "modules", "modinfo", "view",
 	"i18n-export", "i18n-update",
 	"db-backup", "db-restore", "db-drop", "db-neutralize", "db-list",
@@ -21,6 +21,7 @@ var Registry = []string{
 // flags) are intentionally excluded. Commands absent from the map have
 // no known flags. Powers flag highlighting and Tab flag completion.
 var commandFlags = map[string][]string{
+	"alias":         {"--list", "--rm", "--migrate"},
 	"install":       {"--with-demo", "--level"},
 	"update":        {"--all", "--last", "--level"},
 	"uninstall":     {"--level"},

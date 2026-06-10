@@ -187,7 +187,7 @@ func (sess *session) renderPrompt() string {
 // are therefore not part of this slice.
 var dispatchNames = []string{
 	"help", "clear", "copy-last", "report",
-	"init", "reset",
+	"init", "reset", "alias",
 	"up", "down", "stop", "restart", "ps", "logs",
 	"install", "update", "uninstall", "test", "modules", "modinfo", "view",
 	"i18n-export", "i18n-update",
@@ -239,6 +239,8 @@ func (sess *session) dispatchParsed(ctx context.Context, cmd string, args []stri
 		sess.runInit()
 	case "reset":
 		sess.runReset()
+	case "alias":
+		sess.runAlias(ctx, args)
 	case "up", "down", "stop", "restart", "ps", "logs":
 		sess.runDocker(ctx, cmd, args)
 	case "install", "update", "uninstall", "test", "modules":
@@ -272,6 +274,10 @@ func helpSections() []helpSection {
 		{"Project", []helpEntry{
 			{"init", "Configure Odoo project (containers, version, DB)"},
 			{"reset", "Wipe Echo configuration (global / per-project / all)"},
+			{"alias [<name>]", "Register this project as `-C <name>` (no args: list)"},
+			{"  --list", "List all project aliases"},
+			{"  --rm <name>", "Remove an alias"},
+			{"  --migrate", "Backfill aliases from connect targets (local paths)"},
 		}},
 		{"Modules", []helpEntry{
 			{"install <mod...>", "Install modules in the current DB"},
