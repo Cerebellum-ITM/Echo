@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.0] — 2026-06-10
+
 ### Added
 - Universal `--build` / `-b` flag (Unit 51): `<cmd> --build` walks you
   through composing the command interactively, then asks what to do with
@@ -668,6 +670,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   REPL prompt, and the `ls` command.
 
 [Unreleased]: #unreleased
+[0.9.0]: #090--2026-06-10
 [0.6.0]: #060--2026-06-09
 [0.3.1]: #031--2026-05-18
 [0.3.0]: #030--2026-05-18
