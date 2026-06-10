@@ -70,6 +70,10 @@ func (sess *session) runBuild(ctx context.Context, name string, rest []string) {
 			emitOdooLog("WARNING", "echo.build", msg, nil,
 				sess.styles, sess.palette, sess.cfg.DBName)
 		},
+		Infof: func(msg string) {
+			emitOdooLog("INFO", "echo.build", msg, nil,
+				sess.styles, sess.palette, sess.cfg.DBName)
+		},
 	})
 	if err != nil {
 		if errors.Is(err, cmd.ErrNothingToBuild) {

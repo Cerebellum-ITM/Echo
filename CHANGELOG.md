@@ -18,7 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   multi-select over the command's known flags (Tab to toggle, Enter to
   confirm, Enter with none selected = no flags). Step 3 prompts for a value
   on each flag that takes one — a picker when the options are known
-  (`--level`, report `--level`/`--min-level`, i18n-pull `--from`) or a text
+  (`--level`, report `--level`/`--min-level`) or a text
   field otherwise (`--tags`, logs `-t`, `--out`, report `--step`,
   db-restore `--as`); cancelling a value drops just that flag. Step 4 shows
   the composed line and offers **Run it now** (dispatches it through the
@@ -30,6 +30,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (extra args → exit 2), and a command with no picker and no flags reports
   "nothing to build" (exit 2). The composer does not encode mutual flag
   exclusions — the commands still validate those at run time.
+  `i18n-pull --build` gets a dedicated remote-aware flow: its module
+  candidates live on the remote, so it first resolves a connect target
+  (one → auto, several → picker), **bakes `--from=<target>`** into the
+  composed line for reproducibility, lists that remote's own modules for
+  the picker, and prompts for the lang — composing
+  `i18n-pull <module> <lang> --from=<target>`. The SSH round-trips
+  (`reading remote profile`, `N module(s) found`) surface as INFO
+  `echo.build` lines so the waits aren't silent. `--all` / `--installed`
+  are not offered there — they would ignore the picked module.
 - New `i18n-pull [<mod>] [<lang>] [--from <target>] [--all]` command
   (Unit 50): export a module's translations **from a remote Odoo instance**
   (reached over SSH like `connect`) and write the resulting `.po` into the

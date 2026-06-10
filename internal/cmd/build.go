@@ -38,6 +38,10 @@ type BuildOpts struct {
 	// (e.g. a flag dropped because its value prompt was cancelled). The
 	// repl renders it as a WARNING echo.build line.
 	Warnf func(msg string)
+	// Infof, when non-nil, receives an informational progress line (e.g.
+	// the remote round-trips i18n-pull makes while listing modules). The
+	// repl renders it as an INFO echo.build line.
+	Infof func(msg string)
 }
 
 // BuildResult is the outcome of RunBuild: the composed argv (positionals
@@ -113,7 +117,9 @@ var buildFlagValues = map[string]map[string]flagValueSpec{
 	// RunLogs parses `-t <n>` (space form only); emit two tokens.
 	"logs":        {"-t": {kind: "input", prompt: "tail lines", def: "100", sep: " "}},
 	"i18n-export": {"--out": {kind: "input", prompt: "path/to/file.po", sep: "="}},
-	"i18n-pull":   {"--from": {kind: "pick", options: connectTargets, sep: "="}},
+	// i18n-pull is NOT here: its candidates (modules) live on a remote that
+	// must be resolved first, so it has a dedicated builder (runI18nPullBuild)
+	// that also bakes --from=<target>.
 	"report": {
 		"--step":      {kind: "input", prompt: "step number", sep: "="},
 		"--level":     {kind: "pick", options: reportLevels, sep: "="},
@@ -155,14 +161,6 @@ func reportLevels(BuildOpts) []string {
 	return []string{"debug", "info", "warn", "error", "critical"}
 }
 
-func connectTargets(o BuildOpts) []string {
-	out := make([]string, 0, len(o.Cfg.ConnectTargets))
-	for _, t := range o.Cfg.ConnectTargets {
-		out = append(out, t.Name)
-	}
-	return out
-}
-
 // i18nLangInput prompts for the target language, prefilled with es_MX.
 func i18nLangInput(o BuildOpts) (string, error) {
 	lang := defaultI18nLang
@@ -184,6 +182,12 @@ func i18nLangInput(o BuildOpts) (string, error) {
 func RunBuild(ctx context.Context, opts BuildOpts) (BuildResult, error) {
 	if err := requireTTY("build mode is interactive; run it from a terminal"); err != nil {
 		return BuildResult{}, err
+	}
+
+	// Remote-aware builders: commands whose candidates live on a remote
+	// that must be resolved before the picker can be populated.
+	if opts.Command == "i18n-pull" {
+		return runI18nPullBuild(ctx, opts)
 	}
 
 	spec, hasPos := buildPositionals[opts.Command]
@@ -366,6 +370,12 @@ func BuildLine(command string, args []string) string {
 func warn(opts BuildOpts, msg string) {
 	if opts.Warnf != nil {
 		opts.Warnf(msg)
+	}
+}
+
+func info(opts BuildOpts, msg string) {
+	if opts.Infof != nil {
+		opts.Infof(msg)
 	}
 }
 

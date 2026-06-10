@@ -16,6 +16,23 @@
 >   report `--step`/`--level`/`--min-level` → `=`; `test --tags` y
 >   `db-restore --as` aceptan ambas, se usa `=`; `logs -t` solo espacio →
 >   dos tokens.
+>
+> **Follow-up (post-Unit 51, pedido por el usuario):** `i18n-pull --build`
+> ahora tiene un builder remote-aware dedicado (`internal/cmd/build_i18npull.go`,
+> `runI18nPullBuild`) en vez de quedar solo-flags. Como sus candidatos
+> (módulos) viven en el remoto, resuelve primero el connect target (reusa
+> `pickPullTarget`: 1 → auto, varios → picker; si no hay nombrados cae al
+> `[connect]` del proyecto), **hornea `--from=<target>`** en la línea
+> compuesta, lista los módulos del remoto (`fetchRemoteProfile` +
+> `listRemoteConfModules`) para el picker, y pide el lang — componiendo
+> `i18n-pull <módulo> <lang> --from=<target>`. Los round-trips SSH se
+> reportan como líneas INFO `echo.build` vía el nuevo callback
+> `BuildOpts.Infof` (adaptador `i18nPullBuildOpts` que enruta el `Log` de
+> `I18nPullOpts`). `--all`/`--installed` no se ofrecen (ignorarían el módulo
+> elegido). `connect` se dejó como estaba (solo-flags): su positional es un
+> login que requiere mint/probe remoto y connect ya es interactivo al
+> ejecutar. Decisión del usuario vía formulario: solo i18n-pull + hornear
+> `--from`.
 
 ## Goal
 
