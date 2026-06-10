@@ -682,9 +682,12 @@ func (sess *session) runShell(ctx context.Context, name string, args []string) {
 	case "shell":
 		// Colorize Odoo's startup logs (printed raw through the PTY) so they
 		// match the rest of Echo's Odoo-styled output; non-log lines (IPython
-		// banner, prompt, eval output) pass through verbatim.
+		// banner, prompt, eval output) pass through verbatim. Under a TTY
+		// (docker exec -t) Odoo colors its own logs, so strip its ANSI first
+		// — otherwise the level/logger SGR codes break the log-line match and
+		// the line would slip through wearing Odoo's coloring, not Echo's.
 		opts.LineTransform = func(line string) (string, bool) {
-			return renderLogLine(line, sess.styles, sess.palette)
+			return renderLogLine(stripANSISeq(line), sess.styles, sess.palette)
 		}
 		captured, interrupted, err = cmd.RunOdooShell(ctx, opts)
 	}

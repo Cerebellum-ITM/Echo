@@ -79,7 +79,15 @@ the styled output, so `copy-last` / auto-copy stay clean.
 
 - For `case "shell"`, set
   `opts.LineTransform = func(line string) (string, bool) { return
-  renderLogLine(line, sess.styles, sess.palette) }` before `RunOdooShell`.
+  renderLogLine(stripANSISeq(line), sess.styles, sess.palette) }` before
+  `RunOdooShell`.
+
+> **Note (fix):** under `shell`, `docker compose exec` runs with `-t`, so
+> Odoo's stdout is a TTY and its `ColoredFormatter` emits ANSI SGR codes
+> around the level/logger. Those escapes break the plain log-line regex, so
+> the transform must `stripANSISeq` the line before matching (and re-render
+> in Echo's style). `update`/`install` use `-T` (no TTY) → plain logs →
+> unaffected. `stripANSISeq` + `ansiSeq` live in `logrender.go`.
 
 ## Dependencies
 

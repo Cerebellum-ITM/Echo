@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- `shell` log colorization now also catches Odoo's *own* colored logs. Under
+  `shell` (`docker compose exec -t`) Odoo's stdout is a TTY, so its
+  `ColoredFormatter` wraps the level/logger in ANSI SGR codes — which broke
+  the plain log-line regex, so each line slipped through wearing Odoo's
+  coloring instead of Echo's. The `shell` transform now strips ANSI
+  (`stripANSISeq`) before matching, so the lines re-render in Echo's style.
+  (`update`/`install` use `exec -T`, no TTY, so their logs were already
+  plain and unaffected.)
+
 ### Changed
 - `shell` now colorizes Odoo's startup logs to match the rest of Echo: the
   Odoo log lines the interactive Python shell prints raw through the PTY
