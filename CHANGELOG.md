@@ -21,7 +21,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   over SSH, and cleans up the temp file — the remote DB is never modified.
   A single module by default (fuzzy picker when omitted), `--all` pulls
   every module in the local repo (skipping unresolved/failed ones with a
-  warning). Default language `es_MX`; one-shot eligible
+  warning). Module discovery is conf-aware like `modules` (it reads the
+  project's stored `odoo.conf` addons paths in conf-mode, not just host
+  folders), and the `.po` lands in the module's real addons dir when it's
+  on the host, falling back to a cwd-relative `<mod>/i18n/<lang>.po` when it
+  isn't (conf-mode / staging whose addons live only in the container). Default language `es_MX`; one-shot eligible
   (`echo i18n-pull sale es_MX`). Like `connect`, it does **not** require a
   local compose project: run from outside a `docker-compose.yml` directory
   (it writes into the current repo using cwd, or `-C <dir>`) — only a

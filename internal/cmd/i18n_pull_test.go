@@ -2,6 +2,8 @@ package cmd
 
 import (
 	"errors"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/pascualchavez/echo/internal/config"
@@ -112,6 +114,31 @@ func TestPickPullTarget(t *testing.T) {
 	}}
 	if _, err := pickPullTarget(cfg2, theme.Palette{}, nil); err == nil {
 		t.Error("multiple targets without TTY should error, got nil")
+	}
+}
+
+func TestPullDest(t *testing.T) {
+	root := t.TempDir()
+	// A module present on the host lands in its real addons dir.
+	if err := os.MkdirAll(filepath.Join(root, "addons", "sale"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "addons", "sale", "__manifest__.py"), []byte("{}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg := &config.Config{AddonsPaths: []string{"addons"}}
+
+	gotHost := pullDest(cfg, root, "sale", "es_MX")
+	wantHost := filepath.Join(root, "addons", "sale", "i18n", "es_MX.po")
+	if gotHost != wantHost {
+		t.Errorf("host-mode dest = %q, want %q", gotHost, wantHost)
+	}
+
+	// A module NOT on the host (conf-mode) falls back to cwd-relative.
+	gotConf := pullDest(cfg, root, "habita_report_customs", "es_MX")
+	wantConf := filepath.Join(root, "habita_report_customs", "i18n", "es_MX.po")
+	if gotConf != wantConf {
+		t.Errorf("conf-mode dest = %q, want %q", gotConf, wantConf)
 	}
 }
 

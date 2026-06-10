@@ -47,20 +47,28 @@ All three run as `cd <remote_path> && <compose> exec -T <odoo> <argv…>`
 is emitted raw so a two-word `docker compose` splits correctly.
 
 **Module scope.** A single module by default (fuzzy picker when omitted,
-TTY-guarded); `--all` pulls every module present in the local repo
-(`listAvailableModules`). Under `--all`, a module that can't be resolved
-locally or whose remote export fails is skipped with a warning and the run
-continues; a single-module run surfaces the error. An empty `.po` (no
-translations for that lang) is skipped rather than clobbering the local
-file.
+TTY-guarded); `--all` pulls every module the project exposes. Candidates
+come from `resolveModules` — the same conf-aware source as `modules`/
+`modinfo`/`view` — so a conf-mode project (addons discovered from the
+container's `odoo.conf`, not host folders) lists correctly instead of
+failing "no modules found". Under `--all`, a module whose remote export
+fails is skipped with a warning and the run continues; a single-module run
+surfaces the error. An empty `.po` (no translations for that lang) is
+skipped rather than clobbering the local file.
+
+**Destination.** `pullDest` writes to the module's real addons dir on the
+host (`<addons>/<mod>/i18n/<lang>.po`, via `resolveModuleDir`) when the
+module exists on disk — the host-mode dev flow is unchanged. When it
+doesn't (conf-mode / staging whose addons live only in the container, so
+there is no host folder), it falls back to a cwd-relative
+`<root>/<mod>/i18n/<lang>.po` so the file can still be pulled and committed.
 
 **Language.** One per run, default `es_MX` (matches `i18n-export`). With
 `--all` the single optional positional is the language; otherwise the
 positionals are module then language.
 
-**Destination.** `<addons>/<mod>/i18n/<lang>.po` on the host
-(`defaultExportDest`), `MkdirAll` on the parent, overwrite on write — the
-whole point is to bring the remote translations into the working tree.
+`MkdirAll` on the parent, overwrite on write — the whole point is to bring
+the remote translations into the working tree.
 
 Output is the standard streamed/`finalize` frame (`echo.i18n-pull`), with a
 `pulling <lang> from <host>:<path>` line, a `→ <dest>` per module, and a

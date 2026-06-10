@@ -182,18 +182,27 @@ func RunI18nPull(ctx context.Context, opts I18nPullOpts) error {
 	conn.User = pg["POSTGRES_USER"]
 	conn.Password = pg["POSTGRES_PASSWORD"]
 
-	// Decide which modules to pull.
+	// Module candidates come from the same conf-aware source as `modules`
+	// (host folders, or the odoo.conf addons paths stored in the project
+	// when the host doesn't expose them) — not a host-only scan.
+	mopts := ModulesOpts{Cfg: opts.Cfg, Root: opts.Root, Palette: opts.Palette}
+
 	var modules []string
 	switch {
 	case p.all:
-		modules = listAvailableModules(opts.Cfg, opts.Root)
-		if len(modules) == 0 {
+		avail, err := resolveModules(ctx, mopts)
+		if err != nil || len(avail) == 0 {
 			return ErrNoModulesAvailable
 		}
+		modules = avail
 	case p.module != "":
 		modules = []string{p.module}
 	default:
-		picked, err := pickModuleSingle(opts.Cfg, opts.Root, opts.Palette, "Module to pull translations for")
+		avail, err := resolveModules(ctx, mopts)
+		if err != nil || len(avail) == 0 {
+			return ErrNoModulesAvailable
+		}
+		picked, err := runSingleFuzzyPicker("Module to pull translations for", avail, opts.Palette)
 		if err != nil {
 			return err
 		}
@@ -206,17 +215,6 @@ func RunI18nPull(ctx context.Context, opts I18nPullOpts) error {
 
 	var pulled, skipped int
 	for _, mod := range modules {
-		addonsDir, err := resolveModuleDir(opts.Cfg, opts.Root, mod)
-		if err != nil {
-			if p.all { // skip a local module we can't place, keep going
-				if opts.StreamOut != nil {
-					opts.StreamOut("skip " + mod + ": " + err.Error())
-				}
-				skipped++
-				continue
-			}
-			return err
-		}
 		data, err := pullRemotePO(ctx, sshHost, remotePath, target, conn, mod, p.lang)
 		if err != nil {
 			if p.all {
@@ -235,7 +233,7 @@ func RunI18nPull(ctx context.Context, opts I18nPullOpts) error {
 			skipped++
 			continue
 		}
-		dest := defaultExportDest(addonsDir, mod, p.lang)
+		dest := pullDest(opts.Cfg, opts.Root, mod, p.lang)
 		if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
 			return fmt.Errorf("create i18n dir: %w", err)
 		}
@@ -252,6 +250,19 @@ func RunI18nPull(ctx context.Context, opts I18nPullOpts) error {
 		opts.StreamOut(fmt.Sprintf("pulled %d module(s), skipped %d", pulled, skipped))
 	}
 	return nil
+}
+
+// pullDest is where a pulled .po is written locally. When the module is on
+// the host (host-mode dev), it lands in its real addons dir
+// (<addons>/<mod>/i18n/<lang>.po) — preserving the existing flow. When it
+// isn't (conf-mode / staging whose addons live only in the container), it
+// falls back to a cwd-relative path so the file can still be pulled and
+// committed.
+func pullDest(cfg *config.Config, root, mod, lang string) string {
+	if addonsDir, err := resolveModuleDir(cfg, root, mod); err == nil {
+		return defaultExportDest(addonsDir, mod, lang)
+	}
+	return filepath.Join(root, mod, "i18n", lang+".po")
 }
 
 // remotePullEnv reads the remote project's .env over SSH and parses it.
