@@ -8,6 +8,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- New `i18n-pull [<mod>] [<lang>] [--from <target>] [--all]` command
+  (Unit 50): export a module's translations **from a remote Odoo instance**
+  (reached over SSH like `connect`) and write the resulting `.po` into the
+  **local repo** at `<addons>/<mod>/i18n/<lang>.po` — for bringing
+  translations edited in a remote prod/staging UI back into the working
+  tree. The remote is the project's own `[connect]` config by default, or a
+  named `connect_target` via `--from`. Per module it runs
+  `odoo --i18n-export` inside the remote container, `cat`s the file back
+  over SSH, and cleans up the temp file — the remote DB is never modified.
+  A single module by default (fuzzy picker when omitted), `--all` pulls
+  every module in the local repo (skipping unresolved/failed ones with a
+  warning). Default language `es_MX`; one-shot eligible
+  (`echo i18n-pull sale es_MX`).
 - `update --i18n` (Unit 49): overwrite the updated modules' translations
   from their `.po` files. The flag adds Odoo's `--i18n-overwrite` to the
   `-u` run, so terms already translated in the database are replaced by the

@@ -190,7 +190,7 @@ var dispatchNames = []string{
 	"init", "reset", "alias",
 	"up", "down", "stop", "restart", "ps", "logs",
 	"install", "update", "uninstall", "test", "modules", "modinfo", "view",
-	"i18n-export", "i18n-update",
+	"i18n-export", "i18n-update", "i18n-pull",
 	"db-backup", "db-restore", "db-drop", "db-neutralize", "db-list",
 	"shell", "bash", "psql", "connect",
 }
@@ -251,6 +251,8 @@ func (sess *session) dispatchParsed(ctx context.Context, cmd string, args []stri
 		sess.runView(ctx, args)
 	case "i18n-export", "i18n-update":
 		sess.runI18n(ctx, cmd, args)
+	case "i18n-pull":
+		sess.runI18nPull(ctx, args)
 	case "db-backup", "db-restore", "db-drop", "db-neutralize", "db-list":
 		sess.runDB(ctx, cmd, args)
 	case "shell", "bash", "psql":
@@ -307,6 +309,9 @@ func helpSections() []helpSection {
 			{"  --out <path>", "Write to <path> instead of the module's i18n/"},
 			{"i18n-update <mod> [lang]", "Import the module's <lang>.po into the DB (--i18n-overwrite)"},
 			{"  --force", "Skip the prod-stage confirmation prompt"},
+			{"i18n-pull [<mod>] [lang]", "Pull a module's <lang>.po from a remote instance into the repo"},
+			{"  --from <target>", "Use a named connect target (default: project's [connect])"},
+			{"  --all", "Pull every module in the local repo"},
 		}},
 		{"Database", []helpEntry{
 			{"db-backup [name]", "Dump DB (default: configured) to ./backups/"},

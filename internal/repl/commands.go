@@ -8,7 +8,7 @@ import "strings"
 var Registry = []string{
 	"init", "reset", "alias",
 	"install", "update", "uninstall", "test", "modules", "modinfo", "view",
-	"i18n-export", "i18n-update",
+	"i18n-export", "i18n-update", "i18n-pull",
 	"db-backup", "db-restore", "db-drop", "db-neutralize", "db-list",
 	"bash", "psql", "shell", "connect",
 	"up", "down", "stop", "restart", "ps", "logs",
@@ -31,6 +31,7 @@ var commandFlags = map[string][]string{
 	"view":          {"--copy", "--last"},
 	"i18n-export":   {"--out"},
 	"i18n-update":   {"--force"},
+	"i18n-pull":     {"--from", "--all"},
 	"db-backup":     {"--with-filestore"},
 	"db-restore":    {"--as", "--force", "--neutralize"},
 	"db-drop":       {"--force"},
