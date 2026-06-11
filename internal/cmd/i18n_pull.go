@@ -194,6 +194,7 @@ func RunI18nPull(ctx context.Context, opts I18nPullOpts) error {
 		dbContainer:   prof.DBContainer,
 		dbName:        prof.DBName,
 		stage:         prof.Stage,
+		odooVersion:   prof.OdooVersion,
 	}
 	opts.log("INFO", "remote", "connected", prof.DBName,
 		[2]string{"odoo", prof.OdooContainer}, [2]string{"db", prof.DBName})
