@@ -390,7 +390,7 @@ func pickModulesInteractive(ctx context.Context, opts ModulesOpts, title string,
 	if len(available) == 0 {
 		return nil, ErrNoModulesAvailable
 	}
-	picked, canceled, err := runFuzzyPickerCore(title, available, recent, opts.Palette)
+	picked, canceled, err := runFuzzyPickerCore(title, available, recent, opts.Palette, opts.Cfg.Stage)
 	if err != nil {
 		return nil, err
 	}
@@ -412,7 +412,7 @@ func pickModulesForUpdate(ctx context.Context, opts ModulesOpts, recent []string
 	if len(available) == 0 {
 		return nil, false, ErrNoModulesAvailable
 	}
-	return runFuzzyPickerCore("Modules to update", available, recent, opts.Palette)
+	return runFuzzyPickerCore("Modules to update", available, recent, opts.Palette, opts.Cfg.Stage)
 }
 
 // addons modes recorded in the per-project config.
@@ -615,6 +615,13 @@ func listAvailableModules(cfg *config.Config, root string) []string {
 	}
 	sort.Strings(found)
 	return found
+}
+
+// ModulesList returns the modules found in the configured addons paths, for
+// the styled `modules` listing rendered by the REPL. The `--config`
+// addons-path picker stays in RunModules.
+func ModulesList(ctx context.Context, opts ModulesOpts) ([]string, error) {
+	return resolveModules(ctx, opts)
 }
 
 // RunModules lists modules from the configured addons paths. With

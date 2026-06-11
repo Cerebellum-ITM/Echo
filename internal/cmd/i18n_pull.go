@@ -164,6 +164,7 @@ func RunI18nPull(ctx context.Context, opts I18nPullOpts) error {
 	// No --from and no project [connect]: fall back to the named connect
 	// targets from global.toml (one → auto, several → picker).
 	if errors.Is(err, ErrNoPullRemote) && p.from == "" {
+		opts.log("INFO", "", "selecting remote target", "")
 		name, perr := pickPullTarget(opts)
 		if perr != nil {
 			return perr
@@ -194,9 +195,16 @@ func RunI18nPull(ctx context.Context, opts I18nPullOpts) error {
 		dbContainer:   prof.DBContainer,
 		dbName:        prof.DBName,
 		stage:         prof.Stage,
+		odooVersion:   prof.OdooVersion,
 	}
-	opts.log("INFO", "remote", "connected", prof.DBName,
-		[2]string{"odoo", prof.OdooContainer}, [2]string{"db", prof.DBName})
+	// The system-status line doubles as the "connected" signal: it is the
+	// first line carrying the resolved remote environment (Echo + Odoo
+	// version, project, db), emitted the moment the remote profile is read —
+	// the earliest point the remote Odoo version is known.
+	opts.log("INFO", "system", "system", prof.DBName,
+		statusFields(target.odooVersion, prof.Stage,
+			statusProjectName(opts.Cfg, true, remotePath, p.from),
+			prof.DBName)...)
 	conn := odoo.Conn{DB: target.dbName, Host: target.dbContainer}
 	pg := remotePullEnv(ctx, sshHost, remotePath)
 	conn.Port = pg["POSTGRES_PORT"]
@@ -251,7 +259,7 @@ func RunI18nPull(ctx context.Context, opts I18nPullOpts) error {
 		if len(avail) == 0 {
 			return ErrNoModulesAvailable
 		}
-		picked, err := runSingleFuzzyPicker("Module to pull translations for", avail, opts.Palette)
+		picked, err := runSingleFuzzyPickerStaged("Module to pull translations for", avail, opts.Palette, prof.Stage)
 		if err != nil {
 			return err
 		}
@@ -321,18 +329,36 @@ func remotePullEnv(ctx context.Context, sshHost, remotePath string) map[string]s
 	return env.Parse(bytes.NewReader(out))
 }
 
-// pullRemotePO runs `odoo --i18n-export` for one module inside the remote
-// Odoo container, reads the produced .po back over SSH, and cleans up the
-// temp file. Returns the raw .po bytes.
+// pullRemotePO exports one module's translations inside the remote Odoo
+// container, reads the produced .po back over SSH, and cleans up the temp
+// file(s). Returns the raw .po bytes.
+//
+// On Odoo 19 (t.odooVersion major ≥ 19) the export runs through the
+// `odoo i18n export` subcommand, which only takes `-c`/`-d`; the db
+// credentials are written into an ephemeral in-container odoo.conf
+// (RenderConf) passed with `-c` and removed alongside the .po.
 func pullRemotePO(ctx context.Context, sshHost, remotePath string, t connectTarget, conn odoo.Conn, module, lang string) ([]byte, error) {
 	tmp := tmpPathInContainer()
-	exportArgv := odoo.ExportI18n(conn, module, lang, tmp)
+	cleanup := odoo.Cmd{"rm", "-f", tmp}
+
+	confPath := ""
+	if odoo.Major(t.odooVersion) >= 19 {
+		confPath = tmpConfInContainer()
+		writeArgv := odoo.Cmd{"sh", "-c", "cat > " + confPath}
+		if _, err := runSSH(ctx, sshHost, remoteContainerCmd(remotePath, t, writeArgv), odoo.RenderConf(conn)); err != nil {
+			return nil, fmt.Errorf("remote conf write: %w", err)
+		}
+		cleanup = append(cleanup, confPath)
+	}
+
+	exportArgv := odoo.ExportI18n(conn, t.odooVersion, module, lang, tmp, confPath)
 	if _, err := runSSH(ctx, sshHost, remoteContainerCmd(remotePath, t, exportArgv), nil); err != nil {
+		_, _ = runSSH(ctx, sshHost, remoteContainerCmd(remotePath, t, cleanup), nil)
 		return nil, fmt.Errorf("remote export: %w", err)
 	}
 	data, readErr := runSSH(ctx, sshHost, remoteContainerCmd(remotePath, t, odoo.Cmd{"cat", tmp}), nil)
 	// Best-effort cleanup regardless of the read outcome.
-	_, _ = runSSH(ctx, sshHost, remoteContainerCmd(remotePath, t, odoo.Cmd{"rm", "-f", tmp}), nil)
+	_, _ = runSSH(ctx, sshHost, remoteContainerCmd(remotePath, t, cleanup), nil)
 	if readErr != nil {
 		return nil, fmt.Errorf("remote read: %w", readErr)
 	}

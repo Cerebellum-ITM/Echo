@@ -27,6 +27,11 @@ const (
 func main() {
 	args := os.Args[1:]
 
+	// Expose the Echo CLI version (with build metadata / dirty marker) to the
+	// cmd layer, which can't import internal/repl. Used by the system-status
+	// line that connect / i18n-pull emit at start.
+	cmd.EchoVersion = repl.FullVersion()
+
 	projectDir, args, err := extractProjectDir(args)
 	if err != nil {
 		log.Error(err.Error())

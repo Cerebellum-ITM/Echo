@@ -26,7 +26,7 @@ import (
 // `0.5.0+abc1234` or `0.5.0+abc1234.dirty`. A plain `go build` without
 // the Makefile leaves VersionMeta empty (bare semver).
 var (
-	Version     = "0.10.0"
+	Version     = "0.11.0"
 	VersionMeta = ""
 )
 
@@ -60,6 +60,10 @@ type session struct {
 	// (finalize, *FailureLog, readonlyFinalize, …) and read by RunOnce /
 	// RunRecipe. In the interactive REPL it is set but never read.
 	exitCode int
+	// quit is set when a command surfaces cmd.ErrQuit (Ctrl+X inside a
+	// picker): the Start loop breaks on it so Echo exits entirely, the same
+	// as Ctrl+X at the line prompt. Detected by the terminal log helpers.
+	quit bool
 	// lastErrors / lastWarnings mirror the last dispatched command's
 	// runStats (the ERROR/CRITICAL and WARNING line counts). Set by the
 	// same terminal helpers that set exitCode, reset at dispatch start,
@@ -90,6 +94,8 @@ const (
 // not be reported as a generic execution failure.
 func scriptExitCode(err error, errCount int) int {
 	switch {
+	case errors.Is(err, cmd.ErrQuit):
+		return exitOK
 	case errors.Is(err, cmd.ErrCancelled), errors.Is(err, huh.ErrUserAborted):
 		return exitCancelled
 	case errors.Is(err, cmd.ErrNonInteractive):
@@ -172,6 +178,10 @@ func Start(s theme.Styles, p theme.Palette, project, id string, stage theme.Stag
 
 		history = appendHistory(history, input)
 		sess.dispatch(ctx, input)
+		if sess.quit {
+			// Ctrl+X inside a picker asked to close Echo entirely.
+			break
+		}
 	}
 
 	fmt.Println(s.Dim.Render("Goodbye!"))
@@ -372,7 +382,7 @@ func helpSections() []helpSection {
 			{"  --copy", "Copy the matched lines (default: print)"},
 			{"clear", "Clear screen and reprint header"},
 			{"help", "Show this help"},
-			{"exit, quit, Ctrl+D", "Quit Echo"},
+			{"exit, quit, Ctrl+D, Ctrl+X", "Quit Echo"},
 		}},
 	}
 }
@@ -523,9 +533,7 @@ func (sess *session) runModules(ctx context.Context, name string, args []string)
 	case "test":
 		resolved, err = cmd.RunTest(ctx, opts)
 	case "modules":
-		sess.startLog(name, args)
-		err = cmd.RunModules(ctx, opts)
-		sess.readonlyFinalize(name, err)
+		sess.runModulesList(ctx, opts, args)
 		return
 	}
 	switch {
@@ -603,14 +611,11 @@ func (sess *session) runDocker(ctx context.Context, name string, args []string) 
 	case "restart":
 		err = cmd.RunRestart(ctx, opts)
 		sess.prompt.health.Invalidate()
-	case "ps", "logs":
-		var runErr error
-		if name == "ps" {
-			runErr = cmd.RunPS(ctx, opts)
-		} else {
-			runErr = cmd.RunLogs(ctx, opts)
-		}
-		sess.readonlyFinalize(name, runErr)
+	case "ps":
+		sess.runPSTable(ctx, opts)
+		return
+	case "logs":
+		sess.readonlyFinalize("logs", cmd.RunLogs(ctx, opts))
 		return
 	}
 	switch {
@@ -630,7 +635,24 @@ func (sess *session) runDocker(ctx context.Context, name string, args []string) 
 // user cancellation → WARNING `echo.<cmd>.cancelled`, other errors →
 // ERROR `echo.<cmd>.error`. Mirrors the start/end pair already used
 // by module commands and shell sessions.
+// handleQuit intercepts a picker-initiated Ctrl+X (cmd.ErrQuit): it flags
+// the session to exit the REPL loop and records a clean exit code, so the
+// quit reads as a deliberate close rather than a command failure. Returns
+// true when err was ErrQuit and the terminal helper should stop early.
+func (sess *session) handleQuit(err error) bool {
+	if !errors.Is(err, cmd.ErrQuit) {
+		return false
+	}
+	sess.quit = true
+	sess.exitCode = exitOK
+	sess.lastErrors, sess.lastWarnings = 0, 0
+	return true
+}
+
 func (sess *session) finalize(name string, errorCount, warnCount int, err error) {
+	if sess.handleQuit(err) {
+		return
+	}
 	sess.exitCode = scriptExitCode(err, errorCount)
 	sess.lastErrors, sess.lastWarnings = errorCount, warnCount
 	sess.print(Line{Kind: "out", Text: ""})
@@ -669,8 +691,7 @@ func (sess *session) runDB(ctx context.Context, name string, args []string) {
 	}
 
 	if name == "db-list" {
-		err := cmd.RunDBList(ctx, opts)
-		sess.readonlyFinalize(name, err)
+		sess.runDBListTable(ctx, opts)
 		return
 	}
 
@@ -813,8 +834,13 @@ func connectDB(res cmd.ConnectResult, fallback string) string {
 // validation, mint, chrome) renders like the rest of the CLI.
 func (sess *session) connectLogger() cmd.ConnectLogger {
 	return func(level, sub, msg, db string, fields ...[2]string) {
+		// sub == "system" is the cross-command system-status line: it uses the
+		// shared `echo.system.status` logger, not this command's namespace.
 		logger := "echo.connect"
-		if sub != "" {
+		switch {
+		case sub == "system":
+			logger = "echo.system.status"
+		case sub != "":
 			logger += "." + sub
 		}
 		if db == "" {

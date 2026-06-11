@@ -68,6 +68,7 @@ type connectTarget struct {
 	dbContainer   string
 	dbName        string
 	stage         string
+	odooVersion   string
 }
 
 type userRow struct {
@@ -109,6 +110,10 @@ func RunConnect(ctx context.Context, opts ConnectOpts) (ConnectResult, error) {
 	opts.log("INFO", "", "target resolved", db,
 		[2]string{"mode", connectMode(target.remote)},
 		[2]string{"container", target.odooContainer})
+	opts.log("INFO", "system", "system", db,
+		statusFields(target.odooVersion, target.stage,
+			statusProjectName(opts.Cfg, target.remote, opts.Cfg.ConnectRemotePath, ""),
+			db)...)
 
 	if err := maybeConfirmConnectProd(opts, target); err != nil {
 		return res, err
@@ -247,7 +252,7 @@ func resolveConnectSelection(ctx context.Context, opts ConnectOpts, target conne
 		if err != nil {
 			return connectSelection{}, err
 		}
-		u, err := pickConnectUser(users, login, opts.Palette)
+		u, err := pickConnectUser(users, login, opts.Palette, target.stage)
 		if err != nil {
 			return connectSelection{}, err
 		}
@@ -256,7 +261,7 @@ func resolveConnectSelection(ctx context.Context, opts ConnectOpts, target conne
 
 	if len(cache) > 0 {
 		opts.log("INFO", "cache", fmt.Sprintf("%d recent session(s) — pick one or fetch all", len(cache)), db)
-		chosen, fetchAll, err := pickRecentSessions(cache, opts.Palette)
+		chosen, fetchAll, err := pickRecentSessions(cache, opts.Palette, target.stage)
 		if err != nil {
 			return connectSelection{}, err
 		}
@@ -271,7 +276,7 @@ func resolveConnectSelection(ctx context.Context, opts ConnectOpts, target conne
 	if err != nil {
 		return connectSelection{}, err
 	}
-	u, err := pickConnectUser(users, "", opts.Palette)
+	u, err := pickConnectUser(users, "", opts.Palette, target.stage)
 	if err != nil {
 		return connectSelection{}, err
 	}
@@ -301,6 +306,7 @@ func resolveConnectTarget(ctx context.Context, opts ConnectOpts) (connectTarget,
 			dbContainer:   opts.Cfg.DBContainer,
 			dbName:        opts.Cfg.DBName,
 			stage:         opts.Cfg.Stage,
+			odooVersion:   opts.Cfg.OdooVersion,
 		}, nil
 	}
 	if opts.Cfg.ConnectRemotePath == "" {
@@ -317,6 +323,7 @@ func resolveConnectTarget(ctx context.Context, opts ConnectOpts) (connectTarget,
 		dbContainer:   prof.DBContainer,
 		dbName:        prof.DBName,
 		stage:         prof.Stage,
+		odooVersion:   prof.OdooVersion,
 	}, nil
 }
 
@@ -411,7 +418,7 @@ func listConnectUsers(ctx context.Context, opts ConnectOpts, target connectTarge
 	return users, nil
 }
 
-func pickConnectUser(users []userRow, login string, palette theme.Palette) (userRow, error) {
+func pickConnectUser(users []userRow, login string, palette theme.Palette, stage string) (userRow, error) {
 	if login != "" {
 		for _, u := range users {
 			if u.Login == login {
@@ -436,7 +443,7 @@ func pickConnectUser(users []userRow, login string, palette theme.Palette) (user
 		labels[i] = fmt.Sprintf("%s %-*s  %s", flag, maxLogin, u.Login, u.Name)
 	}
 
-	chosen, err := runSingleFuzzyPicker("Select user to impersonate", labels, palette)
+	chosen, err := runSingleFuzzyPickerStaged("Select user to impersonate", labels, palette, stage)
 	if err != nil {
 		return userRow{}, err
 	}

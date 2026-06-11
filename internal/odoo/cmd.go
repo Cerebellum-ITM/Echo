@@ -8,10 +8,55 @@
 // container's runtime env.
 package odoo
 
-import "strings"
+import (
+	"strconv"
+	"strings"
+)
 
 // Cmd is the argv that goes after `<compose> exec -T <container>`.
 type Cmd []string
+
+// Major parses the leading integer of a configured Odoo version
+// ("19" → 19, "19.0" → 19) and returns it. An empty or unparseable
+// version yields 0, which callers treat as "assume legacy".
+func Major(version string) int {
+	v := strings.TrimSpace(version)
+	if v == "" {
+		return 0
+	}
+	if i := strings.IndexByte(v, '.'); i >= 0 {
+		v = v[:i]
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil {
+		return 0
+	}
+	return n
+}
+
+// RenderConf renders a minimal odoo.conf carrying just the database
+// connection from c. It exists for the Odoo 19 `odoo i18n` subcommand,
+// whose only connection inputs are `-c` and `-d` — the `--db_*` flags the
+// legacy path uses are not accepted there, so credentials must ride in a
+// config file. Only non-empty fields are emitted; db_name is intentionally
+// left out because callers pass it via `-d`.
+func RenderConf(c Conn) []byte {
+	var b strings.Builder
+	b.WriteString("[options]\n")
+	if c.Host != "" {
+		b.WriteString("db_host = " + c.Host + "\n")
+	}
+	if c.Port != "" {
+		b.WriteString("db_port = " + c.Port + "\n")
+	}
+	if c.User != "" {
+		b.WriteString("db_user = " + c.User + "\n")
+	}
+	if c.Password != "" {
+		b.WriteString("db_password = " + c.Password + "\n")
+	}
+	return []byte(b.String())
+}
 
 // Conn holds the database connection details Odoo needs as CLI flags.
 // Empty fields are skipped so Odoo can still fall back to its conf or
@@ -192,7 +237,22 @@ func Test(c Conn, opts TestOpts) Cmd {
 
 // ExportI18n builds the argv to extract a module's translations to a
 // .po file at outPath inside the container.
-func ExportI18n(c Conn, module, lang, outPath string) Cmd {
+//
+// Odoo 19 (version major ≥ 19) replaced the server-flag form with a
+// dedicated `odoo i18n export` subcommand whose only connection inputs are
+// `-c <conf>` and `-d <db>` — it injects `--no-http` and exits on its own,
+// so neither that flag nor `--stop-after-init` is passed. The db
+// credentials ride in confPath (see RenderConf). Older series keep the
+// legacy `--modules=`/`--i18n-export=` flags carried by c.flags(); confPath
+// is ignored there.
+func ExportI18n(c Conn, version, module, lang, outPath, confPath string) Cmd {
+	if Major(version) >= 19 {
+		args := Cmd{"odoo", "i18n", "export", "-c", confPath}
+		if c.DB != "" {
+			args = append(args, "-d", c.DB)
+		}
+		return append(args, "-l", lang, "-o", outPath, module)
+	}
 	args := append(Cmd{"odoo"}, c.flags()...)
 	return append(args,
 		"--modules="+module,
@@ -202,9 +262,24 @@ func ExportI18n(c Conn, module, lang, outPath string) Cmd {
 	)
 }
 
-// UpdateI18n builds the argv to import a .po file at inPath into the DB
-// with --i18n-overwrite.
-func UpdateI18n(c Conn, module, lang, inPath string) Cmd {
+// UpdateI18n builds the argv to import a .po file at inPath into the DB,
+// overwriting existing terms.
+//
+// On Odoo 19 (major ≥ 19) this is `odoo i18n import -c <conf> -d <db>
+// -l <lang> -w <inPath>`: the file is positional, `-l` is the single
+// required language, and `-w/--overwrite` is the replacement for the legacy
+// `--i18n-overwrite`. The subcommand takes no module argument (terms come
+// from the file), so module is unused on this path. Older series keep the
+// legacy `--modules=`/`--i18n-import=`/`--i18n-overwrite` flags; confPath is
+// ignored there.
+func UpdateI18n(c Conn, version, module, lang, inPath, confPath string) Cmd {
+	if Major(version) >= 19 {
+		args := Cmd{"odoo", "i18n", "import", "-c", confPath}
+		if c.DB != "" {
+			args = append(args, "-d", c.DB)
+		}
+		return append(args, "-l", lang, "-w", inPath)
+	}
 	args := append(Cmd{"odoo"}, c.flags()...)
 	return append(args,
 		"--modules="+module,

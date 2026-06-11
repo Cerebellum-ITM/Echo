@@ -19,8 +19,13 @@ import (
 // in-REPL log stream.
 func directConnectLogger(palette theme.Palette) ConnectLogger {
 	return func(level, sub, msg, db string, fields ...[2]string) {
+		// sub == "system" is the cross-command system-status line: it uses the
+		// shared `echo.system.status` logger, not this command's namespace.
 		logger := "echo.connect"
-		if sub != "" {
+		switch {
+		case sub == "system":
+			logger = "echo.system.status"
+		case sub != "":
 			logger += "." + sub
 		}
 		os.Stdout.WriteString(renderOdooLogLine(palette, level, logger, msg, db, fields) + "\n")

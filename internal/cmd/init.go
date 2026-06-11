@@ -31,6 +31,12 @@ type InitOpts struct {
 
 var ErrCancelled = errors.New("cancelled by user")
 
+// ErrQuit is returned when the user presses Ctrl+X inside a picker: unlike
+// ErrCancelled (which just aborts the current command and returns to the
+// REPL prompt), it asks Echo to exit entirely — mirroring Ctrl+X at the
+// REPL line. The REPL loop breaks on it; one-shot mode exits cleanly.
+var ErrQuit = errors.New("quit requested")
+
 func RunInit(ctx context.Context, opts InitOpts) (*config.Config, error) {
 	if err := requireTTY("init is interactive; run it from a terminal"); err != nil {
 		return nil, err

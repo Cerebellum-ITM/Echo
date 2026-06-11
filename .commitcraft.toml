@@ -1,20 +1,19 @@
-# Local CommitCraft override for the Echo project.
-#
-# Disables the auto-changelog refiner stage. We maintain CHANGELOG.md
-# manually under the Keep-a-Changelog convention: every meaningful
-# commit appends to [Unreleased], and version bumps promote that block
-# to a new [X.Y.Z] section in the same commit that touches the version
-# constant in internal/repl/repl.go.
-#
-# Without this override, commitcraft auto-inserts a [X.Y.<patch>]
-# section per commit (bump_strategy="patch") which conflicts with the
-# manual policy.
-[changelog]
-  enabled = false
+[commit_types]
+  behavior = "append"
+
+  [[commit_types.types]]
+    tag = "BUILD"
+    description = "Changes that affect the build system or external dependencies (e.g., gulp, broccli, npm)"
+    bg_block = "#4a3422"
+    fg_block = "#ecc7a3"
+    bg_msg = "#2a1c10"
+    fg_msg = "#d3aa84"
+
+[commit_format]
+  type_format = ""
 
 [release_config]
   version = "v0.3.1"
-  # GH_TOKEN = "ghp_123456789dummytoken"
   repository = "Cerebellum-ITM/Echo"
   binary_assets_path = "bin/"
   auto_build = true

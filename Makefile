@@ -21,6 +21,10 @@ build:
 	@go build -trimpath $(LDFLAGS) -o $(INSTALL_DIR)/$(BINARY_NAME) $(CMD_PATH)
 	@echo "Installed at $(INSTALL_DIR)/$(BINARY_NAME)"
 
+install_local:
+	@echo "Installed at $(INSTALL_DIR)/$(BINARY_NAME)"
+	@mv ./bin/$(BINARY_NAME)_darwin_arm64 $(INSTALL_DIR)/$(BINARY_NAME)
+
 build_release:
 	@echo "Building release binaries (meta: $(if $(VERSION_META),$(VERSION_META),clean))..."
 	@rm -rf ./bin

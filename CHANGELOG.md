@@ -7,6 +7,99 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.0] — 2026-06-11
+
+### Changed
+- Estilo consistente para los últimos comandos que salían "crudos" (Unit 57):
+  - **`db-list`** ahora es una tabla estilizada `name · size · created` (mismo
+    patrón que `modstate`/`ps`): header en acento, la DB activa con `●` verde
+    y nombre en verde, size/fecha atenuados, cierre `echo.db-list: databases
+    listed count=N`.
+  - **`modules`** lista los nombres envueltos al ancho de la terminal (layout
+    del picker) y cierra con `echo.modules: modules listed count=N` en vez del
+    `(N modules)` plano; `modules --config` no cambia.
+  - **`logs`** en modo follow ahora colorea el stream con el mismo parser
+    Odoo que `up`/`down`/`update` (antes pasaba el output crudo de docker);
+    Ctrl+C lo corta limpio. El costo del parse por línea es insignificante
+    aun en vivo. `--no-follow`/`--copy` ya coloreaban.
+- `ps` ahora renderiza una **tabla estilizada** (Unit 56) en vez del
+  passthrough crudo de `docker compose ps`: lee los contenedores estructurado
+  vía `--format json` y los muestra como `service · image · status · ports`
+  con header en acento y columnas alineadas (mismo patrón que `modstate`). El
+  `status` se colorea por salud/estado (healthy=verde, unhealthy=rojo,
+  starting=amarillo; running=verde, exited/dead=rojo, paused/created=dim) y
+  los puertos publicados se compactan a `pub→target`. Cierra con una línea
+  `echo.ps: containers listed count=N`. Si `--format json` falla por
+  cualquier motivo, cae al streaming crudo anterior (sin regresión).
+- Los pickers interactivos (target de `connect`/`i18n-pull`, módulos de
+  `install`/`update`/`uninstall`/`test`/`build`, usuario y sesiones recientes
+  de `connect`) se reestilizaron a un formato **log-framed** (Unit 55) para
+  que se integren al stream de logs Odoo en vez de verse como un widget
+  aparte: se quitó el título en negrita-acento y la línea divisoria `────`;
+  el bloque cuelga de una **barra vertical `│` izquierda coloreada por el
+  stage** del target (`dev`=verde, `staging`=amarillo, `prod`=rojo) —el env
+  se ve de un vistazo, y en `prod` es una barra roja prominente—; el filtro
+  va en su propia línea (`filter ›`) con el placeholder `type to filter…`
+  ahora legible; las filas quedan indentadas con el nombre resaltado y la
+  columna secundaria (host:path / nombre) atenuada; el cursor `❯` y la
+  selección también llevan el color del stage. El color de stage se aplica en
+  todos los pickers cuyo stage se conoce (los locales vía `cfg.Stage`, los de
+  `i18n-pull`/usuario vía el perfil remoto); el picker de **target** mantiene
+  el acento por defecto porque el stage de cada candidato vive en su perfil
+  remoto y no se conoce hasta conectarse.
+
+### Added
+- Línea de **system-status** al iniciar `connect`, `run` e `i18n-pull`
+  (Unit 54): una sola línea Odoo-style `echo.system.status: system cli=…
+  odoo=… env=… project=… db=…` emitida una vez al arranque (no por
+  sub-comando), donde `env` es el stage configurado del target
+  (`dev`/`staging`/`prod`),
+  pensada sobre todo para corridas one-shot sin el banner del REPL. `cli`
+  es la versión de Echo con metadata de build (`+<sha>`, `.dirty` si el
+  árbol está sucio); `odoo` es la versión del target (local `cfg.OdooVersion`
+  o remota `RemoteProfile.OdooVersion`), que muestra `unknown` cuando falta
+  —diagnóstico inmediato de un target mal configurado—; `project` es el
+  alias `--from`/`compose_project` o el basename del path; `db` el nombre de
+  la base. Nunca incluye credenciales. Para exponer la versión del CLI a la
+  capa `internal/cmd` (que no puede importar `internal/repl`) se agregó
+  `cmd.EchoVersion`, seteada una vez desde `main.go`. La línea se emite lo
+  más arriba posible: primera en `run`, tras resolver el target en `connect`,
+  y en `i18n-pull` apenas se lee el perfil remoto (reemplaza a la antigua
+  línea `connected`, ya que la versión de Odoo es remota y no se conoce antes
+  de conectarse). `i18n-pull` además dejó de emitir la línea `start` genérica
+  (sin información) y ahora abre con `selecting remote target` / `target
+  resolved`.
+- `Ctrl+X` ahora cierra el REPL de Echo, además de `exit`/`quit`/`Ctrl+D`.
+  A diferencia de `Ctrl+D` (que solo hace EOF con la línea vacía), `Ctrl+X`
+  sale de forma explícita aunque haya texto en la línea (estilo nano). La
+  ayuda y el banner de inicio documentan el nuevo atajo. También funciona
+  **dentro de los pickers** (selección de target en `connect`/`i18n-pull`,
+  de módulo, de usuario, etc.): `Ctrl+X` cierra Echo entero —vía el nuevo
+  `cmd.ErrQuit`— en vez de solo cancelar el picker (eso sigue siendo
+  `Esc`/`Ctrl+C`); el texto de ayuda del picker lo refleja.
+
+### Fixed
+- `i18n-export`, `i18n-update` e `i18n-pull` ahora funcionan contra Odoo 19
+  (Unit 53). Odoo 19 eliminó la forma por flags de servidor
+  (`--modules=`, `--i18n-export=`, `--i18n-import=`) y la reemplazó por el
+  subcomando `odoo i18n export|import`, cuyo único input de conexión es
+  `-c`/`-d` (las flags `--db_*` ya no se aceptan en ese parser). Echo emite
+  ahora la forma nueva en instancias 19+ y conserva la forma legacy en
+  17/18, eligiendo según la versión de Odoo configurada del target
+  (`cfg.odoo_version` en local; `RemoteProfile.OdooVersion` propagado al
+  `connectTarget` en remoto). El error `no such option: --modules` queda
+  resuelto.
+
+### Added
+- Builders `odoo.ExportI18n`/`odoo.UpdateI18n` ahora son version-aware y
+  reciben la versión + un `confPath`; helpers nuevos `odoo.Major` (parsea el
+  major de la versión) y `odoo.RenderConf` (genera un `odoo.conf` mínimo con
+  la conexión de DB). En 19+ las credenciales viajan en un `odoo.conf`
+  efímero escrito dentro del contenedor (`/tmp/echo-i18n-*.conf`,
+  regenerado por invocación y borrado junto al `.po`), porque el subcomando
+  `i18n` no acepta `--db_*`. `RemoteProfile` ahora lee `odoo_version` del
+  perfil remoto (Unit 53).
+
 ## [0.10.0] — 2026-06-10
 
 ### Added

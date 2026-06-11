@@ -116,10 +116,13 @@ func TestConnectSectionRoundTrip(t *testing.T) {
 
 func TestParseRemoteProfile(t *testing.T) {
 	global := []byte("compose_cmd = \"docker-compose\"\n")
-	project := []byte("odoo_container = \"web\"\ndb_container = \"postgres\"\ndb_name = \"erp_prod\"\nstage = \"prod\"\n")
+	project := []byte("odoo_container = \"web\"\ndb_container = \"postgres\"\ndb_name = \"erp_prod\"\nstage = \"prod\"\nodoo_version = \"19\"\n")
 	prof := ParseRemoteProfile(global, project)
 	if prof.ComposeCmd != "docker-compose" {
 		t.Errorf("ComposeCmd = %q", prof.ComposeCmd)
+	}
+	if prof.OdooVersion != "19" {
+		t.Errorf("OdooVersion = %q, want 19", prof.OdooVersion)
 	}
 	if prof.OdooContainer != "web" {
 		t.Errorf("OdooContainer = %q", prof.OdooContainer)
