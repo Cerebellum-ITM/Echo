@@ -202,7 +202,7 @@ func RunI18nPull(ctx context.Context, opts I18nPullOpts) error {
 	// version, project, db), emitted the moment the remote profile is read —
 	// the earliest point the remote Odoo version is known.
 	opts.log("INFO", "system", "system", prof.DBName,
-		statusFields(target.odooVersion,
+		statusFields(target.odooVersion, prof.Stage,
 			statusProjectName(opts.Cfg, true, remotePath, p.from),
 			prof.DBName)...)
 	conn := odoo.Conn{DB: target.dbName, Host: target.dbContainer}

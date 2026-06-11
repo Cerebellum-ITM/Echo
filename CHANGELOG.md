@@ -10,7 +10,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - Línea de **system-status** al iniciar `connect`, `run` e `i18n-pull`
   (Unit 54): una sola línea Odoo-style `echo.system.status: system cli=…
-  odoo=… project=… db=…` emitida una vez al arranque (no por sub-comando),
+  odoo=… env=… project=… db=…` emitida una vez al arranque (no por
+  sub-comando), donde `env` es el stage configurado del target
+  (`dev`/`staging`/`prod`),
   pensada sobre todo para corridas one-shot sin el banner del REPL. `cli`
   es la versión de Echo con metadata de build (`+<sha>`, `.dirty` si el
   árbol está sucio); `odoo` es la versión del target (local `cfg.OdooVersion`

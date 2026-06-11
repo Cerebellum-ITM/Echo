@@ -37,17 +37,21 @@ func statusProjectName(cfg *config.Config, remote bool, remotePath, fromName str
 	return "-"
 }
 
-// statusFields builds the cli/odoo/project/db pairs for the system-status
-// line, applying the "unknown"/"-" fallbacks so a missing value is loud
-// rather than silently absent. The db password never rides here — only the
-// four identity fields below.
-func statusFields(odooVer, project, db string) [][2]string {
+// statusFields builds the cli/odoo/env/project/db pairs for the
+// system-status line, applying the "unknown"/"-" fallbacks so a missing
+// value is loud rather than silently absent. `env` is the configured stage
+// (dev/staging/prod) of the target. The db password never rides here — only
+// the identity fields below.
+func statusFields(odooVer, env, project, db string) [][2]string {
 	cli := EchoVersion
 	if cli == "" {
 		cli = "unknown"
 	}
 	if odooVer == "" {
 		odooVer = "unknown"
+	}
+	if env == "" {
+		env = "unknown"
 	}
 	if project == "" {
 		project = "-"
@@ -58,6 +62,7 @@ func statusFields(odooVer, project, db string) [][2]string {
 	return [][2]string{
 		{"cli", cli},
 		{"odoo", odooVer},
+		{"env", env},
 		{"project", project},
 		{"db", db},
 	}

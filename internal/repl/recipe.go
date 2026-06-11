@@ -219,12 +219,16 @@ func (sess *session) runStatusLog(cfg *config.Config) {
 	if db == "" {
 		db = "-"
 	}
+	env := cfg.Stage
+	if env == "" {
+		env = "unknown"
+	}
 	cli := FullVersion()
 	if cli == "" {
 		cli = "unknown"
 	}
 	emitOdooLog("INFO", "echo.system.status", "system",
-		[]logField{{"cli", cli}, {"odoo", odoo}, {"project", project}, {"db", db}},
+		[]logField{{"cli", cli}, {"odoo", odoo}, {"env", env}, {"project", project}, {"db", db}},
 		sess.styles, sess.palette, sess.cfg.DBName)
 }
 

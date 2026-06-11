@@ -111,7 +111,7 @@ func RunConnect(ctx context.Context, opts ConnectOpts) (ConnectResult, error) {
 		[2]string{"mode", connectMode(target.remote)},
 		[2]string{"container", target.odooContainer})
 	opts.log("INFO", "system", "system", db,
-		statusFields(target.odooVersion,
+		statusFields(target.odooVersion, target.stage,
 			statusProjectName(opts.Cfg, target.remote, opts.Cfg.ConnectRemotePath, ""),
 			db)...)
 

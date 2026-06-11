@@ -38,10 +38,11 @@ func TestStatusFields(t *testing.T) {
 	defer func(prev string) { EchoVersion = prev }(EchoVersion)
 
 	EchoVersion = "0.10.0+abc1234.dirty"
-	got := statusFields("19.0", "dvz_ny_odoo_19", "develop")
+	got := statusFields("19.0", "prod", "dvz_ny_odoo_19", "develop")
 	want := [][2]string{
 		{"cli", "0.10.0+abc1234.dirty"},
 		{"odoo", "19.0"},
+		{"env", "prod"},
 		{"project", "dvz_ny_odoo_19"},
 		{"db", "develop"},
 	}
@@ -51,10 +52,11 @@ func TestStatusFields(t *testing.T) {
 
 	// Empty values render loud, never blank.
 	EchoVersion = ""
-	got = statusFields("", "", "")
+	got = statusFields("", "", "", "")
 	want = [][2]string{
 		{"cli", "unknown"},
 		{"odoo", "unknown"},
+		{"env", "unknown"},
 		{"project", "-"},
 		{"db", "-"},
 	}

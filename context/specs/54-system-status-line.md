@@ -15,7 +15,7 @@ up front.
 Example (i18n-pull against a remote Odoo 19):
 
 ```
-2026-06-11 11:02:03,114 10354 INFO develop echo.system.status: system cli=0.10.0+abc1234.dirty odoo=19.0 project=dvz_ny_odoo_19 db=develop
+2026-06-11 11:02:03,114 10354 INFO develop echo.system.status: system cli=0.10.0+abc1234.dirty odoo=19.0 env=dev project=dvz_ny_odoo_19 db=develop
 ```
 
 This is **not** per-command exec logging — running `up`, `update`, etc. does
@@ -24,7 +24,7 @@ not each get a line. One status line at the start of the command, period.
 ## Design
 
 A single shared logger `echo.system.status` (not namespaced per command),
-emitted at INFO with message `system` and four key=value fields rendered by
+emitted at INFO with message `system` and five key=value fields rendered by
 the existing log-field machinery. The per-command logger wrappers map the
 sentinel `sub == "system"` to this shared logger:
 
@@ -32,11 +32,13 @@ sentinel `sub == "system"` to this shared logger:
 | --------- | ------------------------------------- | ------------------------------------------- |
 | `cli`     | `repl.FullVersion()` (`+sha`/`.dirty`)| same                                        |
 | `odoo`    | `cfg.OdooVersion`                     | `prof.OdooVersion` / `target.odooVersion`   |
+| `env`     | `cfg.Stage` (dev/staging/prod)        | `prof.Stage` / `target.stage`               |
 | `project` | compose project name (alias/basename) | `--from` target name, else `base(remotePath)` |
 | `db`      | `cfg.DBName`                          | `prof.DBName` / `target.dbName`             |
 
-Empty values render as `unknown` (for `odoo`) / `-` (for `db`/`project`) so a
-missing remote `odoo_version` is loud rather than silently absent.
+Empty values render as `unknown` (for `odoo`/`env`) / `-` (for `db`/`project`)
+so a missing remote `odoo_version` or stage is loud rather than silently
+absent.
 
 **Emit point — as early as the data allows.** The status line must precede
 the first log of the command's actual work. For `run` (all-local) it is the
