@@ -8,17 +8,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
-- Los pickers interactivos (target de `connect`/`i18n-pull`, módulo, usuario,
-  recientes) se reestilizaron a un formato **log-framed** (Unit 55) para que
-  se integren al stream de logs Odoo en vez de verse como un widget aparte:
-  se quitó el título en negrita-acento y la línea divisoria `────`; el filtro
-  va en su propia línea (`filter ›`), las filas quedan indentadas con el
-  nombre resaltado y la columna secundaria (host:path / nombre) atenuada. El
-  acento del cursor/selección se **tiñe según el stage** del target
-  (`dev`=verde, `staging`=amarillo, `prod`=rojo) en los pickers que ya
-  conocen su stage (módulo en export/update e i18n-pull, usuario en connect);
-  el picker de **target** mantiene el acento por defecto porque el stage de
-  cada candidato vive en su perfil remoto y no se conoce hasta conectarse.
+- Los pickers interactivos (target de `connect`/`i18n-pull`, módulos de
+  `install`/`update`/`uninstall`/`test`/`build`, usuario y sesiones recientes
+  de `connect`) se reestilizaron a un formato **log-framed** (Unit 55) para
+  que se integren al stream de logs Odoo en vez de verse como un widget
+  aparte: se quitó el título en negrita-acento y la línea divisoria `────`;
+  el bloque cuelga de una **barra vertical `│` izquierda coloreada por el
+  stage** del target (`dev`=verde, `staging`=amarillo, `prod`=rojo) —el env
+  se ve de un vistazo, y en `prod` es una barra roja prominente—; el filtro
+  va en su propia línea (`filter ›`) con el placeholder `type to filter…`
+  ahora legible; las filas quedan indentadas con el nombre resaltado y la
+  columna secundaria (host:path / nombre) atenuada; el cursor `❯` y la
+  selección también llevan el color del stage. El color de stage se aplica en
+  todos los pickers cuyo stage se conoce (los locales vía `cfg.Stage`, los de
+  `i18n-pull`/usuario vía el perfil remoto); el picker de **target** mantiene
+  el acento por defecto porque el stage de cada candidato vive en su perfil
+  remoto y no se conoce hasta conectarse.
 
 ### Added
 - Línea de **system-status** al iniciar `connect`, `run` e `i18n-pull`

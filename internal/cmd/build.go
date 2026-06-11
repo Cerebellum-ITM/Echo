@@ -220,7 +220,7 @@ func RunBuild(ctx context.Context, opts BuildOpts) (BuildResult, error) {
 	if len(opts.Flags) > 0 {
 		picked, canceled, err := runFuzzyPickerCore(
 			"Flags for "+opts.Command+" (Tab to toggle, Enter to confirm)",
-			opts.Flags, nil, opts.Palette)
+			opts.Flags, nil, opts.Palette, opts.Cfg.Stage)
 		if err != nil {
 			return BuildResult{}, err
 		}

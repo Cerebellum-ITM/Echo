@@ -68,7 +68,7 @@ func probeSession(ctx context.Context, baseURL, sid string) bool {
 // pickRecentSessions shows the cached logins (most recently minted first)
 // plus a "fetch all" row. It returns the chosen login, or fetchAll=true
 // when the user wants the full list instead.
-func pickRecentSessions(cache map[string]config.ConnectSession, palette theme.Palette) (login string, fetchAll bool, err error) {
+func pickRecentSessions(cache map[string]config.ConnectSession, palette theme.Palette, stage string) (login string, fetchAll bool, err error) {
 	entries := make([]config.ConnectSession, 0, len(cache))
 	for _, e := range cache {
 		entries = append(entries, e)
@@ -92,7 +92,7 @@ func pickRecentSessions(cache map[string]config.ConnectSession, palette theme.Pa
 	}
 	labels = append(labels, fetchAllLabel)
 
-	chosen, err := runSingleFuzzyPicker("Reconnect as (recent) — or fetch all", labels, palette)
+	chosen, err := runSingleFuzzyPickerStaged("Reconnect as (recent) — or fetch all", labels, palette, stage)
 	if err != nil {
 		return "", false, err
 	}

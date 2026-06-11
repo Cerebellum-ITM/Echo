@@ -261,7 +261,7 @@ func resolveConnectSelection(ctx context.Context, opts ConnectOpts, target conne
 
 	if len(cache) > 0 {
 		opts.log("INFO", "cache", fmt.Sprintf("%d recent session(s) — pick one or fetch all", len(cache)), db)
-		chosen, fetchAll, err := pickRecentSessions(cache, opts.Palette)
+		chosen, fetchAll, err := pickRecentSessions(cache, opts.Palette, target.stage)
 		if err != nil {
 			return connectSelection{}, err
 		}
