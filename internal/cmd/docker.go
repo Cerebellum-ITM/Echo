@@ -127,7 +127,7 @@ func RunLogs(ctx context.Context, opts DockerOpts) error {
 		return runLogsAndCopy(ctx, opts, tail, services)
 	}
 	if follow {
-		return docker.LogsFollow(ctx, opts.Cfg.ComposeCmd, opts.Root, tail, services)
+		return docker.LogsFollow(ctx, opts.Cfg.ComposeCmd, opts.Root, tail, services, opts.StreamOut)
 	}
 	return docker.Logs(ctx, opts.Cfg.ComposeCmd, opts.Root, tail, services, opts.StreamOut)
 }

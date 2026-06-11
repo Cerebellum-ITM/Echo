@@ -533,9 +533,7 @@ func (sess *session) runModules(ctx context.Context, name string, args []string)
 	case "test":
 		resolved, err = cmd.RunTest(ctx, opts)
 	case "modules":
-		sess.startLog(name, args)
-		err = cmd.RunModules(ctx, opts)
-		sess.readonlyFinalize(name, err)
+		sess.runModulesList(ctx, opts, args)
 		return
 	}
 	switch {
@@ -693,8 +691,7 @@ func (sess *session) runDB(ctx context.Context, name string, args []string) {
 	}
 
 	if name == "db-list" {
-		err := cmd.RunDBList(ctx, opts)
-		sess.readonlyFinalize(name, err)
+		sess.runDBListTable(ctx, opts)
 		return
 	}
 

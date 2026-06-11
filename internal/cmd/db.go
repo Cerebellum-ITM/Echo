@@ -85,53 +85,14 @@ func dbUser(opts DBOpts) string {
 	return env.Load(opts.Root)["POSTGRES_USER"]
 }
 
-// RunDBList prints non-system databases with size, creation date, and
-// marks the active one (cfg.DBName) with a ● bullet.
-func RunDBList(ctx context.Context, opts DBOpts) error {
+// DBList returns the non-system databases with size and creation date for
+// Echo's styled `db-list` table (the REPL renders it and marks the active
+// one). Replaces the old self-printing RunDBList.
+func DBList(ctx context.Context, opts DBOpts) ([]docker.DatabaseInfo, error) {
 	if err := requireDBContainer(opts.Cfg); err != nil {
-		return err
+		return nil, err
 	}
-	infos, err := docker.ListDatabasesDetailed(ctx, opts.Cfg.ComposeCmd, opts.Root, opts.Cfg.DBContainer, dbUser(opts))
-	if err != nil {
-		return err
-	}
-	if len(infos) == 0 {
-		if opts.StreamOut != nil {
-			opts.StreamOut("(no databases)")
-		}
-		return nil
-	}
-
-	nameWidth := 12
-	for _, i := range infos {
-		if len(i.Name) > nameWidth {
-			nameWidth = len(i.Name)
-		}
-	}
-	sizeWidth := 10
-	for _, i := range infos {
-		if len(i.SizeHuman) > sizeWidth {
-			sizeWidth = len(i.SizeHuman)
-		}
-	}
-
-	active := opts.Cfg.DBName
-	bulletActive := lipgloss.NewStyle().Foreground(opts.Palette.Success).Render("●")
-
-	for _, i := range infos {
-		mark := "  "
-		if i.Name == active {
-			mark = bulletActive + " "
-		}
-		line := fmt.Sprintf("%s%-*s  %-*s  %s",
-			mark,
-			nameWidth, i.Name,
-			sizeWidth, i.SizeHuman,
-			i.CreatedAt,
-		)
-		opts.StreamOut(line)
-	}
-	return nil
+	return docker.ListDatabasesDetailed(ctx, opts.Cfg.ComposeCmd, opts.Root, opts.Cfg.DBContainer, dbUser(opts))
 }
 
 // RunDBBackup dumps the target database to ./backups/. The target

@@ -106,10 +106,15 @@ func Logs(ctx context.Context, composeCmd, dir, tail string, services []string, 
 	return runStreamed(ctx, composeCmd, dir, onLine, args...)
 }
 
-// LogsFollow runs `<compose> logs -f [--tail N] [services...]` with full TTY
-// pass-through. SIGINT is consumed in the parent so the subprocess (in the
-// same process group) handles the interrupt and exits cleanly.
-func LogsFollow(ctx context.Context, composeCmd, dir, tail string, services []string) error {
+// LogsFollow runs `<compose> logs -f [--tail N] [services...]`, piping each
+// line to onLine so the caller can colorize it through Echo's Odoo-log
+// renderer (matching `up`/`down`/`update`) instead of docker's raw output.
+// Ctrl+C cancels the follow: the SIGINT handler cancels the context, which
+// kills the child and ends the scan; that stop is reported as a clean exit.
+func LogsFollow(ctx context.Context, composeCmd, dir, tail string, services []string, onLine func(string)) error {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, os.Interrupt)
 	defer func() {
@@ -118,7 +123,7 @@ func LogsFollow(ctx context.Context, composeCmd, dir, tail string, services []st
 	}()
 	go func() {
 		for range sigChan {
-			// consume; the subprocess gets its own copy via the process group
+			cancel()
 		}
 	}()
 
@@ -129,10 +134,22 @@ func LogsFollow(ctx context.Context, composeCmd, dir, tail string, services []st
 	full = append(full, services...)
 	cmd := exec.CommandContext(ctx, full[0], full[1:]...)
 	cmd.Dir = dir
-	cmd.Stdin = os.Stdin
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	return cmd.Run()
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return err
+	}
+	cmd.Stderr = cmd.Stdout
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+	streamLines(stdout, onLine)
+	if err := cmd.Wait(); err != nil {
+		if ctx.Err() == context.Canceled {
+			return nil // a Ctrl+C-initiated stop is clean, not a failure
+		}
+		return err
+	}
+	return nil
 }
 
 // runStreamed is the shared pattern: pipe combined stdout/stderr, scan

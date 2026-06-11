@@ -617,6 +617,13 @@ func listAvailableModules(cfg *config.Config, root string) []string {
 	return found
 }
 
+// ModulesList returns the modules found in the configured addons paths, for
+// the styled `modules` listing rendered by the REPL. The `--config`
+// addons-path picker stays in RunModules.
+func ModulesList(ctx context.Context, opts ModulesOpts) ([]string, error) {
+	return resolveModules(ctx, opts)
+}
+
 // RunModules lists modules from the configured addons paths. With
 // --config, opens an interactive picker to choose which folders count as
 // addons paths.
