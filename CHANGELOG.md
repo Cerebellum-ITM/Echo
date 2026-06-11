@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `echo run --last` (Unit 52): ejecuta directamente el recipe `.echo` más
+  reciente del directorio actual sin abrir el picker. No requiere TTY
+  (apto para scripts), compone con `--continue-on-error` y `--log`, y el
+  transcript registra qué archivo se resolvió
+  (`echo.run: latest recipe → <nombre>`). Mutuamente excluyente con
+  `--pick`, un path posicional y stdin.
+
+### Changed
+- El picker de `echo run --pick` ahora lista los recipes `.echo`
+  ordenados por fecha de creación (más reciente primero) en lugar de
+  alfabéticamente — birthtime real en macOS, fecha de modificación como
+  fallback en otras plataformas; empates se rompen alfabéticamente
+  (Unit 52).
+
 ## [0.9.0] — 2026-06-10
 
 ### Added

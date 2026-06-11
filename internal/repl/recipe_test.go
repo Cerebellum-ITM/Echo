@@ -4,9 +4,11 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"sort"
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestParseRecipeLines(t *testing.T) {
@@ -77,25 +79,31 @@ func TestParseRecipeArgs(t *testing.T) {
 		logDest    string
 		logEnabled bool
 		pick       bool
+		last       bool
 		wantErr    bool
 	}{
-		{[]string{"update.echo"}, "update.echo", false, "", false, false, false},
-		{[]string{"-"}, "-", false, "", false, false, false},
-		{[]string{}, "", false, "", false, false, false},
-		{[]string{"r.echo", "--continue-on-error"}, "r.echo", true, "", false, false, false},
-		{[]string{"--continue-on-error", "r.echo"}, "r.echo", true, "", false, false, false},
-		{[]string{"r.echo", "--log"}, "r.echo", false, "", true, false, false},
-		{[]string{"--log=/tmp/x.log", "r.echo"}, "r.echo", false, "/tmp/x.log", true, false, false},
-		{[]string{"r.echo", "--log", "--continue-on-error"}, "r.echo", true, "", true, false, false},
-		{[]string{"--pick"}, "", false, "", false, true, false},
-		{[]string{"--pick", "--log"}, "", false, "", true, true, false},
-		{[]string{"--pick", "--continue-on-error"}, "", true, "", false, true, false},
-		{[]string{"--pick", "r.echo"}, "", false, "", false, false, true},
-		{[]string{"--bogus"}, "", false, "", false, false, true},
-		{[]string{"a.echo", "b.echo"}, "", false, "", false, false, true},
+		{[]string{"update.echo"}, "update.echo", false, "", false, false, false, false},
+		{[]string{"-"}, "-", false, "", false, false, false, false},
+		{[]string{}, "", false, "", false, false, false, false},
+		{[]string{"r.echo", "--continue-on-error"}, "r.echo", true, "", false, false, false, false},
+		{[]string{"--continue-on-error", "r.echo"}, "r.echo", true, "", false, false, false, false},
+		{[]string{"r.echo", "--log"}, "r.echo", false, "", true, false, false, false},
+		{[]string{"--log=/tmp/x.log", "r.echo"}, "r.echo", false, "/tmp/x.log", true, false, false, false},
+		{[]string{"r.echo", "--log", "--continue-on-error"}, "r.echo", true, "", true, false, false, false},
+		{[]string{"--pick"}, "", false, "", false, true, false, false},
+		{[]string{"--pick", "--log"}, "", false, "", true, true, false, false},
+		{[]string{"--pick", "--continue-on-error"}, "", true, "", false, true, false, false},
+		{[]string{"--pick", "r.echo"}, "", false, "", false, false, false, true},
+		{[]string{"--last"}, "", false, "", false, false, true, false},
+		{[]string{"--last", "--log"}, "", false, "", true, false, true, false},
+		{[]string{"--last", "--continue-on-error"}, "", true, "", false, false, true, false},
+		{[]string{"--last", "r.echo"}, "", false, "", false, false, false, true},
+		{[]string{"--last", "--pick"}, "", false, "", false, false, false, true},
+		{[]string{"--bogus"}, "", false, "", false, false, false, true},
+		{[]string{"a.echo", "b.echo"}, "", false, "", false, false, false, true},
 	}
 	for _, c := range cases {
-		path, cont, logDest, logEnabled, pick, err := parseRecipeArgs(c.args)
+		path, cont, logDest, logEnabled, pick, last, err := parseRecipeArgs(c.args)
 		if (err != nil) != c.wantErr {
 			t.Errorf("parseRecipeArgs(%v) err = %v, wantErr %v", c.args, err, c.wantErr)
 			continue
@@ -103,9 +111,9 @@ func TestParseRecipeArgs(t *testing.T) {
 		if err != nil {
 			continue
 		}
-		if path != c.path || cont != c.cont || logDest != c.logDest || logEnabled != c.logEnabled || pick != c.pick {
-			t.Errorf("parseRecipeArgs(%v) = (%q, %v, %q, %v, %v), want (%q, %v, %q, %v, %v)",
-				c.args, path, cont, logDest, logEnabled, pick, c.path, c.cont, c.logDest, c.logEnabled, c.pick)
+		if path != c.path || cont != c.cont || logDest != c.logDest || logEnabled != c.logEnabled || pick != c.pick || last != c.last {
+			t.Errorf("parseRecipeArgs(%v) = (%q, %v, %q, %v, %v, %v), want (%q, %v, %q, %v, %v, %v)",
+				c.args, path, cont, logDest, logEnabled, pick, last, c.path, c.cont, c.logDest, c.logEnabled, c.pick, c.last)
 		}
 	}
 }
@@ -126,9 +134,34 @@ func TestEchoRecipesIn(t *testing.T) {
 	if err != nil {
 		t.Fatalf("echoRecipesIn: %v", err)
 	}
-	want := []string{"backup.echo", "deploy.echo"} // sorted, files only
+	// Exact ordering is creation-time-dependent (birth time on Darwin),
+	// so assert membership here; the newest-first ordering itself is
+	// covered by TestSortRecipesByCreation on injected times.
+	sorted := append([]string(nil), got...)
+	sort.Strings(sorted)
+	want := []string{"backup.echo", "deploy.echo"} // files only, no noise
+	if !reflect.DeepEqual(sorted, want) {
+		t.Errorf("echoRecipesIn = %v, want members %v", got, want)
+	}
+}
+
+func TestSortRecipesByCreation(t *testing.T) {
+	t0 := time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC)
+	entries := []recipeEntry{
+		{name: "old.echo", created: t0},
+		{name: "broken.echo"}, // zero time → sinks to the end
+		{name: "new.echo", created: t0.Add(2 * time.Hour)},
+		{name: "b-tie.echo", created: t0.Add(time.Hour)},
+		{name: "a-tie.echo", created: t0.Add(time.Hour)},
+	}
+	sortRecipesByCreation(entries)
+	got := make([]string, len(entries))
+	for i, e := range entries {
+		got[i] = e.name
+	}
+	want := []string{"new.echo", "a-tie.echo", "b-tie.echo", "old.echo", "broken.echo"}
 	if !reflect.DeepEqual(got, want) {
-		t.Errorf("echoRecipesIn = %v, want %v", got, want)
+		t.Errorf("sortRecipesByCreation = %v, want %v", got, want)
 	}
 }
 

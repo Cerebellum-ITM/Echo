@@ -25,7 +25,7 @@ import (
 // process exit code: the failing step's code under fail-fast, exitError
 // if any step failed under --continue-on-error, else exitOK.
 func RunRecipe(s theme.Styles, p theme.Palette, project, id string, stage theme.Stage, version, themeName, username, cwd string, cfg *config.Config, args []string) int {
-	path, continueOnError, logDest, logEnabled, pick, err := parseRecipeArgs(args)
+	path, continueOnError, logDest, logEnabled, pick, last, err := parseRecipeArgs(args)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "echo run: "+err.Error())
 		return exitUsage
@@ -43,6 +43,18 @@ func RunRecipe(s theme.Styles, p theme.Palette, project, id string, stage theme.
 		path = selected
 	}
 
+	if last {
+		names, lerr := echoRecipesIn(cwd)
+		if lerr == nil && len(names) == 0 {
+			lerr = fmt.Errorf("no .echo recipes found in %s", cwd)
+		}
+		if lerr != nil {
+			fmt.Fprintln(os.Stderr, "echo run: "+lerr.Error())
+			return exitUsage
+		}
+		path = filepath.Join(cwd, names[0])
+	}
+
 	steps, err := readRecipe(path)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "echo run: "+err.Error())
@@ -51,6 +63,11 @@ func RunRecipe(s theme.Styles, p theme.Palette, project, id string, stage theme.
 
 	sess, _ := newSession(s, p, project, id, stage, version, themeName, username, cwd, cfg)
 	ctx := context.Background()
+
+	// Make the transcript show which file --last resolved to.
+	if last {
+		sess.runLog("INFO", "latest recipe → "+recipeLabel(path))
+	}
 
 	// Capture the transcript to a file when --log is given. A failure to
 	// open the log must not abort the run — warn and carry on without it.
@@ -334,22 +351,25 @@ func fmtDur(d time.Duration) string {
 }
 
 // parseRecipeArgs extracts the recipe path (first positional; empty or `-`
-// means stdin), the --continue-on-error flag, the --log destination, and
-// --pick (open a picker of *.echo recipes instead of taking a path).
+// means stdin), the --continue-on-error flag, the --log destination,
+// --pick (open a picker of *.echo recipes instead of taking a path), and
+// --last (run the most recently created *.echo recipe directly).
 // `--log` (bare) enables logging to the default location (logDest == "");
 // `--log=<path>` enables it to an explicit path, or — when the value is a
 // directory like `.` — to a `<recipe>.log` file in it (resolved later in
 // openRunLog). The space form `--log <path>` is intentionally NOT
 // supported so it can't be confused with the recipe positional. Unknown
-// flags error. `--pick` is mutually exclusive with a positional path /
-// stdin.
-func parseRecipeArgs(args []string) (path string, continueOnError bool, logDest string, logEnabled bool, pick bool, err error) {
+// flags error. `--pick` and `--last` are mutually exclusive with each
+// other and with a positional path / stdin.
+func parseRecipeArgs(args []string) (path string, continueOnError bool, logDest string, logEnabled bool, pick, last bool, err error) {
 	for _, a := range args {
 		switch {
 		case a == "--continue-on-error":
 			continueOnError = true
 		case a == "--pick":
 			pick = true
+		case a == "--last":
+			last = true
 		case a == "--log":
 			logEnabled = true
 		case strings.HasPrefix(a, "--log="):
@@ -358,35 +378,71 @@ func parseRecipeArgs(args []string) (path string, continueOnError bool, logDest 
 		case a == "-":
 			path = a
 		case strings.HasPrefix(a, "-"):
-			return "", false, "", false, false, fmt.Errorf("unknown flag: %s", a)
+			return "", false, "", false, false, false, fmt.Errorf("unknown flag: %s", a)
 		default:
 			if path != "" && path != "-" {
-				return "", false, "", false, false, fmt.Errorf("multiple recipe files given")
+				return "", false, "", false, false, false, fmt.Errorf("multiple recipe files given")
 			}
 			path = a
 		}
 	}
 	if pick && path != "" {
-		return "", false, "", false, false, fmt.Errorf("--pick takes no recipe path")
+		return "", false, "", false, false, false, fmt.Errorf("--pick takes no recipe path")
 	}
-	return path, continueOnError, logDest, logEnabled, pick, nil
+	if last && path != "" {
+		return "", false, "", false, false, false, fmt.Errorf("--last takes no recipe path")
+	}
+	if last && pick {
+		return "", false, "", false, false, false, fmt.Errorf("--last and --pick are mutually exclusive")
+	}
+	return path, continueOnError, logDest, logEnabled, pick, last, nil
+}
+
+// recipeEntry pairs a recipe filename with its creation time, for the
+// newest-first ordering of the picker and --last.
+type recipeEntry struct {
+	name    string
+	created time.Time
+}
+
+// sortRecipesByCreation orders entries newest-first, breaking ties
+// alphabetically so the result is deterministic.
+func sortRecipesByCreation(entries []recipeEntry) {
+	sort.SliceStable(entries, func(i, j int) bool {
+		if !entries[i].created.Equal(entries[j].created) {
+			return entries[i].created.After(entries[j].created)
+		}
+		return entries[i].name < entries[j].name
+	})
 }
 
 // echoRecipesIn returns the names of the *.echo recipe files directly in
-// dir (top-level, no recursion), sorted. Subdirectories and non-.echo
+// dir (top-level, no recursion), sorted by creation time, newest first
+// (birth time on Darwin, ModTime elsewhere). Subdirectories and non-.echo
 // files are skipped. Pure over the filesystem so it's unit-testable.
 func echoRecipesIn(dir string) ([]string, error) {
-	entries, err := os.ReadDir(dir)
+	dirEntries, err := os.ReadDir(dir)
 	if err != nil {
 		return nil, err
 	}
-	var names []string
-	for _, e := range entries {
-		if !e.IsDir() && strings.HasSuffix(e.Name(), ".echo") {
-			names = append(names, e.Name())
+	var entries []recipeEntry
+	for _, e := range dirEntries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".echo") {
+			continue
 		}
+		// An entry whose Info() fails keeps the zero time and sinks to
+		// the end of the list rather than aborting the scan.
+		var created time.Time
+		if info, ierr := e.Info(); ierr == nil {
+			created = fileCreated(info)
+		}
+		entries = append(entries, recipeEntry{name: e.Name(), created: created})
 	}
-	sort.Strings(names)
+	sortRecipesByCreation(entries)
+	names := make([]string, 0, len(entries))
+	for _, e := range entries {
+		names = append(names, e.name)
+	}
 	return names, nil
 }
 
