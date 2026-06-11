@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.0] — 2026-06-10
+
 ### Added
 - New `modstate [--all] [--json]` command (Unit 47): dump every module's
   `name`/`state`/`version` from `ir_module_module` for the active project's
