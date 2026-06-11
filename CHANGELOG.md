@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.0] — 2026-06-11
+
 ### Changed
 - Estilo consistente para los últimos comandos que salían "crudos" (Unit 57):
   - **`db-list`** ahora es una tabla estilizada `name · size · created` (mismo
