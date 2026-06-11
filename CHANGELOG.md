@@ -8,6 +8,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- `ps` ahora renderiza una **tabla estilizada** (Unit 56) en vez del
+  passthrough crudo de `docker compose ps`: lee los contenedores estructurado
+  vía `--format json` y los muestra como `service · image · status · ports`
+  con header en acento y columnas alineadas (mismo patrón que `modstate`). El
+  `status` se colorea por salud/estado (healthy=verde, unhealthy=rojo,
+  starting=amarillo; running=verde, exited/dead=rojo, paused/created=dim) y
+  los puertos publicados se compactan a `pub→target`. Cierra con una línea
+  `echo.ps: containers listed count=N`. Si `--format json` falla por
+  cualquier motivo, cae al streaming crudo anterior (sin regresión).
 - Los pickers interactivos (target de `connect`/`i18n-pull`, módulos de
   `install`/`update`/`uninstall`/`test`/`build`, usuario y sesiones recientes
   de `connect`) se reestilizaron a un formato **log-framed** (Unit 55) para

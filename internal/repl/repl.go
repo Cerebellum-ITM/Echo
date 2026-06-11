@@ -613,14 +613,11 @@ func (sess *session) runDocker(ctx context.Context, name string, args []string) 
 	case "restart":
 		err = cmd.RunRestart(ctx, opts)
 		sess.prompt.health.Invalidate()
-	case "ps", "logs":
-		var runErr error
-		if name == "ps" {
-			runErr = cmd.RunPS(ctx, opts)
-		} else {
-			runErr = cmd.RunLogs(ctx, opts)
-		}
-		sess.readonlyFinalize(name, runErr)
+	case "ps":
+		sess.runPSTable(ctx, opts)
+		return
+	case "logs":
+		sess.readonlyFinalize("logs", cmd.RunLogs(ctx, opts))
 		return
 	}
 	switch {

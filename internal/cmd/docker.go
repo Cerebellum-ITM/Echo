@@ -70,6 +70,15 @@ func RunStop(ctx context.Context, opts DockerOpts) error {
 	return docker.Stop(ctx, opts.Cfg.ComposeCmd, opts.Root, opts.Args, opts.StreamOut)
 }
 
+// PSList returns the compose services' containers as structured rows for
+// Echo's styled `ps` table. The REPL renders it; on any error the caller
+// falls back to RunPS (raw streaming) so `ps` never regresses.
+func PSList(ctx context.Context, opts DockerOpts) ([]docker.PSContainer, error) {
+	return docker.PSList(ctx, opts.Cfg.ComposeCmd, opts.Root)
+}
+
+// RunPS streams the raw `<compose> ps` table. Kept as the fallback for the
+// styled table when `--format json` can't be parsed.
 func RunPS(ctx context.Context, opts DockerOpts) error {
 	return docker.PS(ctx, opts.Cfg.ComposeCmd, opts.Root, opts.StreamOut)
 }
