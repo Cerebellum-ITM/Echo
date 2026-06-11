@@ -86,7 +86,7 @@ func buildRight(s theme.Styles, opts Opts, w int) []string {
 		"",
 		s.Label.Render("Tips for getting started"),
 		s.Out.Render("Run ") + s.Info.Render("help") + s.Out.Render(" to see all commands"),
-		s.Out.Render("Type ") + s.Info.Render("exit") + s.Out.Render(" or Ctrl+D to quit"),
+		s.Out.Render("Type ") + s.Info.Render("exit") + s.Out.Render(" or Ctrl+D / Ctrl+X to quit"),
 		divider,
 		s.Label.Render("What's new"),
 		s.Dim.Render("· First release — header + prompt"),

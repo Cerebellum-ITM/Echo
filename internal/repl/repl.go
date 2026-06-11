@@ -372,7 +372,7 @@ func helpSections() []helpSection {
 			{"  --copy", "Copy the matched lines (default: print)"},
 			{"clear", "Clear screen and reprint header"},
 			{"help", "Show this help"},
-			{"exit, quit, Ctrl+D", "Quit Echo"},
+			{"exit, quit, Ctrl+D, Ctrl+X", "Quit Echo"},
 		}},
 	}
 }

@@ -16,7 +16,7 @@ import (
 type lineResult struct {
 	value   string
 	aborted bool // ctrl+c
-	eof     bool // ctrl+d on empty line
+	eof     bool // ctrl+d on empty line, or ctrl+x (explicit quit)
 }
 
 type lineModel struct {
@@ -58,6 +58,12 @@ func (m lineModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.done = true
 				return m, tea.Quit
 			}
+		case "ctrl+x":
+			// Explicit quit (nano-style): exits regardless of whether the
+			// line has text, unlike ctrl+d which only EOFs on an empty line.
+			m.result = lineResult{eof: true}
+			m.done = true
+			return m, tea.Quit
 		case "ctrl+c":
 			m.result = lineResult{aborted: true}
 			m.done = true
