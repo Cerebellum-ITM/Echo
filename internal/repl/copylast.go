@@ -180,6 +180,9 @@ func (sess *session) shellFailureLog(name, captured string, runErr error) {
 // db-*). The clipboard payload is everything from the first err/warn
 // onwards, or the full buffer when no err/warn was logged.
 func (sess *session) commandFailureLog(name string, runErr error, errCount, warnCount int) {
+	if sess.handleQuit(runErr) {
+		return
+	}
 	sess.exitCode = scriptExitCode(runErr, errCount)
 	sess.lastErrors, sess.lastWarnings = errCount, warnCount
 	sess.print(Line{Kind: "out", Text: ""})
@@ -243,6 +246,9 @@ func (sess *session) shellExitLog(name string) {
 // commands do not change state, so a failure does not produce a
 // payload worth pasting.
 func (sess *session) readonlyFinalize(name string, runErr error) {
+	if sess.handleQuit(runErr) {
+		return
+	}
 	sess.exitCode = scriptExitCode(runErr, 0)
 	sess.print(Line{Kind: "out", Text: ""})
 	if runErr != nil {

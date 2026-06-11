@@ -31,7 +31,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `Ctrl+X` ahora cierra el REPL de Echo, además de `exit`/`quit`/`Ctrl+D`.
   A diferencia de `Ctrl+D` (que solo hace EOF con la línea vacía), `Ctrl+X`
   sale de forma explícita aunque haya texto en la línea (estilo nano). La
-  ayuda y el banner de inicio documentan el nuevo atajo.
+  ayuda y el banner de inicio documentan el nuevo atajo. También funciona
+  **dentro de los pickers** (selección de target en `connect`/`i18n-pull`,
+  de módulo, de usuario, etc.): `Ctrl+X` cierra Echo entero —vía el nuevo
+  `cmd.ErrQuit`— en vez de solo cancelar el picker (eso sigue siendo
+  `Esc`/`Ctrl+C`); el texto de ayuda del picker lo refleja.
 
 ### Fixed
 - `i18n-export`, `i18n-update` e `i18n-pull` ahora funcionan contra Odoo 19

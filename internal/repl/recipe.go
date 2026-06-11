@@ -34,6 +34,9 @@ func RunRecipe(s theme.Styles, p theme.Palette, project, id string, stage theme.
 	if pick {
 		selected, perr := pickRecipeFile(cwd, p)
 		if perr != nil {
+			if errors.Is(perr, cmd.ErrQuit) {
+				return exitOK // Ctrl+X: clean quit, no error noise.
+			}
 			fmt.Fprintln(os.Stderr, "echo run: "+perr.Error())
 			if errors.Is(perr, cmd.ErrCancelled) {
 				return exitCancelled

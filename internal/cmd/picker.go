@@ -24,6 +24,7 @@ type fuzzyPicker struct {
 	title    string
 	palette  theme.Palette
 	canceled bool
+	quit     bool // ctrl+x: close Echo entirely, not just this picker
 	single   bool
 }
 
@@ -131,6 +132,11 @@ func (m fuzzyPicker) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "ctrl+c", "esc":
 			m.canceled = true
 			return m, tea.Quit
+		case "ctrl+x":
+			// Quit Echo entirely (nano-style), mirroring Ctrl+X at the REPL
+			// prompt — not just cancel this picker.
+			m.quit = true
+			return m, tea.Quit
 		case "enter":
 			return m, tea.Quit
 		case "tab":
@@ -186,9 +192,9 @@ func (m fuzzyPicker) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m fuzzyPicker) View() string {
 	p := m.palette
 	title := lipgloss.NewStyle().Foreground(p.Accent).Bold(true).Render(m.title)
-	helpText := "type to filter · tab toggle · ↑↓/pgup·pgdn navigate · enter confirm · esc cancel"
+	helpText := "type to filter · tab toggle · ↑↓/pgup·pgdn navigate · enter confirm · esc cancel · ctrl+x quit"
 	if m.single {
-		helpText = "type to filter · ↑↓/pgup·pgdn navigate · enter select · esc cancel"
+		helpText = "type to filter · ↑↓/pgup·pgdn navigate · enter select · esc cancel · ctrl+x quit"
 	}
 	if m.hasRecent() {
 		helpText += " · highlighted = last update"
@@ -284,6 +290,9 @@ func runFuzzyPickerCore(title string, available, recent []string, palette theme.
 		return nil, false, err
 	}
 	fm := final.(fuzzyPicker)
+	if fm.quit {
+		return nil, false, ErrQuit
+	}
 	if fm.canceled {
 		return nil, true, nil
 	}
@@ -316,6 +325,9 @@ func runSingleFuzzyPicker(title string, available []string, palette theme.Palett
 		return "", err
 	}
 	fm := final.(fuzzyPicker)
+	if fm.quit {
+		return "", ErrQuit
+	}
 	if fm.canceled || len(fm.visible) == 0 {
 		return "", ErrCancelled
 	}
