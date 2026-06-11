@@ -7,7 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.0] — 2026-06-10
+
 ### Added
+- New `modstate [--all] [--json]` command (Unit 47): dump every module's
+  `name`/`state`/`version` from `ir_module_module` for the active project's
+  database. Installed-only by default; `--all` widens to every state
+  (`to upgrade`, `uninstalled`, …). Human mode prints an aligned
+  `name | state | version` table (state colored by status, NULL version as
+  `-`); `--json` emits a clean JSON array to **stdout only** — no ANSI, no
+  log lines — one object per module (`{"name":…,"state":…,"version":…}`,
+  a NULL `latest_version` serialized as `null`), so the output pipes
+  straight into `jq`. In `--json` mode any diagnostic goes to stderr and
+  stdout stays empty on error. Headless (no TTY, no picker), one-shot
+  eligible and `-C`-aware like `update`/`install`. Exit codes: `0` ok,
+  `1` DB/execution error, `2` usage / project-not-configured.
 - `echo run --last` (Unit 52): ejecuta directamente el recipe `.echo` más
   reciente del directorio actual sin abrir el picker. No requiere TTY
   (apto para scripts), compone con `--continue-on-error` y `--log`, y el

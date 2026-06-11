@@ -26,7 +26,7 @@ import (
 // `0.5.0+abc1234` or `0.5.0+abc1234.dirty`. A plain `go build` without
 // the Makefile leaves VersionMeta empty (bare semver).
 var (
-	Version     = "0.9.0"
+	Version     = "0.10.0"
 	VersionMeta = ""
 )
 
@@ -189,7 +189,7 @@ var dispatchNames = []string{
 	"help", "clear", "copy-last", "report",
 	"init", "reset", "alias",
 	"up", "down", "stop", "restart", "ps", "logs",
-	"install", "update", "uninstall", "test", "modules", "modinfo", "view",
+	"install", "update", "uninstall", "test", "modules", "modinfo", "modstate", "view",
 	"i18n-export", "i18n-update", "i18n-pull",
 	"db-backup", "db-restore", "db-drop", "db-neutralize", "db-list",
 	"shell", "bash", "psql", "connect",
@@ -255,6 +255,8 @@ func (sess *session) dispatchParsed(ctx context.Context, cmd string, args []stri
 		sess.runModules(ctx, cmd, args)
 	case "modinfo":
 		sess.runModinfo(ctx, args)
+	case "modstate":
+		sess.runModstate(ctx, args)
 	case "view":
 		sess.runView(ctx, args)
 	case "i18n-export", "i18n-update":
@@ -308,6 +310,9 @@ func helpSections() []helpSection {
 			{"modinfo [<mod>]", "Compare DB-installed version vs manifest version"},
 			{"  --copy", "Copy the report to the clipboard"},
 			{"  --last", "Re-show this session's last modinfo (skips the picker)"},
+			{"modstate", "Dump module states from the DB (installed-only)"},
+			{"  --all", "Include every module state, not just installed"},
+			{"  --json", "Emit a JSON array to stdout (logs to stderr)"},
 			{"view [<mod>]", "Pick a module file and view it (bat, else plain)"},
 			{"  --copy", "Copy the file to the clipboard instead"},
 			{"  --last", "Re-display this session's last viewed file (skips pickers)"},

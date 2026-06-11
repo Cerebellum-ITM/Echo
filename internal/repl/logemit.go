@@ -46,13 +46,21 @@ type logField struct {
 // for Odoo loggers, message default fg, and per-key colors on the
 // structured fields.
 func emitOdooLog(level, logger, msg string, fields []logField, s theme.Styles, p theme.Palette, db string) {
+	emitOdooLogTo(os.Stdout, level, logger, msg, fields, s, p, db)
+}
+
+// emitOdooLogTo is emitOdooLog with an explicit destination writer. It
+// backs the default stdout path and the `modstate --json` error path,
+// which writes its diagnostic to stderr so stdout carries only the JSON
+// array. The run-log tee still fires regardless of destination.
+func emitOdooLogTo(w io.Writer, level, logger, msg string, fields []logField, s theme.Styles, p theme.Palette, db string) {
 	// Silenced recipe step (--silent): drop screen + log entirely. The
 	// runner's own step/recap lines are emitted with suppression inactive,
 	// so they stay visible.
 	if outputSuppressed(level) {
 		return
 	}
-	os.Stdout.WriteString(renderOdooLog(level, logger, msg, fields, s, p, db) + "\n")
+	io.WriteString(w, renderOdooLog(level, logger, msg, fields, s, p, db)+"\n")
 	teeRunLog(plainOdooLogFields(level, logger, msg, fields, db))
 }
 
