@@ -8,6 +8,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- Estilo consistente para los últimos comandos que salían "crudos" (Unit 57):
+  - **`db-list`** ahora es una tabla estilizada `name · size · created` (mismo
+    patrón que `modstate`/`ps`): header en acento, la DB activa con `●` verde
+    y nombre en verde, size/fecha atenuados, cierre `echo.db-list: databases
+    listed count=N`.
+  - **`modules`** lista los nombres envueltos al ancho de la terminal (layout
+    del picker) y cierra con `echo.modules: modules listed count=N` en vez del
+    `(N modules)` plano; `modules --config` no cambia.
+  - **`logs`** en modo follow ahora colorea el stream con el mismo parser
+    Odoo que `up`/`down`/`update` (antes pasaba el output crudo de docker);
+    Ctrl+C lo corta limpio. El costo del parse por línea es insignificante
+    aun en vivo. `--no-follow`/`--copy` ya coloreaban.
 - `ps` ahora renderiza una **tabla estilizada** (Unit 56) en vez del
   passthrough crudo de `docker compose ps`: lee los contenedores estructurado
   vía `--format json` y los muestra como `service · image · status · ports`
