@@ -13,8 +13,10 @@ import (
 // instance (over SSH) and write the .po into the local repo. Progress is
 // rendered as `echo.i18n-pull` log lines, matching connect's style.
 func (sess *session) runI18nPull(ctx context.Context, args []string) {
-	sess.startLog("i18n-pull", args)
-
+	// No generic `.start` line here: the bare `i18n-pull` echo carries no
+	// information. The first meaningful line comes from RunI18nPull itself
+	// ("selecting remote target" before the picker, or "target resolved"
+	// when a target is given), followed by the system-status headline.
 	err := cmd.RunI18nPull(ctx, cmd.I18nPullOpts{
 		Cfg:     sess.cfg,
 		Root:    sess.projectDir,
@@ -38,8 +40,13 @@ func (sess *session) runI18nPull(ctx context.Context, args []string) {
 // under `echo.i18n-pull[.sub]`, mirroring connectLogger.
 func (sess *session) i18nPullLogger() func(level, sub, msg, db string, fields ...[2]string) {
 	return func(level, sub, msg, db string, fields ...[2]string) {
+		// sub == "system" is the cross-command system-status line: it uses the
+		// shared `echo.system.status` logger, not this command's namespace.
 		logger := "echo.i18n-pull"
-		if sub != "" {
+		switch {
+		case sub == "system":
+			logger = "echo.system.status"
+		case sub != "":
 			logger += "." + sub
 		}
 		if db == "" {

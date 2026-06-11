@@ -223,7 +223,7 @@ func (sess *session) runStatusLog(cfg *config.Config) {
 	if cli == "" {
 		cli = "unknown"
 	}
-	emitOdooLog("INFO", "echo.run.status", "system",
+	emitOdooLog("INFO", "echo.system.status", "system",
 		[]logField{{"cli", cli}, {"odoo", odoo}, {"project", project}, {"db", db}},
 		sess.styles, sess.palette, sess.cfg.DBName)
 }

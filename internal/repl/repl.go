@@ -813,8 +813,13 @@ func connectDB(res cmd.ConnectResult, fallback string) string {
 // validation, mint, chrome) renders like the rest of the CLI.
 func (sess *session) connectLogger() cmd.ConnectLogger {
 	return func(level, sub, msg, db string, fields ...[2]string) {
+		// sub == "system" is the cross-command system-status line: it uses the
+		// shared `echo.system.status` logger, not this command's namespace.
 		logger := "echo.connect"
-		if sub != "" {
+		switch {
+		case sub == "system":
+			logger = "echo.system.status"
+		case sub != "":
 			logger += "." + sub
 		}
 		if db == "" {

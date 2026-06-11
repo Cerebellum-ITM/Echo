@@ -15,7 +15,7 @@ up front.
 Example (i18n-pull against a remote Odoo 19):
 
 ```
-2026-06-11 11:02:03,114 10354 INFO develop echo.i18n-pull.status: system cli=0.10.0+abc1234.dirty odoo=19.0 project=dvz_ny_odoo_19 db=develop
+2026-06-11 11:02:03,114 10354 INFO develop echo.system.status: system cli=0.10.0+abc1234.dirty odoo=19.0 project=dvz_ny_odoo_19 db=develop
 ```
 
 This is **not** per-command exec logging — running `up`, `update`, etc. does
@@ -23,9 +23,10 @@ not each get a line. One status line at the start of the command, period.
 
 ## Design
 
-A new sub-logger `.status` under each command's logger, emitted at INFO with
-message `system` and four key=value fields rendered by the existing log-field
-machinery:
+A single shared logger `echo.system.status` (not namespaced per command),
+emitted at INFO with message `system` and four key=value fields rendered by
+the existing log-field machinery. The per-command logger wrappers map the
+sentinel `sub == "system"` to this shared logger:
 
 | field     | local (`run`, local `connect`)        | remote (`i18n-pull`, remote `connect`)      |
 | --------- | ------------------------------------- | ------------------------------------------- |
@@ -37,13 +38,25 @@ machinery:
 Empty values render as `unknown` (for `odoo`) / `-` (for `db`/`project`) so a
 missing remote `odoo_version` is loud rather than silently absent.
 
-**Emit point.** For `connect` and `i18n-pull` the line is emitted from the
-`internal/cmd` layer **after** the target/remote profile is resolved, so the
-Odoo fields reflect the actual (possibly remote) instance. Because both the
-interactive REPL path and the one-shot path funnel through `cmd.RunConnect` /
-`cmd.RunI18nPull`, emitting there covers both modes with one call site each.
-For `run`, the line is emitted from `repl.RunRecipe` at start-up (all fields
-are local and the session already holds them).
+**Emit point — as early as the data allows.** The status line must precede
+the first log of the command's actual work. For `run` (all-local) it is the
+very first line, from `repl.RunRecipe`. For `connect` it is emitted right
+after `resolveConnectTarget`, before any minting work. For `i18n-pull` the
+Odoo version is **remote** — unknowable until the target is picked and its
+Echo profile is read over SSH — so the line is emitted the instant
+`fetchRemoteProfile` returns, and it **replaces** the old `connected` line
+(the status line itself signals a successful connection and carries more
+detail). Its preceding lines are only the unavoidable connection bracket
+(`selecting remote target` → picker → `target resolved` → `reading remote
+profile`), and it sits immediately before the first work line (`listing
+modules`). Because both the interactive REPL path and the one-shot path
+funnel through `cmd.RunConnect` / `cmd.RunI18nPull`, emitting there covers
+both modes with one call site each.
+
+**Useless start line removed.** `i18n-pull` no longer emits the generic
+`echo.i18n-pull.start: i18n-pull` line (it carried no information). The first
+meaningful line is `selecting remote target` (before the picker, when no
+`--from`/target resolves) or `target resolved` (when one does).
 
 **Echo version across the import boundary.** `FullVersion()` lives in
 `internal/repl`, which `internal/cmd` cannot import (cycle). A package-level
@@ -69,7 +82,7 @@ path (interactive `Start`, `RunOnce`, `RunRecipe`, `RunDirectConnect`). The
 ### `internal/cmd/connect.go`
 
 In `RunConnect`, right after `resolveConnectTarget` succeeds, call
-`opts.log("INFO", "status", "system", target.dbName, statusFields(...)...)`
+`opts.log("INFO", "system", "system", target.dbName, statusFields(...)...)`
 with `odoo = target.odooVersion`, `project = statusProjectName(opts.Cfg,
 target.remote, opts.Cfg.ConnectRemotePath, "")`, `db = target.dbName`.
 

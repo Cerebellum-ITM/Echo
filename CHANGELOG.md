@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - Línea de **system-status** al iniciar `connect`, `run` e `i18n-pull`
-  (Unit 54): una sola línea Odoo-style `echo.<cmd>.status: system cli=…
+  (Unit 54): una sola línea Odoo-style `echo.system.status: system cli=…
   odoo=… project=… db=…` emitida una vez al arranque (no por sub-comando),
   pensada sobre todo para corridas one-shot sin el banner del REPL. `cli`
   es la versión de Echo con metadata de build (`+<sha>`, `.dirty` si el
@@ -19,7 +19,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   alias `--from`/`compose_project` o el basename del path; `db` el nombre de
   la base. Nunca incluye credenciales. Para exponer la versión del CLI a la
   capa `internal/cmd` (que no puede importar `internal/repl`) se agregó
-  `cmd.EchoVersion`, seteada una vez desde `main.go`.
+  `cmd.EchoVersion`, seteada una vez desde `main.go`. La línea se emite lo
+  más arriba posible: primera en `run`, tras resolver el target en `connect`,
+  y en `i18n-pull` apenas se lee el perfil remoto (reemplaza a la antigua
+  línea `connected`, ya que la versión de Odoo es remota y no se conoce antes
+  de conectarse). `i18n-pull` además dejó de emitir la línea `start` genérica
+  (sin información) y ahora abre con `selecting remote target` / `target
+  resolved`.
 - `Ctrl+X` ahora cierra el REPL de Echo, además de `exit`/`quit`/`Ctrl+D`.
   A diferencia de `Ctrl+D` (que solo hace EOF con la línea vacía), `Ctrl+X`
   sale de forma explícita aunque haya texto en la línea (estilo nano). La

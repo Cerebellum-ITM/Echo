@@ -164,6 +164,7 @@ func RunI18nPull(ctx context.Context, opts I18nPullOpts) error {
 	// No --from and no project [connect]: fall back to the named connect
 	// targets from global.toml (one → auto, several → picker).
 	if errors.Is(err, ErrNoPullRemote) && p.from == "" {
+		opts.log("INFO", "", "selecting remote target", "")
 		name, perr := pickPullTarget(opts)
 		if perr != nil {
 			return perr
@@ -196,9 +197,11 @@ func RunI18nPull(ctx context.Context, opts I18nPullOpts) error {
 		stage:         prof.Stage,
 		odooVersion:   prof.OdooVersion,
 	}
-	opts.log("INFO", "remote", "connected", prof.DBName,
-		[2]string{"odoo", prof.OdooContainer}, [2]string{"db", prof.DBName})
-	opts.log("INFO", "status", "system", prof.DBName,
+	// The system-status line doubles as the "connected" signal: it is the
+	// first line carrying the resolved remote environment (Echo + Odoo
+	// version, project, db), emitted the moment the remote profile is read —
+	// the earliest point the remote Odoo version is known.
+	opts.log("INFO", "system", "system", prof.DBName,
 		statusFields(target.odooVersion,
 			statusProjectName(opts.Cfg, true, remotePath, p.from),
 			prof.DBName)...)
