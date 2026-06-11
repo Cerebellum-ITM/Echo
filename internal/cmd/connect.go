@@ -252,7 +252,7 @@ func resolveConnectSelection(ctx context.Context, opts ConnectOpts, target conne
 		if err != nil {
 			return connectSelection{}, err
 		}
-		u, err := pickConnectUser(users, login, opts.Palette)
+		u, err := pickConnectUser(users, login, opts.Palette, target.stage)
 		if err != nil {
 			return connectSelection{}, err
 		}
@@ -276,7 +276,7 @@ func resolveConnectSelection(ctx context.Context, opts ConnectOpts, target conne
 	if err != nil {
 		return connectSelection{}, err
 	}
-	u, err := pickConnectUser(users, "", opts.Palette)
+	u, err := pickConnectUser(users, "", opts.Palette, target.stage)
 	if err != nil {
 		return connectSelection{}, err
 	}
@@ -418,7 +418,7 @@ func listConnectUsers(ctx context.Context, opts ConnectOpts, target connectTarge
 	return users, nil
 }
 
-func pickConnectUser(users []userRow, login string, palette theme.Palette) (userRow, error) {
+func pickConnectUser(users []userRow, login string, palette theme.Palette, stage string) (userRow, error) {
 	if login != "" {
 		for _, u := range users {
 			if u.Login == login {
@@ -443,7 +443,7 @@ func pickConnectUser(users []userRow, login string, palette theme.Palette) (user
 		labels[i] = fmt.Sprintf("%s %-*s  %s", flag, maxLogin, u.Login, u.Name)
 	}
 
-	chosen, err := runSingleFuzzyPicker("Select user to impersonate", labels, palette)
+	chosen, err := runSingleFuzzyPickerStaged("Select user to impersonate", labels, palette, stage)
 	if err != nil {
 		return userRow{}, err
 	}

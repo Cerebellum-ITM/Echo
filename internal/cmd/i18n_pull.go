@@ -259,7 +259,7 @@ func RunI18nPull(ctx context.Context, opts I18nPullOpts) error {
 		if len(avail) == 0 {
 			return ErrNoModulesAvailable
 		}
-		picked, err := runSingleFuzzyPicker("Module to pull translations for", avail, opts.Palette)
+		picked, err := runSingleFuzzyPickerStaged("Module to pull translations for", avail, opts.Palette, prof.Stage)
 		if err != nil {
 			return err
 		}

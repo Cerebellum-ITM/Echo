@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- Los pickers interactivos (target de `connect`/`i18n-pull`, módulo, usuario,
+  recientes) se reestilizaron a un formato **log-framed** (Unit 55) para que
+  se integren al stream de logs Odoo en vez de verse como un widget aparte:
+  se quitó el título en negrita-acento y la línea divisoria `────`; el filtro
+  va en su propia línea (`filter ›`), las filas quedan indentadas con el
+  nombre resaltado y la columna secundaria (host:path / nombre) atenuada. El
+  acento del cursor/selección se **tiñe según el stage** del target
+  (`dev`=verde, `staging`=amarillo, `prod`=rojo) en los pickers que ya
+  conocen su stage (módulo en export/update e i18n-pull, usuario en connect);
+  el picker de **target** mantiene el acento por defecto porque el stage de
+  cada candidato vive en su perfil remoto y no se conoce hasta conectarse.
+
 ### Added
 - Línea de **system-status** al iniciar `connect`, `run` e `i18n-pull`
   (Unit 54): una sola línea Odoo-style `echo.system.status: system cli=…

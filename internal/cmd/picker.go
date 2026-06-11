@@ -23,15 +23,17 @@ type fuzzyPicker struct {
 	height   int // terminal height; 0 until the first WindowSizeMsg
 	title    string
 	palette  theme.Palette
+	accent   lipgloss.Color // highlight color; stage-tinted when known
 	canceled bool
 	quit     bool // ctrl+x: close Echo entirely, not just this picker
 	single   bool
 }
 
 // chromeLines is the number of non-list lines the picker always renders
-// (title, filter, separator, blank, help) — subtracted from the terminal
-// height to size the scrollable window.
-const chromeLines = 6
+// (title, filter, help, +1 safety) — subtracted from the terminal height to
+// size the scrollable window. The log-framed style dropped the divider and
+// blank line that the old boxy style carried.
+const chromeLines = 4
 
 // defaultListRows is the window size used before the first WindowSizeMsg
 // arrives (or when the height is unknown).
@@ -58,7 +60,6 @@ type pickerItem struct {
 func newFuzzyPicker(title string, available, recent []string, palette theme.Palette) fuzzyPicker {
 	ti := textinput.New()
 	ti.Placeholder = "type to filter…"
-	ti.Prompt = lipgloss.NewStyle().Foreground(palette.Accent).Render("❯ ")
 	ti.Focus()
 
 	recentSet := make(map[string]bool, len(recent))
@@ -76,8 +77,18 @@ func newFuzzyPicker(title string, available, recent []string, palette theme.Pale
 		title:   title,
 		palette: palette,
 	}
+	m.setAccent(palette.Accent)
 	m.recompute()
 	return m
+}
+
+// setAccent sets the picker's highlight color (cursor, selected name, filter
+// caret) and rebuilds the filter prompt to match. Stage-aware callers pass
+// palette.PromptColor(stage); the default is palette.Accent.
+func (m *fuzzyPicker) setAccent(c lipgloss.Color) {
+	m.accent = c
+	m.filter.Prompt = lipgloss.NewStyle().Foreground(m.palette.Faint).Render("filter ") +
+		lipgloss.NewStyle().Foreground(c).Render("› ")
 }
 
 func (m *fuzzyPicker) recompute() {
@@ -189,28 +200,39 @@ func (m fuzzyPicker) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
+// splitLabel divides a columnar picker label at its first run of 2+ spaces:
+// head is the name, tail (including the gap) is the secondary column
+// (host:path, full name, …) rendered dim. A single-word label has no tail.
+func splitLabel(s string) (head, tail string) {
+	if i := strings.Index(s, "  "); i >= 0 {
+		return s[:i], s[i:]
+	}
+	return s, ""
+}
+
+// View renders the picker in the "log-framed" style: a subdued header, an
+// indented body (filter line, rows, help), no boxy title or divider — so it
+// blends into the surrounding Odoo-style log stream. The highlight color
+// (cursor, selected name) is m.accent, stage-tinted when known.
 func (m fuzzyPicker) View() string {
 	p := m.palette
-	title := lipgloss.NewStyle().Foreground(p.Accent).Bold(true).Render(m.title)
-	helpText := "type to filter · tab toggle · ↑↓/pgup·pgdn navigate · enter confirm · esc cancel · ctrl+x quit"
+	helpText := "↑↓/pgup·pgdn move · tab toggle · enter confirm · esc cancel · ctrl+x quit"
 	if m.single {
-		helpText = "type to filter · ↑↓/pgup·pgdn navigate · enter select · esc cancel · ctrl+x quit"
+		helpText = "↑↓/pgup·pgdn move · enter select · esc cancel · ctrl+x quit"
 	}
 	if m.hasRecent() {
 		helpText += " · highlighted = last update"
 	}
-	help := lipgloss.NewStyle().Foreground(p.Faint).Render(helpText)
-	counter := lipgloss.NewStyle().Foreground(p.Dim).Render(
-		fmt.Sprintf(" (%d/%d)", len(m.visible), len(m.items)),
-	)
 
 	var b strings.Builder
-	b.WriteString(title + counter + "\n")
-	b.WriteString(m.filter.View() + "\n")
-	b.WriteString(strings.Repeat("─", 40) + "\n")
+	b.WriteString(lipgloss.NewStyle().Foreground(p.Dim).Render(m.title))
+	b.WriteString(lipgloss.NewStyle().Foreground(p.Faint).Render(
+		fmt.Sprintf("  (%d/%d)", len(m.visible), len(m.items))))
+	b.WriteString("\n  " + m.filter.View() + "\n")
 
+	dim := lipgloss.NewStyle().Foreground(p.Dim)
 	if len(m.visible) == 0 {
-		b.WriteString(lipgloss.NewStyle().Foreground(p.Dim).Render("  (no matches)") + "\n")
+		b.WriteString(dim.Render("  (no matches)") + "\n")
 	} else {
 		rows := m.maxRows()
 		start := m.offset
@@ -218,39 +240,44 @@ func (m fuzzyPicker) View() string {
 		if end > len(m.visible) {
 			end = len(m.visible)
 		}
-		moreStyle := lipgloss.NewStyle().Foreground(p.Dim)
 		if start > 0 {
-			b.WriteString(moreStyle.Render(fmt.Sprintf("  ↑ %d more", start)) + "\n")
+			b.WriteString(dim.Render(fmt.Sprintf("  ↑ %d more", start)) + "\n")
 		}
 		for i := start; i < end; i++ {
 			idx := m.visible[i]
 			it := m.items[idx]
 			cursorStr := "  "
 			if i == m.cursor {
-				cursorStr = lipgloss.NewStyle().Foreground(p.Accent2).Render("❯ ")
+				cursorStr = lipgloss.NewStyle().Foreground(m.accent).Render("❯ ")
 			}
-			name := it.name
-			if i == m.cursor {
-				name = lipgloss.NewStyle().Foreground(p.Accent).Bold(true).Render(name)
-			} else if it.recent {
-				name = lipgloss.NewStyle().Foreground(p.Info).Render(name)
+			head, tail := splitLabel(it.name)
+			headStyle := lipgloss.NewStyle().Foreground(p.Fg)
+			switch {
+			case i == m.cursor:
+				headStyle = lipgloss.NewStyle().Foreground(m.accent).Bold(true)
+			case it.recent:
+				headStyle = lipgloss.NewStyle().Foreground(p.Info)
 			}
-			if m.single {
-				b.WriteString(cursorStr + name + "\n")
-				continue
+			row := "  " + cursorStr
+			if !m.single {
+				checkbox := lipgloss.NewStyle().Foreground(p.Faint).Render("[ ]")
+				if it.selected {
+					checkbox = lipgloss.NewStyle().Foreground(p.Success).Render("[×]")
+				}
+				row += checkbox + " "
 			}
-			checkbox := lipgloss.NewStyle().Foreground(p.Faint).Render("[ ]")
-			if it.selected {
-				checkbox = lipgloss.NewStyle().Foreground(p.Success).Render("[×]")
+			row += headStyle.Render(head)
+			if tail != "" {
+				row += dim.Render(tail)
 			}
-			b.WriteString(cursorStr + checkbox + " " + name + "\n")
+			b.WriteString(row + "\n")
 		}
 		if end < len(m.visible) {
-			b.WriteString(moreStyle.Render(fmt.Sprintf("  ↓ %d more", len(m.visible)-end)) + "\n")
+			b.WriteString(dim.Render(fmt.Sprintf("  ↓ %d more", len(m.visible)-end)) + "\n")
 		}
 	}
 
-	b.WriteString("\n" + help)
+	b.WriteString("  " + lipgloss.NewStyle().Foreground(p.Faint).Render(helpText))
 	return b.String()
 }
 
@@ -315,11 +342,22 @@ func runFuzzyPicker(title string, available []string, palette theme.Palette) ([]
 // runSingleFuzzyPicker is the single-select variant: Enter commits the
 // highlighted row. Returns ErrCancelled on Esc / empty list.
 func runSingleFuzzyPicker(title string, available []string, palette theme.Palette) (string, error) {
+	return runSingleFuzzyPickerStaged(title, available, palette, "")
+}
+
+// runSingleFuzzyPickerStaged is runSingleFuzzyPicker with the highlight
+// tinted by the target's stage (dev/staging/prod). An empty stage keeps the
+// default accent — used by pickers whose stage isn't yet known (e.g. the
+// connect/i18n-pull target picker).
+func runSingleFuzzyPickerStaged(title string, available []string, palette theme.Palette, stage string) (string, error) {
 	if err := requireTTY("pass the selection as a command argument"); err != nil {
 		return "", err
 	}
 	m := newFuzzyPicker(title, available, nil, palette)
 	m.single = true
+	if stage != "" {
+		m.setAccent(palette.PromptColor(theme.StageFromString(stage)))
+	}
 	final, err := tea.NewProgram(m).Run()
 	if err != nil {
 		return "", err

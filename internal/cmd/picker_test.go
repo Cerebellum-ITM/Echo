@@ -35,6 +35,24 @@ func TestNewFuzzyPickerNoRecent(t *testing.T) {
 	}
 }
 
+func TestSplitLabel(t *testing.T) {
+	cases := []struct{ in, head, tail string }{
+		{"develop         Ionos:/srv/odoo", "develop", "         Ionos:/srv/odoo"},
+		{"account", "account", ""},
+		{"! admin   Alice Johnson", "! admin", "   Alice Johnson"},
+		{"single", "single", ""},
+	}
+	for _, c := range cases {
+		head, tail := splitLabel(c.in)
+		if head != c.head || tail != c.tail {
+			t.Errorf("splitLabel(%q) = (%q, %q), want (%q, %q)", c.in, head, tail, c.head, c.tail)
+		}
+		if head+tail != c.in {
+			t.Errorf("splitLabel(%q): head+tail must reconstruct the input", c.in)
+		}
+	}
+}
+
 // confirmRepeatLast must skip silently (return nil) when stdin is not a
 // TTY — it's only ever reached on the interactive empty-picker path, and a
 // TTY-less caller (script mode) should never block or fail here.

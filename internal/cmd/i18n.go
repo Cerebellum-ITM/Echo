@@ -133,7 +133,7 @@ func pickModuleSingle(cfg *config.Config, root string, palette theme.Palette, ti
 	if len(available) == 0 {
 		return "", ErrNoModulesAvailable
 	}
-	return runSingleFuzzyPicker(title, available, palette)
+	return runSingleFuzzyPickerStaged(title, available, palette, cfg.Stage)
 }
 
 // RunI18nExport extracts <mod>'s translations into a .po file. By
