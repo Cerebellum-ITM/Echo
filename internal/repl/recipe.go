@@ -64,6 +64,11 @@ func RunRecipe(s theme.Styles, p theme.Palette, project, id string, stage theme.
 	sess, _ := newSession(s, p, project, id, stage, version, themeName, username, cwd, cfg)
 	ctx := context.Background()
 
+	// System-status line: emitted once at the start of the run (not per
+	// step), so a headless run shows which Echo + Odoo environment it ran
+	// against, mirroring connect / i18n-pull.
+	sess.runStatusLog(cfg)
+
 	// Make the transcript show which file --last resolved to.
 	if last {
 		sess.runLog("INFO", "latest recipe → "+recipeLabel(path))
@@ -195,6 +200,32 @@ func recipeLabel(recipePath string) string {
 // runLog emits an `echo.run` orchestration line in Echo's Odoo log style.
 func (sess *session) runLog(level, msg string, fields ...logField) {
 	emitOdooLog(level, "echo.run", msg, fields, sess.styles, sess.palette, sess.cfg.DBName)
+}
+
+// runStatusLog emits the one-shot system-status line at the start of a run:
+// the Echo CLI version (with build metadata / dirty marker) and the local
+// Odoo environment (version, project, db). Empty values render loud
+// ("unknown"/"-") so a mis-config is visible.
+func (sess *session) runStatusLog(cfg *config.Config) {
+	odoo := cfg.OdooVersion
+	if odoo == "" {
+		odoo = "unknown"
+	}
+	project := resolveComposeProject(cfg)
+	if project == "" {
+		project = "-"
+	}
+	db := cfg.DBName
+	if db == "" {
+		db = "-"
+	}
+	cli := FullVersion()
+	if cli == "" {
+		cli = "unknown"
+	}
+	emitOdooLog("INFO", "echo.run.status", "system",
+		[]logField{{"cli", cli}, {"odoo", odoo}, {"project", project}, {"db", db}},
+		sess.styles, sess.palette, sess.cfg.DBName)
 }
 
 // stepOutcome is one recipe step's result, captured by the runStep

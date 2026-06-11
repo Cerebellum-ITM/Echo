@@ -110,6 +110,10 @@ func RunConnect(ctx context.Context, opts ConnectOpts) (ConnectResult, error) {
 	opts.log("INFO", "", "target resolved", db,
 		[2]string{"mode", connectMode(target.remote)},
 		[2]string{"container", target.odooContainer})
+	opts.log("INFO", "status", "system", db,
+		statusFields(target.odooVersion,
+			statusProjectName(opts.Cfg, target.remote, opts.Cfg.ConnectRemotePath, ""),
+			db)...)
 
 	if err := maybeConfirmConnectProd(opts, target); err != nil {
 		return res, err

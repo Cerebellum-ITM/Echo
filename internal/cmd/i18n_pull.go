@@ -198,6 +198,10 @@ func RunI18nPull(ctx context.Context, opts I18nPullOpts) error {
 	}
 	opts.log("INFO", "remote", "connected", prof.DBName,
 		[2]string{"odoo", prof.OdooContainer}, [2]string{"db", prof.DBName})
+	opts.log("INFO", "status", "system", prof.DBName,
+		statusFields(target.odooVersion,
+			statusProjectName(opts.Cfg, true, remotePath, p.from),
+			prof.DBName)...)
 	conn := odoo.Conn{DB: target.dbName, Host: target.dbContainer}
 	pg := remotePullEnv(ctx, sshHost, remotePath)
 	conn.Port = pg["POSTGRES_PORT"]

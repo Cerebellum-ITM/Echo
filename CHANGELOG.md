@@ -8,6 +8,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Línea de **system-status** al iniciar `connect`, `run` e `i18n-pull`
+  (Unit 54): una sola línea Odoo-style `echo.<cmd>.status: system cli=…
+  odoo=… project=… db=…` emitida una vez al arranque (no por sub-comando),
+  pensada sobre todo para corridas one-shot sin el banner del REPL. `cli`
+  es la versión de Echo con metadata de build (`+<sha>`, `.dirty` si el
+  árbol está sucio); `odoo` es la versión del target (local `cfg.OdooVersion`
+  o remota `RemoteProfile.OdooVersion`), que muestra `unknown` cuando falta
+  —diagnóstico inmediato de un target mal configurado—; `project` es el
+  alias `--from`/`compose_project` o el basename del path; `db` el nombre de
+  la base. Nunca incluye credenciales. Para exponer la versión del CLI a la
+  capa `internal/cmd` (que no puede importar `internal/repl`) se agregó
+  `cmd.EchoVersion`, seteada una vez desde `main.go`.
 - `Ctrl+X` ahora cierra el REPL de Echo, además de `exit`/`quit`/`Ctrl+D`.
   A diferencia de `Ctrl+D` (que solo hace EOF con la línea vacía), `Ctrl+X`
   sale de forma explícita aunque haya texto en la línea (estilo nano). La
