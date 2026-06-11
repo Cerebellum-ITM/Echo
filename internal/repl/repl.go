@@ -883,6 +883,15 @@ func (sess *session) runReset() {
 // Odoo log style; everything else goes through the kind classifier (which
 // also keeps traceback continuations grouped via err/warn inheritance).
 func (sess *session) emitStreamLine(lc *logColorer, line string) {
+	// Normalize away any embedded ANSI before parsing. `update`/`install`
+	// run Odoo under `exec -T` (no TTY → plain logs), but `docker compose
+	// logs` replays whatever the container stored, which carries Odoo's
+	// ColoredFormatter SGR codes when it ran attached to a TTY. Those codes
+	// break the Odoo/loguru prefix regexes, so the line would fall through
+	// to a verbatim print with docker's native colors instead of Echo's
+	// per-segment styling. Stripping here routes logs through the exact same
+	// formatter as `update` (matching what the `shell` transform already does).
+	line = stripANSISeq(line)
 	if cl, ok := parseComposeProgress(line); ok {
 		emitOdooLog(cl.level, "docker."+cl.resource, cl.state,
 			[]logField{{"name", cl.name}},

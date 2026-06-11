@@ -98,7 +98,9 @@ func PS(ctx context.Context, composeCmd, dir string, onLine func(string)) error 
 // Logs runs `<compose> logs [--tail N] [services...]` (bounded) and streams
 // output. tail is the line count limit; empty string means unbounded.
 func Logs(ctx context.Context, composeCmd, dir, tail string, services []string, onLine func(string)) error {
-	args := []string{"logs"}
+	// --no-log-prefix drops compose's `<service>  | ` gutter so each line
+	// reaches the colorizer raw, exactly like the Odoo logs `update` streams.
+	args := []string{"logs", "--no-log-prefix"}
 	if tail != "" {
 		args = append(args, "--tail", tail)
 	}
@@ -127,7 +129,9 @@ func LogsFollow(ctx context.Context, composeCmd, dir, tail string, services []st
 		}
 	}()
 
-	full := append(SplitCompose(composeCmd), "logs", "-f")
+	// --no-log-prefix: strip compose's `<service>  | ` gutter so each line
+	// reaches emitStreamLine raw and colorizes like `up`/`update`.
+	full := append(SplitCompose(composeCmd), "logs", "-f", "--no-log-prefix")
 	if tail != "" {
 		full = append(full, "--tail", tail)
 	}

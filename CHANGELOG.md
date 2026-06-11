@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **`logs`** ahora se pinta **idéntico a `update`** (Unit 58). Dos causas que
+  Unit 57 no resolvió:
+  1. `docker compose logs -f` antepone un gutter `servicio  | ` a cada línea
+     que rompía el parser de Odoo → se añade `--no-log-prefix` a
+     `Logs`/`LogsFollow`.
+  2. A diferencia de `update`/`install` (`exec -T`, logs planos), `docker
+     compose logs` reproduce el ANSI que Odoo guardó cuando corrió con TTY;
+     esos códigos SGR rompían `formatOdooLine` y la línea caía a impresión
+     cruda con los colores nativos de Odoo (logger sin pastel, etc.). Ahora
+     `emitStreamLine` limpia el ANSI con `stripANSISeq` antes de parsear —el
+     mismo tratamiento que ya hacía `shell`— así `logs` y `update` pasan por
+     el mismo formateador por segmentos (ts dim, chip de nivel, db en acento,
+     logger en pastel, mensaje normal). Para `update` es no-op (no trae ANSI).
+
+### Changed
+- **`modules`** ahora prefija cada módulo con el glyph nerd-font ``
+  (`cod-package`) en color de acento y colorea el nombre, conservando el wrap
+  al ancho de terminal y la línea de cierre `echo.modules: modules listed
+  count=N` (Unit 58).
+
 ## [0.11.0] — 2026-06-11
 
 ### Changed
