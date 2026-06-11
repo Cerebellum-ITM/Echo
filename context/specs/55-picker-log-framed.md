@@ -17,20 +17,24 @@ block becomes a compact, indented body under a subdued header, bracketed in
 practice by the command's own log lines (e.g. `echo.i18n-pull: selecting
 remote target` before, `target resolved` after).
 
-Layout (header at col 0, body indented 2):
+Layout — every line hangs off a single left bar `│` colored by the stage:
 
 ```
-select remote target  (2/2)            ← title dim, counter faint
-  filter ›                             ← own line; prompt "filter " faint + "› " accent
-  ❯ develop        Ionos-…:/path        ← cursor + name accent, tail (host:path) dim
-    habitta_prod   Ionos-…:/path        ← name fg, tail dim
-  · ↑↓ move · enter select · ctrl+x quit ← help faint
+│ select remote target  (2/2)          ← bar = stage color; title dim, counter faint
+│ filter › type to filter…             ← own line; prompt "filter " faint + "› " stage; placeholder faint
+│ ❯ develop        Ionos-…:/path         ← cursor + name stage, tail (host:path) dim
+│   habitta_prod   Ionos-…:/path         ← name fg, tail dim
+│ ↑↓ move · enter select · ctrl+x quit  ← help faint
 ```
 
 - **No `────` divider, no blank line.** `chromeLines` drops from 6 to 4
   (title, filter, help, +1 safety).
-- **Filter on its own line** (the fix to the earlier mockup): the textinput
-  prompt becomes `faint("filter ") + accent("› ")`.
+- **Left bar `│`** in `m.accent` (the stage color) on every line — the
+  external accent that makes the env legible at a glance (red bar in prod).
+- **Filter on its own line**: the textinput prompt becomes `faint("filter ")
+  + accent("› ")`, and `PlaceholderStyle` is set to `palette.Faint` so the
+  `type to filter…` hint is actually readable on the dark background (it was
+  near-invisible, showing only the cursor's first char).
 - **Two-tone rows**: split each label at its first run of 2+ spaces
   (`splitLabel`) → head (the name) rendered in fg / accent-bold (cursor) /
   Info (recent); tail (the `host:path` / full-name column) always dim. A
@@ -47,10 +51,11 @@ When the picker is opened from a context whose stage is known, the accent
 is `palette.PromptColor(stage)` — green (dev), yellow (staging), red (prod) —
 so a prod session's picker visibly turns red.
 
-- **Where applied (stage known):** the module picker in `i18n-export` /
-  `i18n-update` (`cfg.Stage`), the i18n-pull module picker (`prof.Stage`,
-  known after the remote profile is read), and the connect user picker
-  (`target.stage`).
+- **Where applied (stage known):** every picker opened from a resolved
+  context — the `install`/`update`/`uninstall`/`test`/`build` module pickers
+  (`cfg.Stage`), the `i18n-export`/`i18n-update` module picker (`cfg.Stage`),
+  the i18n-pull module picker (`prof.Stage`, known after the remote profile is
+  read), and the connect user + recent-sessions pickers (`target.stage`).
 - **Where NOT applied (stage unknown):** the connect / i18n-pull **target**
   picker. Each candidate target may be a different env, and its stage lives
   in that host's remote profile — unknowable without an SSH round-trip per

@@ -390,7 +390,7 @@ func pickModulesInteractive(ctx context.Context, opts ModulesOpts, title string,
 	if len(available) == 0 {
 		return nil, ErrNoModulesAvailable
 	}
-	picked, canceled, err := runFuzzyPickerCore(title, available, recent, opts.Palette)
+	picked, canceled, err := runFuzzyPickerCore(title, available, recent, opts.Palette, opts.Cfg.Stage)
 	if err != nil {
 		return nil, err
 	}
@@ -412,7 +412,7 @@ func pickModulesForUpdate(ctx context.Context, opts ModulesOpts, recent []string
 	if len(available) == 0 {
 		return nil, false, ErrNoModulesAvailable
 	}
-	return runFuzzyPickerCore("Modules to update", available, recent, opts.Palette)
+	return runFuzzyPickerCore("Modules to update", available, recent, opts.Palette, opts.Cfg.Stage)
 }
 
 // addons modes recorded in the per-project config.
