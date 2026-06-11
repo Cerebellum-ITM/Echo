@@ -32,3 +32,75 @@ func TestWithI18nOverwrite(t *testing.T) {
 		t.Errorf("WithI18nOverwrite(base, true) = %v, want %v", got, want)
 	}
 }
+
+func TestMajor(t *testing.T) {
+	cases := map[string]int{
+		"19": 19, "19.0": 19, "18.0": 18, "17": 17,
+		"": 0, "abc": 0, " 19 ": 19, "saas~17.2": 0,
+	}
+	for in, want := range cases {
+		if got := Major(in); got != want {
+			t.Errorf("Major(%q) = %d, want %d", in, got, want)
+		}
+	}
+}
+
+func TestRenderConf(t *testing.T) {
+	got := string(RenderConf(Conn{DB: "develop", Host: "db", Port: "5432", User: "odoo", Password: "secret"}))
+	want := "[options]\ndb_host = db\ndb_port = 5432\ndb_user = odoo\ndb_password = secret\n"
+	if got != want {
+		t.Errorf("RenderConf full = %q, want %q", got, want)
+	}
+	// db_name is never emitted (callers pass it via -d); empty fields skip.
+	got = string(RenderConf(Conn{DB: "develop", Host: "db"}))
+	if want := "[options]\ndb_host = db\n"; got != want {
+		t.Errorf("RenderConf sparse = %q, want %q", got, want)
+	}
+}
+
+func TestExportI18nLegacy(t *testing.T) {
+	c := Conn{DB: "dev", Host: "db", User: "odoo"}
+	got := ExportI18n(c, "18.0", "sale", "es_MX", "/tmp/x.po", "/tmp/ignored.conf")
+	want := Cmd{"odoo", "-d", "dev", "--db_host", "db", "--db_user", "odoo",
+		"--modules=sale", "-l", "es_MX", "--i18n-export=/tmp/x.po", "--stop-after-init"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("legacy export = %v, want %v", got, want)
+	}
+}
+
+func TestExportI18nV19(t *testing.T) {
+	c := Conn{DB: "dev", Host: "db", User: "odoo", Password: "secret"}
+	got := ExportI18n(c, "19.0", "sale", "es_MX", "/tmp/x.po", "/tmp/echo.conf")
+	want := Cmd{"odoo", "i18n", "export", "-c", "/tmp/echo.conf", "-d", "dev",
+		"-l", "es_MX", "-o", "/tmp/x.po", "sale"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("v19 export = %v, want %v", got, want)
+	}
+	// No --db_* / --no-http / --stop-after-init leak onto the v19 argv.
+	for _, a := range got {
+		switch a {
+		case "--db_host", "--db_user", "--db_password", "--db_port", "--no-http", "--stop-after-init":
+			t.Errorf("v19 export must not contain %q", a)
+		}
+	}
+}
+
+func TestUpdateI18nV19(t *testing.T) {
+	c := Conn{DB: "dev", Host: "db"}
+	got := UpdateI18n(c, "19", "sale", "es_MX", "/tmp/x.po", "/tmp/echo.conf")
+	want := Cmd{"odoo", "i18n", "import", "-c", "/tmp/echo.conf", "-d", "dev",
+		"-l", "es_MX", "-w", "/tmp/x.po"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("v19 import = %v, want %v", got, want)
+	}
+}
+
+func TestUpdateI18nLegacy(t *testing.T) {
+	c := Conn{DB: "dev"}
+	got := UpdateI18n(c, "17.0", "sale", "es_MX", "/tmp/x.po", "")
+	want := Cmd{"odoo", "-d", "dev", "--modules=sale", "-l", "es_MX",
+		"--i18n-import=/tmp/x.po", "--i18n-overwrite", "--stop-after-init"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("legacy import = %v, want %v", got, want)
+	}
+}

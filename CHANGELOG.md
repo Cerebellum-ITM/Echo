@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- `i18n-export`, `i18n-update` e `i18n-pull` ahora funcionan contra Odoo 19
+  (Unit 53). Odoo 19 eliminó la forma por flags de servidor
+  (`--modules=`, `--i18n-export=`, `--i18n-import=`) y la reemplazó por el
+  subcomando `odoo i18n export|import`, cuyo único input de conexión es
+  `-c`/`-d` (las flags `--db_*` ya no se aceptan en ese parser). Echo emite
+  ahora la forma nueva en instancias 19+ y conserva la forma legacy en
+  17/18, eligiendo según la versión de Odoo configurada del target
+  (`cfg.odoo_version` en local; `RemoteProfile.OdooVersion` propagado al
+  `connectTarget` en remoto). El error `no such option: --modules` queda
+  resuelto.
+
+### Added
+- Builders `odoo.ExportI18n`/`odoo.UpdateI18n` ahora son version-aware y
+  reciben la versión + un `confPath`; helpers nuevos `odoo.Major` (parsea el
+  major de la versión) y `odoo.RenderConf` (genera un `odoo.conf` mínimo con
+  la conexión de DB). En 19+ las credenciales viajan en un `odoo.conf`
+  efímero escrito dentro del contenedor (`/tmp/echo-i18n-*.conf`,
+  regenerado por invocación y borrado junto al `.po`), porque el subcomando
+  `i18n` no acepta `--db_*`. `RemoteProfile` ahora lee `odoo_version` del
+  perfil remoto (Unit 53).
+
 ## [0.10.0] — 2026-06-10
 
 ### Added

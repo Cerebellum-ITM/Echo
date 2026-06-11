@@ -68,6 +68,7 @@ type connectTarget struct {
 	dbContainer   string
 	dbName        string
 	stage         string
+	odooVersion   string
 }
 
 type userRow struct {
@@ -301,6 +302,7 @@ func resolveConnectTarget(ctx context.Context, opts ConnectOpts) (connectTarget,
 			dbContainer:   opts.Cfg.DBContainer,
 			dbName:        opts.Cfg.DBName,
 			stage:         opts.Cfg.Stage,
+			odooVersion:   opts.Cfg.OdooVersion,
 		}, nil
 	}
 	if opts.Cfg.ConnectRemotePath == "" {
@@ -317,6 +319,7 @@ func resolveConnectTarget(ctx context.Context, opts ConnectOpts) (connectTarget,
 		dbContainer:   prof.DBContainer,
 		dbName:        prof.DBName,
 		stage:         prof.Stage,
+		odooVersion:   prof.OdooVersion,
 	}, nil
 }
 

@@ -115,6 +115,16 @@ func tmpPathInContainer() string {
 	return fmt.Sprintf("/tmp/echo-i18n-%d-%s.po", time.Now().UnixNano(), hex.EncodeToString(b[:]))
 }
 
+// tmpConfInContainer returns a unique /tmp/echo-i18n-*.conf path. Used on
+// Odoo 19 to hold the db connection for the `odoo i18n` subcommand (which
+// takes no --db_* flags). Pure function — caller creates and deletes it
+// inside the container.
+func tmpConfInContainer() string {
+	var b [4]byte
+	_, _ = rand.Read(b[:])
+	return fmt.Sprintf("/tmp/echo-i18n-%d-%s.conf", time.Now().UnixNano(), hex.EncodeToString(b[:]))
+}
+
 // pickModuleSingle opens the fuzzy picker over the locally available
 // modules and returns the chosen one. ErrNoModulesAvailable when there
 // are no candidates, ErrCancelled on Esc.
@@ -153,18 +163,26 @@ func RunI18nExport(ctx context.Context, opts I18nOpts) error {
 		return fmt.Errorf("create i18n dir: %w", err)
 	}
 
-	containerTmp := tmpPathInContainer()
-	defer cleanupContainerTmp(ctx, opts, containerTmp)
-
-	argv := odoo.ExportI18n(buildI18nConn(opts), parsed.module, parsed.lang, containerTmp)
-	if err := runOdooI18n(ctx, opts, argv); err != nil {
-		return err
-	}
-
 	id, err := docker.ContainerID(ctx, opts.Cfg.ComposeCmd, opts.Root, opts.Cfg.OdooContainer)
 	if err != nil {
 		return err
 	}
+
+	containerTmp := tmpPathInContainer()
+	defer cleanupContainerTmp(ctx, opts, containerTmp)
+
+	conn := buildI18nConn(opts)
+	confPath, confCleanup, err := writeContainerConf(ctx, opts, id, conn)
+	if err != nil {
+		return err
+	}
+	defer confCleanup()
+
+	argv := odoo.ExportI18n(conn, opts.Cfg.OdooVersion, parsed.module, parsed.lang, containerTmp, confPath)
+	if err := runOdooI18n(ctx, opts, argv); err != nil {
+		return err
+	}
+
 	if err := docker.CopyFromContainer(ctx, id, containerTmp, hostDest); err != nil {
 		return err
 	}
@@ -221,7 +239,14 @@ func RunI18nUpdate(ctx context.Context, opts I18nOpts) error {
 		return err
 	}
 
-	argv := odoo.UpdateI18n(buildI18nConn(opts), parsed.module, parsed.lang, containerTmp)
+	conn := buildI18nConn(opts)
+	confPath, confCleanup, err := writeContainerConf(ctx, opts, id, conn)
+	if err != nil {
+		return err
+	}
+	defer confCleanup()
+
+	argv := odoo.UpdateI18n(conn, opts.Cfg.OdooVersion, parsed.module, parsed.lang, containerTmp, confPath)
 	return runOdooI18n(ctx, opts, argv)
 }
 
@@ -251,6 +276,37 @@ func buildI18nConn(opts I18nOpts) odoo.Conn {
 // runOdoo does for modules.
 func runOdooI18n(ctx context.Context, opts I18nOpts, argv odoo.Cmd) error {
 	return docker.Exec(ctx, opts.Cfg.ComposeCmd, opts.Root, opts.Cfg.OdooContainer, argv, opts.StreamOut)
+}
+
+// writeContainerConf, on Odoo 19+, renders conn into a temp odoo.conf and
+// copies it into the Odoo container, returning its in-container path and a
+// best-effort cleanup. It exists because the `odoo i18n` subcommand takes
+// no --db_* flags, so the connection must ride in a `-c` config file. On
+// older series it is a no-op: it returns ("", noop, nil) and the legacy
+// argv carries the connection as flags instead.
+func writeContainerConf(ctx context.Context, opts I18nOpts, id string, conn odoo.Conn) (string, func(), error) {
+	noop := func() {}
+	if odoo.Major(opts.Cfg.OdooVersion) < 19 {
+		return "", noop, nil
+	}
+	host, err := os.CreateTemp("", "echo-i18n-*.conf")
+	if err != nil {
+		return "", noop, fmt.Errorf("create temp conf: %w", err)
+	}
+	hostPath := host.Name()
+	_, werr := host.Write(odoo.RenderConf(conn))
+	cerr := host.Close()
+	if werr != nil || cerr != nil {
+		_ = os.Remove(hostPath)
+		return "", noop, fmt.Errorf("write temp conf: %w", errors.Join(werr, cerr))
+	}
+	defer os.Remove(hostPath)
+
+	containerPath := tmpConfInContainer()
+	if err := docker.CopyToContainer(ctx, id, hostPath, containerPath); err != nil {
+		return "", noop, fmt.Errorf("copy conf to container: %w", err)
+	}
+	return containerPath, func() { cleanupContainerTmp(ctx, opts, containerPath) }, nil
 }
 
 // cleanupContainerTmp removes a /tmp/echo-i18n-*.po inside the Odoo
