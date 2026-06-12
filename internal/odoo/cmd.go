@@ -161,6 +161,22 @@ func Update(c Conn, modules []string) Cmd {
 	return append(args, "-u", strings.Join(modules, ","), "--stop-after-init")
 }
 
+// InstallUpdate builds a single argv combining an install set (`-i`) and
+// an update set (`-u`) in one Odoo run — used by `deploy`, where one
+// commit batch may carry both new and existing modules. Either set may be
+// empty (its flag is omitted); demo data is always skipped, matching a
+// deployment context.
+func InstallUpdate(c Conn, install, update []string) Cmd {
+	args := append(Cmd{"odoo"}, c.flags()...)
+	if len(install) > 0 {
+		args = append(args, "-i", strings.Join(install, ","), "--without-demo=all")
+	}
+	if len(update) > 0 {
+		args = append(args, "-u", strings.Join(update, ","))
+	}
+	return append(args, "--stop-after-init")
+}
+
 // UpdateAll builds the argv to update every installed module.
 func UpdateAll(c Conn) Cmd {
 	args := append(Cmd{"odoo"}, c.flags()...)

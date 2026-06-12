@@ -53,6 +53,18 @@ const partialFlushDelay = 30 * time.Millisecond
 // user's terminal (the capture buffer keeps the raw text, ANSI-free). A nil
 // transform keeps the plain byte-for-byte tee.
 func ExecInteractive(ctx context.Context, composeCmd, dir, container string, argv []string, transform LineTransform) (string, bool, error) {
+	full := append(SplitCompose(composeCmd), "exec", container)
+	full = append(full, argv...)
+	return RunInteractive(ctx, full, dir, transform)
+}
+
+// RunInteractive runs an arbitrary argv under the host-side PTY machinery
+// described on ExecInteractive (raw mode, resize propagation, ^C
+// detection, tee-capture, optional LineTransform). Extracted so non-
+// compose interactive subprocesses — the remote `shell` over
+// `ssh -tt` — get the exact same capture and styling path. An empty dir
+// inherits the current working directory.
+func RunInteractive(ctx context.Context, argv []string, dir string, transform LineTransform) (string, bool, error) {
 	var interrupted atomic.Bool
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, os.Interrupt)
@@ -67,9 +79,7 @@ func ExecInteractive(ctx context.Context, composeCmd, dir, container string, arg
 		}
 	}()
 
-	full := append(SplitCompose(composeCmd), "exec", container)
-	full = append(full, argv...)
-	cmd := exec.CommandContext(ctx, full[0], full[1:]...)
+	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
 	cmd.Dir = dir
 
 	// Non-TTY fallback: capture both streams via pipes. The subprocess

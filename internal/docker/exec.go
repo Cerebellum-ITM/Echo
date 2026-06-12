@@ -2,6 +2,7 @@ package docker
 
 import (
 	"context"
+	"io"
 	"os"
 	"os/exec"
 )
@@ -24,11 +25,17 @@ func ExecWithStdin(ctx context.Context, composeCmd, dir, container string, argv 
 		return err
 	}
 	defer f.Close()
+	return ExecWithStdinReader(ctx, composeCmd, dir, container, argv, f, onLine)
+}
 
+// ExecWithStdinReader is ExecWithStdin with the stdin source passed as a
+// reader, so callers can feed the process from a pipe (`cat fix.py |
+// echo shell`) instead of a file on disk.
+func ExecWithStdinReader(ctx context.Context, composeCmd, dir, container string, argv []string, r io.Reader, onLine func(string)) error {
 	full := append(SplitCompose(composeCmd), append([]string{"exec", "-T", container}, argv...)...)
 	cmd := exec.CommandContext(ctx, full[0], full[1:]...)
 	cmd.Dir = dir
-	cmd.Stdin = f
+	cmd.Stdin = r
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {

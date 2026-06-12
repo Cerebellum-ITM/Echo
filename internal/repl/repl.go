@@ -201,8 +201,8 @@ func (sess *session) renderPrompt() string {
 // are therefore not part of this slice.
 var dispatchNames = []string{
 	"help", "clear", "copy-last", "report",
-	"init", "reset", "alias",
-	"up", "down", "stop", "restart", "ps", "logs",
+	"init", "reset", "alias", "link",
+	"up", "down", "stop", "restart", "ps", "logs", "deploy",
 	"install", "update", "uninstall", "test", "modules", "modinfo", "modstate", "view",
 	"i18n-export", "i18n-update", "i18n-pull",
 	"db-backup", "db-restore", "db-drop", "db-neutralize", "db-list",
@@ -263,6 +263,8 @@ func (sess *session) dispatchParsed(ctx context.Context, cmd string, args []stri
 		sess.runReset()
 	case "alias":
 		sess.runAlias(ctx, args)
+	case "link":
+		sess.runLink(ctx, args)
 	case "up", "down", "stop", "restart", "ps", "logs":
 		sess.runDocker(ctx, cmd, args)
 	case "install", "update", "uninstall", "test", "modules":
@@ -285,6 +287,8 @@ func (sess *session) dispatchParsed(ctx context.Context, cmd string, args []stri
 		sess.runShellRun(ctx, args)
 	case "connect":
 		sess.runConnect(ctx, args)
+	case "deploy":
+		sess.runDeploy(ctx, args)
 	default:
 		sess.print(Line{Kind: "warn", Text: "unknown command: " + cmd + " — try help"})
 		sess.exitCode = exitUsage
@@ -306,6 +310,9 @@ func helpSections() []helpSection {
 			{"  --list", "List all project aliases"},
 			{"  --rm <name>", "Remove an alias"},
 			{"  --migrate", "Backfill aliases from connect targets (local paths)"},
+			{"link [<target>]", "Bind this directory to a connect target (no args: picker)"},
+			{"  --show", "Show the binding, probe the remote, stream its `ps`"},
+			{"  --rm", "Remove this directory's [connect] binding"},
 		}},
 		{"Modules", []helpEntry{
 			{"install <mod...>", "Install modules in the current DB"},
@@ -359,8 +366,13 @@ func helpSections() []helpSection {
 			{"bash", "Bash session inside the Odoo container"},
 			{"psql", "PostgreSQL client against the configured DB"},
 			{"shell", "Odoo Python shell against the configured DB"},
+			{"  --from <target>", "Open the shell on a remote instance (named connect target)"},
+			{"  --remote", "Open the shell on this directory's linked remote"},
+			{"  --force", "Skip the prod-stage confirmation prompt"},
 			{"shell-run [<file>]", "Run a .py through the Odoo shell (stdin); no file → picker"},
 			{"  --no-copy", "Don't auto-copy the script output to the clipboard"},
+			{"  --from <target>", "Run the script on a remote instance (named connect target)"},
+			{"  --remote", "Run the script on this directory's linked remote"},
 			{"  --force", "Skip the prod-stage confirmation prompt"},
 			{"connect [<login>]", "Impersonate a user (mint session, open Chrome logged in)"},
 			{"  --all", "Include inactive users in the picker"},
@@ -380,6 +392,11 @@ func helpSections() []helpSection {
 			{"  --no-follow", "Disable follow; print bounded output"},
 			{"  -c, --copy", "Bounded output and copy to clipboard"},
 			{"  --all", "All compose services (instead of just Odoo)"},
+			{"deploy", "Deploy picked local commits to a remote (stop, up, -i/-u)"},
+			{"  --from <target>", "Use a named connect target (default: this dir's link)"},
+			{"  --limit <N>", "Commits offered in the picker (default 20)"},
+			{"  --dry-run", "Resolve modules and show the plan; execute nothing"},
+			{"  --force", "Skip the prod-stage confirmation prompt"},
 		}},
 		{"Session", []helpEntry{
 			{"copy-last", "Copy the last command's output to clipboard"},
@@ -775,6 +792,14 @@ func (sess *session) runShell(ctx context.Context, name string, args []string) {
 	case "psql":
 		captured, interrupted, err = cmd.RunPsql(ctx, opts)
 	case "shell":
+		// Piped stdin (`cat fix.py | echo shell`) → headless pipe mode: feed
+		// stdin to the Odoo shell through the shell-run machinery (local or
+		// remote per --from/--remote) instead of demanding a TTY. Inside the
+		// REPL stdin is always a TTY, so this only fires in one-shot runs.
+		if cmd.StdinPiped() {
+			sess.runShellPiped(ctx, args)
+			return
+		}
 		// Colorize Odoo's startup logs (printed raw through the PTY) so they
 		// match the rest of Echo's Odoo-styled output; non-log lines (IPython
 		// banner, prompt, eval output) pass through verbatim. Under a TTY

@@ -37,25 +37,7 @@ func (sess *session) runI18nPull(ctx context.Context, args []string) {
 }
 
 // i18nPullLogger renders i18n-pull progress events as Odoo-style log lines
-// under `echo.i18n-pull[.sub]`, mirroring connectLogger.
+// under `echo.i18n-pull[.sub]` via the shared per-command logger.
 func (sess *session) i18nPullLogger() func(level, sub, msg, db string, fields ...[2]string) {
-	return func(level, sub, msg, db string, fields ...[2]string) {
-		// sub == "system" is the cross-command system-status line: it uses the
-		// shared `echo.system.status` logger, not this command's namespace.
-		logger := "echo.i18n-pull"
-		switch {
-		case sub == "system":
-			logger = "echo.system.status"
-		case sub != "":
-			logger += "." + sub
-		}
-		if db == "" {
-			db = sess.cfg.DBName
-		}
-		lf := make([]logField, 0, len(fields))
-		for _, f := range fields {
-			lf = append(lf, logField{f[0], f[1]})
-		}
-		emitOdooLog(level, logger, msg, lf, sess.styles, sess.palette, db)
-	}
+	return sess.cmdOdooLogger("i18n-pull")
 }

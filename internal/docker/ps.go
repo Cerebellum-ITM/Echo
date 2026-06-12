@@ -73,6 +73,11 @@ func PSList(ctx context.Context, composeCmd, dir string) ([]PSContainer, error) 
 	return parsePSJSON(out)
 }
 
+// ParsePS decodes the bytes of a `compose ps --format json` run executed
+// elsewhere (e.g. on a remote host over SSH) into structured rows, so
+// callers outside this package can reuse the styled `ps` rendering.
+func ParsePS(b []byte) ([]PSContainer, error) { return parsePSJSON(b) }
+
 // parsePSJSON decodes `docker compose ps --format json`, which emits either a
 // single JSON array (newer compose) or newline-delimited JSON objects (older
 // compose). Both forms are handled.

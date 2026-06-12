@@ -59,8 +59,13 @@ func RunPsql(ctx context.Context, opts ShellOpts) (string, bool, error) {
 }
 
 // RunOdooShell opens the Odoo Python shell loaded against the
-// configured DB.
+// configured DB. With `--from <target>` / `--remote` in Args, the shell
+// opens on the REMOTE instance over `ssh -tt`, through the same PTY
+// capture/colorize path as the local one.
 func RunOdooShell(ctx context.Context, opts ShellOpts) (string, bool, error) {
+	if from, remote := remoteFlagsIn(opts.Args); from != "" || remote {
+		return runOdooShellRemote(ctx, opts, from)
+	}
 	if err := requireOdooConfig(opts.Cfg); err != nil {
 		return "", false, err
 	}
@@ -79,6 +84,30 @@ func RunOdooShell(ctx context.Context, opts ShellOpts) (string, bool, error) {
 		conn.Port = "5432"
 	}
 	return docker.ExecInteractive(ctx, opts.Cfg.ComposeCmd, opts.Root, opts.Cfg.OdooContainer, odoo.Shell(conn), opts.LineTransform)
+}
+
+// runOdooShellRemote opens the Odoo shell inside the REMOTE instance's
+// container: `ssh -tt <host> 'cd <path> && <compose> exec <odoo> odoo
+// shell …'`, run through docker.RunInteractive so the session gets the
+// same PTY passthrough, capture, and startup-log colorizing as a local
+// shell. An interactive shell needs a remote TTY, so a non-TTY caller
+// fails closed before dialing.
+func runOdooShellRemote(ctx context.Context, opts ShellOpts, from string) (string, bool, error) {
+	if err := requireTTY("the remote shell is interactive"); err != nil {
+		return "", false, err
+	}
+	rsc, err := resolveRemoteShell(ctx, opts.Cfg, opts.Palette, opts.Root, from, nil)
+	if err != nil {
+		return "", false, err
+	}
+	if err := confirmRemoteProd(opts.Palette, "shell", rsc, opts.Args); err != nil {
+		return "", false, err
+	}
+	remoteCmd := remoteExecInteractive(rsc.remotePath, rsc.target.composeCmd,
+		rsc.target.odooContainer, odoo.Shell(rsc.conn))
+	return docker.RunInteractive(ctx,
+		[]string{"ssh", "-tt", "-o", "BatchMode=yes", rsc.sshHost, remoteCmd},
+		"", opts.LineTransform)
 }
 
 // maybeConfirmProd shows a red huh.Confirm when stage=prod, unless

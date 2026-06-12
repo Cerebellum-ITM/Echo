@@ -7,6 +7,63 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Nuevo comando **`link [<target>] [--show] [--rm]`** (Unit 60): enlaza el
+  directorio actual (típicamente un repo de addons sin `docker-compose.yml`,
+  modo *projectless*) a un connect target global, escribiendo su
+  `ssh_host`/`remote_path` en la sección `[connect]` per-project que
+  `connect`/`i18n-pull` ya consumen. Sin argumento abre un picker de targets
+  (uno solo se usa automático); el enlace se guarda **antes** de probar el
+  remoto, así que un host inalcanzable es `WARNING`, no fallo. `--show`
+  muestra el enlace, lee el perfil Echo remoto (línea de system-status) y
+  renderiza los contenedores remotos con la **misma tabla estilizada del
+  `ps` local** (lectura `--format json` vía SSH + `docker.ParsePS`, cierre
+  `echo.link.ps: containers listed`; fallback al stream crudo si el JSON
+  falla); `--rm` quita el enlace (idempotente).
+- **Ejecución remota con streaming** (`runSSHStream`): variante de `runSSH`
+  que reenvía stdout/stderr remotos línea a línea en tiempo real hacia el
+  mismo pipeline de render que los subprocesos locales (`emitStreamLine`),
+  cumpliendo la invariante de streaming también sobre SSH. Base del comando
+  `deploy` (Unit 61).
+- Nuevo comando **`deploy [--from <target>] [--limit N] [--dry-run]
+  [--force]`** (Unit 61): despliega commits locales seleccionados a una
+  instancia Odoo remota vía SSH. Abre un picker multiselect sobre los últimos
+  N commits (default 20) del repo actual; cada commit se mapea a su módulo
+  por el esquema de título `[Tag] module: title` (validando que exista
+  `__manifest__.py`) con fallback por los archivos tocados en el commit
+  (`git diff-tree`) cuando toca exactamente un módulo — los commits
+  irresolubles se excluyen con `WARNING` y se reportan en el resumen. El
+  split install/update sale de consultar `ir_module_module` en la BD remota
+  (instalado / `to upgrade` → `-u`; lo demás → `-i`). Con el plan visible (y
+  confirmación si el stage remoto es `prod`), ejecuta en el remoto
+  `compose stop` → `compose up -d` → un solo run de Odoo combinando
+  `-i`/`-u` (`--stop-after-init`, credenciales `--db_*` del `.env` remoto),
+  todo streameado en vivo con el estilo de logs Odoo. `--dry-run` hace las
+  lecturas y muestra el plan sin ejecutar nada. Asume que el código ya está
+  pulleado en el servidor. Nuevo builder `odoo.InstallUpdate`.
+- **Odoo shell remoto** (Unit 62): `shell --from <target>` (o `--remote`
+  para usar el enlace del directorio) abre el shell de Odoo de la instancia
+  remota vía `ssh -tt`, pasando por la misma maquinaria PTY del shell local
+  (captura + colorizado de logs de arranque; `docker.RunInteractive`
+  extraído de `ExecInteractive`). `shell-run <file> --from <target>` /
+  `--remote` corre un `.py` **local** a través del shell de Odoo remoto
+  (script por stdin de ssh vía `runSSHStream`), conservando el auto-copy de
+  solo los `print` del script. Resolución de target compartida con
+  `deploy`/`i18n-pull` (`resolveRemoteTarget`); la confirmación de prod usa
+  el stage del perfil remoto. Ambos comandos son projectless one-shot solo
+  en modo remoto.
+- **`shell` acepta stdin por pipe** (Unit 63): `cat fix.py | echo shell`
+  (y `… | echo shell --from prod --force`) detecta el stdin no-TTY y corre
+  el contenido por el shell de Odoo en modo headless — local o remoto —
+  con la salida streameada estilo Odoo, sin auto-copy (el consumidor del
+  pipe es dueño de la salida; `copy-last` sigue disponible). En el REPL
+  interactivo nada cambia. Además `shell-run -` lee el script de stdin
+  explícitamente (como `echo run -`), conservando su auto-copy; `-` con
+  stdin TTY falla rápido en vez de bloquearse. Nuevo
+  `docker.ExecWithStdinReader` (la variante con archivo delega en él) y
+  helper `cmd.StdinPiped`. El guard de prod se mantiene: un pipe contra
+  prod exige `--force` (sin TTY no hay confirmación).
+
 ## [0.12.0] — 2026-06-12
 
 ### Added

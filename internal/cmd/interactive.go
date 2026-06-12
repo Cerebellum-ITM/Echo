@@ -22,6 +22,11 @@ var stdinIsTTY = func() bool {
 	return term.IsTerminal(int(os.Stdin.Fd()))
 }
 
+// StdinPiped reports whether stdin is NOT a terminal — i.e. Echo is being
+// fed through a pipe or redirection. The REPL uses it to switch `shell`
+// into its headless pipe mode (`cat fix.py | echo shell`).
+func StdinPiped() bool { return !stdinIsTTY() }
+
 // requireTTY returns a wrapped ErrNonInteractive (with a caller-specific
 // hint) when stdin is not a terminal, and nil otherwise. Interactive call
 // sites guard on it before showing a picker or a confirm so a TTY-less run

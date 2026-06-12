@@ -26,9 +26,16 @@ func (sess *session) runPSTable(ctx context.Context, opts cmd.DockerOpts) {
 // with an Odoo-style count line, mirroring `modstate`. The status cell is
 // colored by container state/health; ports are dimmed.
 func (sess *session) emitPSTable(rows []docker.PSContainer) {
+	sess.emitPSTableAs(rows, "echo.ps", sess.cfg.DBName)
+}
+
+// emitPSTableAs is emitPSTable with the closing count line's logger and
+// database parametrized, so other commands (`link --show` rendering a
+// REMOTE `ps`) reuse the table under their own namespace.
+func (sess *session) emitPSTableAs(rows []docker.PSContainer, logger, db string) {
 	if len(rows) == 0 {
-		emitOdooLog("INFO", "echo.ps", "no containers running",
-			nil, sess.styles, sess.palette, sess.cfg.DBName)
+		emitOdooLog("INFO", logger, "no containers running",
+			nil, sess.styles, sess.palette, db)
 		sess.exitCode = exitOK
 		return
 	}
@@ -69,9 +76,9 @@ func (sess *session) emitPSTable(rows []docker.PSContainer) {
 		sess.print(Line{Kind: "table", Text: line})
 	}
 
-	emitOdooLog("INFO", "echo.ps", "containers listed",
+	emitOdooLog("INFO", logger, "containers listed",
 		[]logField{{"count", strconv.Itoa(len(rows))}},
-		sess.styles, sess.palette, sess.cfg.DBName)
+		sess.styles, sess.palette, db)
 	sess.exitCode = exitOK
 }
 
