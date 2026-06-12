@@ -377,7 +377,7 @@ func helpSections() []helpSection {
 			{"  -c, --copy", "Bounded output and copy to clipboard"},
 			{"  --all", "All compose services (instead of just Odoo)"},
 		}},
-		{"Shell", []helpEntry{
+		{"Session", []helpEntry{
 			{"copy-last", "Copy the last command's output to clipboard"},
 			{"  --errors", "Only copy error/warning lines"},
 			{"report", "Inspect/copy the last run's logs by step and level"},
@@ -392,44 +392,58 @@ func helpSections() []helpSection {
 	}
 }
 
+// scriptingHelpEntries documents the one-shot script mode. It lives outside
+// helpSections() — which is cross-checked against the command Registry —
+// because `echo <cmd>` is not a REPL command.
+var scriptingHelpEntries = []helpEntry{
+	{"echo <cmd> [args]", "Run one command and exit with a status code"},
+	{"echo run <file>", "Run a recipe (one command per line); - reads stdin"},
+	{"  --pick", "Pick a .echo recipe from the current directory"},
+	{"  --last", "Run the most recently created .echo recipe"},
+	{"  --continue-on-error", "Run every step instead of stopping at the first failure"},
+	{"  --log[=<path>]", "Save a plain transcript (default dir, a file, or --log=. for ./<recipe>.log)"},
+	{"  <step> --silent[=lvl]", "Silence a step's output (screen+log); =lvl keeps that level and above"},
+	{"echo -C <dir> <cmd>", "Run from outside the project directory"},
+}
+
+// buildHelpEntries documents the universal build mode — also outside
+// helpSections(), keeping the Registry cross-check clean.
+var buildHelpEntries = []helpEntry{
+	{"<cmd> --build", "Interactively compose the command (pickers + flags), then run/copy it"},
+}
+
+// runHelp shows the command reference. In the interactive REPL it opens the
+// paginated viewer (one section per page, ←/→ to move); in one-shot /
+// recipe mode — or if the pager can't start — it prints the flat listing.
 func (sess *session) runHelp() {
-	s := sess.styles
+	if sess.interactive {
+		err := sess.runHelpPager()
+		if err == nil || sess.handleQuit(err) {
+			return
+		}
+	}
+	sess.printHelpFlat()
+}
+
+// printHelpFlat is the non-interactive help: every section printed in
+// sequence, as `echo help` has always done in script mode.
+func (sess *session) printHelpFlat() {
+	printSection := func(title string, items []helpEntry) {
+		sess.print(Line{Kind: "accent", Text: title})
+		for _, line := range renderHelpEntries(sess.styles, items) {
+			fmt.Println(line)
+		}
+	}
 	for i, sec := range helpSections() {
 		if i > 0 {
 			sess.print(Line{Kind: "out", Text: ""})
 		}
-		sess.print(Line{Kind: "accent", Text: sec.title})
-		for _, it := range sec.items {
-			label := lipgloss.NewStyle().Width(22).Render(it.cmd)
-			fmt.Println("  " + s.Info.Render(label) + s.Out.Render(it.desc))
-		}
+		printSection(sec.title, sec.items)
 	}
-
-	// Script mode is one-shot only (no REPL command), so it lives outside
-	// helpSections() — which is cross-checked against the command Registry.
 	sess.print(Line{Kind: "out", Text: ""})
-	sess.print(Line{Kind: "accent", Text: "Scripting (one-shot, outside the REPL)"})
-	for _, it := range []helpEntry{
-		{"echo <cmd> [args]", "Run one command and exit with a status code"},
-		{"echo run <file>", "Run a recipe (one command per line); - reads stdin"},
-		{"  --pick", "Pick a .echo recipe from the current directory"},
-		{"  --last", "Run the most recently created .echo recipe"},
-		{"  --continue-on-error", "Run every step instead of stopping at the first failure"},
-		{"  --log[=<path>]", "Save a plain transcript (default dir, a file, or --log=. for ./<recipe>.log)"},
-		{"  <step> --silent[=lvl]", "Silence a step's output (screen+log); =lvl keeps that level and above"},
-		{"echo -C <dir> <cmd>", "Run from outside the project directory"},
-	} {
-		label := lipgloss.NewStyle().Width(22).Render(it.cmd)
-		fmt.Println("  " + s.Info.Render(label) + s.Out.Render(it.desc))
-	}
-
-	// Build mode is universal (any routed command) and interactive, so it
-	// lives outside helpSections() — keeping the Registry cross-check clean.
+	printSection("Scripting (one-shot, outside the REPL)", scriptingHelpEntries)
 	sess.print(Line{Kind: "out", Text: ""})
-	sess.print(Line{Kind: "accent", Text: "Build mode (compose interactively)"})
-	buildLabel := lipgloss.NewStyle().Width(22).Render("<cmd> --build")
-	fmt.Println("  " + s.Info.Render(buildLabel) +
-		s.Out.Render("Interactively compose the command (pickers + flags), then run/copy it"))
+	printSection("Build mode (compose interactively)", buildHelpEntries)
 }
 
 // helpCommandNames extracts the flat set of top-level command names

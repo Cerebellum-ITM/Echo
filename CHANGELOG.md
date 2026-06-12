@@ -80,6 +80,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
      logger en pastel, mensaje normal). Para `update` es no-op (no trae ANSI).
 
 ### Changed
+- **`help` ahora es un visor paginado** en el REPL interactivo: cada sección
+  (Project, Modules, i18n, Database, Shell, Docker, Session, Scripting, Build)
+  es una página; **←/→** (también `h`/`l` y tab) se mueven entre secciones con
+  wrap, **↑/↓** hacen scroll dentro de una sección alta, `esc` cierra y
+  `Ctrl+X` sale de Echo (igual que en los pickers). Corre en pantalla alterna
+  (no contamina el scrollback) con el mismo estilo "log-framed" del picker:
+  barra `│` tintada por stage, header con tabs y contador `(n/N)`, footer de
+  atajos en faint. En modo script (`echo help` one-shot o recetas) se mantiene
+  la impresión plana de siempre. La segunda sección "Shell" (copy-last /
+  report / clear / help) se renombró a **"Session"** para que los tabs no se
+  repitan.
 - **`modules`** ahora prefija cada módulo con el glyph nerd-font ``
   (`cod-package`) en color de acento y colorea el nombre, conservando el wrap
   al ancho de terminal y la línea de cierre `echo.modules: modules listed
