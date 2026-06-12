@@ -80,7 +80,7 @@ func main() {
 		// docker stack, so they don't need a compose project. Fall back to
 		// cwd as the working directory instead of failing.
 		switch {
-		case oneShot && projectlessOneShot(args[0]):
+		case oneShot && projectlessOneShot(args[0], args[1:]):
 			root = cwd
 		case oneShot:
 			log.Error("not inside a project", "cwd", cwd,
@@ -181,10 +181,24 @@ func isDir(path string) bool {
 // compose project (using cwd as the working directory). These commands
 // reach a remote instance and only read/write local files — they never
 // drive a local docker stack, so a missing docker-compose.yml is fine.
-func projectlessOneShot(name string) bool {
+// `shell`/`shell-run` qualify only in their remote mode (`--from` /
+// `--remote`); locally they need the compose project as always.
+func projectlessOneShot(name string, args []string) bool {
 	switch name {
 	case "i18n-pull", "link", "deploy":
 		return true
+	case "shell", "shell-run":
+		return hasRemoteFlag(args)
+	}
+	return false
+}
+
+// hasRemoteFlag reports whether args select the remote mode.
+func hasRemoteFlag(args []string) bool {
+	for _, a := range args {
+		if a == "--remote" || a == "--from" || strings.HasPrefix(a, "--from=") {
+			return true
+		}
 	}
 	return false
 }

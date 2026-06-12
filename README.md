@@ -187,8 +187,20 @@ when one exists at the project root.
 | Command | Description                                              |
 |---------|----------------------------------------------------------|
 | `shell` | Odoo shell (`odoo shell`) inside the container           |
+| `  --from <target>` | Open the shell on a **remote** instance (named connect target) |
+| `  --remote` | Open the shell on this directory's linked remote (see `link`) |
+| `shell-run [<file>]` | Run a local `.py` through the Odoo shell (stdin); no file → picker |
+| `  --no-copy` | Don't auto-copy the script's output to the clipboard |
+| `  --from <target>` / `--remote` | Run the script on a remote instance |
 | `bash`  | An interactive `bash` in the Odoo container              |
 | `psql`  | `psql` into the active database                          |
+
+The remote shell rides the same SSH transport as `deploy`: the interactive
+session opens over `ssh -tt` with the usual startup-log coloring, and
+`shell-run --from prod fix_taxes.py` pipes your local script into the remote
+container's Odoo shell — handy for applying one-off data fixes without
+copying files to the server. Prod confirmation uses the remote profile's
+stage.
 
 ### i18n
 

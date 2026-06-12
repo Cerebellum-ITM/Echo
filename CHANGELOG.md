@@ -41,6 +41,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   todo streameado en vivo con el estilo de logs Odoo. `--dry-run` hace las
   lecturas y muestra el plan sin ejecutar nada. Asume que el código ya está
   pulleado en el servidor. Nuevo builder `odoo.InstallUpdate`.
+- **Odoo shell remoto** (Unit 62): `shell --from <target>` (o `--remote`
+  para usar el enlace del directorio) abre el shell de Odoo de la instancia
+  remota vía `ssh -tt`, pasando por la misma maquinaria PTY del shell local
+  (captura + colorizado de logs de arranque; `docker.RunInteractive`
+  extraído de `ExecInteractive`). `shell-run <file> --from <target>` /
+  `--remote` corre un `.py` **local** a través del shell de Odoo remoto
+  (script por stdin de ssh vía `runSSHStream`), conservando el auto-copy de
+  solo los `print` del script. Resolución de target compartida con
+  `deploy`/`i18n-pull` (`resolveRemoteTarget`); la confirmación de prod usa
+  el stage del perfil remoto. Ambos comandos son projectless one-shot solo
+  en modo remoto.
 
 ## [0.12.0] — 2026-06-12
 

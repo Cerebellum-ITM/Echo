@@ -82,6 +82,25 @@ func runSSHStream(ctx context.Context, host, remoteCmd string, stdin []byte, onL
 	return nil
 }
 
+// remoteExecInteractive builds the SSH command for an INTERACTIVE remote
+// compose exec: `cd <path> && <compose> exec <container> <argv...>` —
+// without `-T`, so compose allocates a TTY inside the container. Pair it
+// with `ssh -tt` so the remote side has a controlling terminal.
+func remoteExecInteractive(remotePath, composeCmd, container string, argv []string) string {
+	var b strings.Builder
+	b.WriteString("cd ")
+	b.WriteString(shellQuote(remotePath))
+	b.WriteString(" && ")
+	b.WriteString(composeCmd)
+	b.WriteString(" exec ")
+	b.WriteString(shellQuote(container))
+	for _, a := range argv {
+		b.WriteString(" ")
+		b.WriteString(shellQuote(a))
+	}
+	return b.String()
+}
+
 // remoteComposeCmd builds the SSH command that runs a compose
 // subcommand at the remote project root: `cd <path> && <compose>
 // <args...>`. Every arg is shell-quoted; the compose command is emitted

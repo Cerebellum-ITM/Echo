@@ -116,11 +116,24 @@ func (sess *session) runShellRun(ctx context.Context, args []string) {
 	sess.startLog("shell-run", args)
 
 	noCopy := false
+	var from string
+	var remote bool
 	var positional []string
-	for _, a := range args {
+	for i := 0; i < len(args); i++ {
+		a := args[i]
 		switch {
 		case a == "--no-copy":
 			noCopy = true
+		case a == "--remote":
+			remote = true
+		case a == "--from":
+			// Consume the value too, so it is never mistaken for a script.
+			if i+1 < len(args) {
+				from = args[i+1]
+				i++
+			}
+		case strings.HasPrefix(a, "--from="):
+			from = strings.TrimPrefix(a, "--from=")
 		case strings.HasPrefix(a, "-"):
 			// ignore unknown flags rather than treating them as a script name
 		default:
@@ -148,7 +161,10 @@ func (sess *session) runShellRun(ctx context.Context, args []string) {
 		Root:       sess.projectDir,
 		ScriptPath: scriptPath,
 		Args:       args,
+		From:       from,
+		Remote:     remote,
 		Palette:    sess.palette,
+		Log:        sess.cmdOdooLogger("shell-run"),
 		StreamOut: stats.wrap(func(line string) {
 			sess.emitStreamLine(lc, line)
 		}),

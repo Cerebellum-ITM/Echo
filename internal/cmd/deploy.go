@@ -250,10 +250,18 @@ func RunDeploy(ctx context.Context, opts DeployOpts) error {
 // resolveDeployRemote mirrors i18n-pull's target resolution: --from →
 // project [connect] → global targets fallback (one auto, several picker).
 func resolveDeployRemote(opts DeployOpts, from string) (sshHost, remotePath, fromName string, err error) {
-	sshHost, remotePath, err = resolvePullRemote(opts.Cfg, from)
+	return resolveRemoteTarget(opts.Cfg, opts.Palette, from, opts.Log)
+}
+
+// resolveRemoteTarget is the shared remote resolution used by deploy,
+// shell and shell-run: an explicit --from name, else the project/link
+// [connect], else the global targets fallback (one auto-used, several
+// open a TTY-guarded picker, none → ErrNoPullRemote).
+func resolveRemoteTarget(cfg *config.Config, palette theme.Palette, from string, log func(level, sub, msg, db string, fields ...[2]string)) (sshHost, remotePath, fromName string, err error) {
+	sshHost, remotePath, err = resolvePullRemote(cfg, from)
 	if errors.Is(err, ErrNoPullRemote) && from == "" {
-		t, perr := pickConnectTarget(opts.Cfg.ConnectTargets, opts.Palette,
-			"Select connect target to deploy to", opts.Log)
+		t, perr := pickConnectTarget(cfg.ConnectTargets, palette,
+			"Select connect target", log)
 		if perr != nil {
 			if errors.Is(perr, ErrNoConnectTargets) {
 				return "", "", "", ErrNoPullRemote

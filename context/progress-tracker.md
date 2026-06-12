@@ -21,6 +21,27 @@ _(siguiente: Unit 14 — meta-commands. Fix i18n19 Odoo 19 (rama `fix/i18n19-con
 
 ## Completed
 
+- [x] Unit 62 — remote-shell. `shell --from <target>`/`--remote` abre el
+  Odoo shell de la instancia remota vía `ssh -tt -o BatchMode=yes` a través
+  de `docker.RunInteractive` (extraído de `ExecInteractive`: misma
+  maquinaria PTY — raw mode, SIGWINCH, detección de ^C, tee-captura y
+  `LineTransform`, así el shell remoto colorea sus logs de arranque igual
+  que el local); requiere TTY (falla cerrado headless). `shell-run <file>
+  --from/--remote` corre el `.py` LOCAL en el shell remoto: script por
+  stdin de ssh vía `runSSHStream` + `remoteContainerCmd` (`exec -T`),
+  preservando el auto-copy de solo-prints (`scriptOutputLines` filtra
+  igual). Nuevo `remoteExecInteractive` (exec sin `-T`). Resolución
+  compartida `resolveRemoteTarget` (refactor de `resolveDeployRemote`) +
+  `resolveRemoteShell`/`confirmRemoteProd` en `internal/cmd/shell_remote.go`
+  (la confirmación prod usa el stage del perfil REMOTO). El parser de flags
+  de `shell-run` en repl ahora consume `--from <v>`/`--remote` para que el
+  valor no se confunda con el nombre del script. `projectlessOneShot` ahora
+  recibe args: shell/shell-run son projectless SOLO en modo remoto (local
+  fuera de proyecto sigue fallando igual). Tests `shell_remote_test.go`
+  (remoteFlagsIn, quoting de remoteExecInteractive); build/vet/test verdes;
+  smoke: local-sin-proyecto preservado, remoto headless falla cerrado,
+  script inexistente falla antes de marcar. Pendiente prueba real contra un
+  servidor. Spec `62-remote-shell.md`.
 - [x] Unit 61 — deploy. Nuevo comando `deploy [--from <target>] [--limit N]
   [--dry-run] [--force]` (REPL + one-shot projectless): picker multiselect
   sobre los últimos N commits (default 20) del repo local (`git log` vía
