@@ -266,11 +266,13 @@ func RunI18nPull(ctx context.Context, opts I18nPullOpts) error {
 		modules = []string{picked}
 	}
 
+	addonsPath := remoteAddonsPath(ctx, sshHost, remotePath, target, prof.ConfPath, prof.AddonsPaths)
+
 	var pulled, skipped int
 	for _, mod := range modules {
 		opts.log("INFO", "", "exporting translations", prof.DBName,
 			[2]string{"module", mod}, [2]string{"lang", p.lang})
-		data, err := pullRemotePO(ctx, sshHost, remotePath, target, conn, strings.Join(prof.AddonsPaths, ","), mod, p.lang)
+		data, err := pullRemotePO(ctx, sshHost, remotePath, target, conn, addonsPath, mod, p.lang)
 		if err != nil {
 			if p.all {
 				opts.log("WARNING", "", "skipped", prof.DBName,
@@ -327,6 +329,32 @@ func remotePullEnv(ctx context.Context, sshHost, remotePath string) map[string]s
 		return map[string]string{}
 	}
 	return env.Parse(bytes.NewReader(out))
+}
+
+// remoteAddonsPath returns the addons_path value for the ephemeral Odoo 19
+// conf, read raw (unfiltered) from the remote container's real odoo.conf —
+// the same live source the local i18n-export uses (containerAddonsPath).
+// The profile's stored AddonsPaths is only a fallback: it is a snapshot
+// persisted by the remote's own module listing, so it can be stale, it is
+// filtered (parseAddonsPath drops enterprise dirs), and in host mode it
+// holds host-relative subpaths that mean nothing inside the container —
+// and `-c` REPLACES the real conf, so any of those gaps makes the export
+// skip modules and miss terms. Returns "" on pre-19 targets, whose legacy
+// export takes no `-c` and ignores the value.
+func remoteAddonsPath(ctx context.Context, sshHost, remotePath string, t connectTarget, confPath string, stored []string) string {
+	if odoo.Major(t.odooVersion) < 19 {
+		return ""
+	}
+	if confPath == "" {
+		confPath = "/etc/odoo/odoo.conf"
+	}
+	conf, err := runSSH(ctx, sshHost, remoteContainerCmd(remotePath, t, odoo.Cmd{"cat", confPath}), nil)
+	if err == nil {
+		if ap := extractAddonsPath(string(conf)); ap != "" {
+			return ap
+		}
+	}
+	return strings.Join(stored, ",")
 }
 
 // pullRemotePO exports one module's translations inside the remote Odoo

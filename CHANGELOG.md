@@ -51,6 +51,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `addons_path` del perfil remoto. En 17/18 no aplica (el legacy usa el conf
   real del contenedor). Nota: con los módulos ahora cargados, desaparece el
   ERROR de carga que marcaba el comando como `failed`.
+- **`i18n-pull` en Odoo 19 seguía exportando un `.po` distinto al de
+  `i18n-export`** (parecía traer una versión vieja/incompleta). Causa: el
+  `addons_path` del conf efímero salía de `prof.AddonsPaths`, el **snapshot
+  persistido** en el perfil Echo del servidor (`projects/<hash>.toml`), que
+  (1) no se refresca en el pull —si el `odoo.conf` remoto cambió, se usaban
+  paths viejos—, (2) está **filtrado** por `parseAddonsPath` (descarta dirs
+  `enterprise*`), y (3) en `addons_mode = "host"` guarda subpaths relativos
+  al host, inválidos dentro del contenedor. Como `-c` reemplaza al conf real,
+  cualquiera de esos huecos hacía que Odoo cargara de menos y el export
+  omitiera términos. Ahora el pull lee el `addons_path` **en vivo y crudo**
+  del `odoo.conf` real del contenedor remoto (`remoteAddonsPath`, vía SSH +
+  `extractAddonsPath`) —la misma fuente que usa el `i18n-export` local—, con
+  el snapshot del perfil solo como fallback si el `cat` falla. Una sola
+  lectura por run (no por módulo). En 17/18 no aplica (sin `-c`).
 - **`logs`** ahora se pinta **idéntico a `update`** (Unit 58). Dos causas que
   Unit 57 no resolvió:
   1. `docker compose logs -f` antepone un gutter `servicio  | ` a cada línea
