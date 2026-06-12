@@ -46,13 +46,14 @@ func TestMajor(t *testing.T) {
 }
 
 func TestRenderConf(t *testing.T) {
-	got := string(RenderConf(Conn{DB: "develop", Host: "db", Port: "5432", User: "odoo", Password: "secret"}))
-	want := "[options]\ndb_host = db\ndb_port = 5432\ndb_user = odoo\ndb_password = secret\n"
+	got := string(RenderConf(Conn{DB: "develop", Host: "db", Port: "5432", User: "odoo", Password: "secret"}, "/mnt/extra-addons,/mnt/enterprise"))
+	want := "[options]\ndb_host = db\ndb_port = 5432\ndb_user = odoo\ndb_password = secret\naddons_path = /mnt/extra-addons,/mnt/enterprise\n"
 	if got != want {
 		t.Errorf("RenderConf full = %q, want %q", got, want)
 	}
-	// db_name is never emitted (callers pass it via -d); empty fields skip.
-	got = string(RenderConf(Conn{DB: "develop", Host: "db"}))
+	// db_name is never emitted (callers pass it via -d); empty fields skip,
+	// and an empty addonsPath omits the addons_path line.
+	got = string(RenderConf(Conn{DB: "develop", Host: "db"}, ""))
 	if want := "[options]\ndb_host = db\n"; got != want {
 		t.Errorf("RenderConf sparse = %q, want %q", got, want)
 	}

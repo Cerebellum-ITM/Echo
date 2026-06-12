@@ -172,7 +172,7 @@ func RunI18nExport(ctx context.Context, opts I18nOpts) error {
 	defer cleanupContainerTmp(ctx, opts, containerTmp)
 
 	conn := buildI18nConn(opts)
-	confPath, confCleanup, err := writeContainerConf(ctx, opts, id, conn)
+	confPath, confCleanup, err := writeContainerConf(ctx, opts, conn)
 	if err != nil {
 		return err
 	}
@@ -240,7 +240,7 @@ func RunI18nUpdate(ctx context.Context, opts I18nOpts) error {
 	}
 
 	conn := buildI18nConn(opts)
-	confPath, confCleanup, err := writeContainerConf(ctx, opts, id, conn)
+	confPath, confCleanup, err := writeContainerConf(ctx, opts, conn)
 	if err != nil {
 		return err
 	}
@@ -279,12 +279,19 @@ func runOdooI18n(ctx context.Context, opts I18nOpts, argv odoo.Cmd) error {
 }
 
 // writeContainerConf, on Odoo 19+, renders conn into a temp odoo.conf and
-// copies it into the Odoo container, returning its in-container path and a
+// writes it into the Odoo container, returning its in-container path and a
 // best-effort cleanup. It exists because the `odoo i18n` subcommand takes
 // no --db_* flags, so the connection must ride in a `-c` config file. On
 // older series it is a no-op: it returns ("", noop, nil) and the legacy
 // argv carries the connection as flags instead.
-func writeContainerConf(ctx context.Context, opts I18nOpts, id string, conn odoo.Conn) (string, func(), error) {
+//
+// The conf is streamed in via `sh -c 'cat > path'` so the in-container file
+// is owned by the (non-root) Odoo user — readable by the `-c` flag and
+// removable on cleanup. A plain `docker cp` would land it root-owned and
+// 0600, which the Odoo process can neither read (the "config file … is not
+// readable" error) nor remove from sticky /tmp. This mirrors how the remote
+// i18n-pull path already writes its conf.
+func writeContainerConf(ctx context.Context, opts I18nOpts, conn odoo.Conn) (string, func(), error) {
 	noop := func() {}
 	if odoo.Major(opts.Cfg.OdooVersion) < 19 {
 		return "", noop, nil
@@ -294,7 +301,7 @@ func writeContainerConf(ctx context.Context, opts I18nOpts, id string, conn odoo
 		return "", noop, fmt.Errorf("create temp conf: %w", err)
 	}
 	hostPath := host.Name()
-	_, werr := host.Write(odoo.RenderConf(conn))
+	_, werr := host.Write(odoo.RenderConf(conn, containerAddonsPath(ctx, opts)))
 	cerr := host.Close()
 	if werr != nil || cerr != nil {
 		_ = os.Remove(hostPath)
@@ -303,10 +310,48 @@ func writeContainerConf(ctx context.Context, opts I18nOpts, id string, conn odoo
 	defer os.Remove(hostPath)
 
 	containerPath := tmpConfInContainer()
-	if err := docker.CopyToContainer(ctx, id, hostPath, containerPath); err != nil {
-		return "", noop, fmt.Errorf("copy conf to container: %w", err)
+	writeArgv := []string{"sh", "-c", "cat > " + containerPath}
+	if err := docker.ExecWithStdin(ctx, opts.Cfg.ComposeCmd, opts.Root,
+		opts.Cfg.OdooContainer, writeArgv, hostPath, nil); err != nil {
+		return "", noop, fmt.Errorf("write conf in container: %w", err)
 	}
 	return containerPath, func() { cleanupContainerTmp(ctx, opts, containerPath) }, nil
+}
+
+// containerAddonsPath returns the raw addons_path value from the container's
+// real odoo.conf, so the generated i18n conf loads the project's modules.
+// Best-effort: "" when the conf can't be read or has no addons_path (the
+// export still runs, just with Odoo's default addons path).
+func containerAddonsPath(ctx context.Context, opts I18nOpts) string {
+	confPath := opts.Cfg.ConfPath
+	if confPath == "" {
+		confPath = "/etc/odoo/odoo.conf"
+	}
+	conf, err := catContainer(ctx, opts.Cfg, opts.Root, confPath)
+	if err != nil {
+		return ""
+	}
+	return extractAddonsPath(conf)
+}
+
+// extractAddonsPath returns the raw, comma-joined addons_path value from
+// odoo.conf text (the first `addons_path = …` line), unfiltered — unlike
+// parseAddonsPath it keeps enterprise entries, since a module being exported
+// may depend on them. Returns "" when absent.
+func extractAddonsPath(conf string) string {
+	for _, raw := range strings.Split(conf, "\n") {
+		line := strings.TrimSpace(raw)
+		if line == "" || strings.HasPrefix(line, "#") || strings.HasPrefix(line, ";") {
+			continue
+		}
+		if !strings.HasPrefix(line, "addons_path") {
+			continue
+		}
+		if eq := strings.IndexByte(line, '='); eq >= 0 {
+			return strings.TrimSpace(line[eq+1:])
+		}
+	}
+	return ""
 }
 
 // cleanupContainerTmp removes a /tmp/echo-i18n-*.po inside the Odoo

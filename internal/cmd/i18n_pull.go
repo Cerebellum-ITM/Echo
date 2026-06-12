@@ -270,7 +270,7 @@ func RunI18nPull(ctx context.Context, opts I18nPullOpts) error {
 	for _, mod := range modules {
 		opts.log("INFO", "", "exporting translations", prof.DBName,
 			[2]string{"module", mod}, [2]string{"lang", p.lang})
-		data, err := pullRemotePO(ctx, sshHost, remotePath, target, conn, mod, p.lang)
+		data, err := pullRemotePO(ctx, sshHost, remotePath, target, conn, strings.Join(prof.AddonsPaths, ","), mod, p.lang)
 		if err != nil {
 			if p.all {
 				opts.log("WARNING", "", "skipped", prof.DBName,
@@ -337,7 +337,7 @@ func remotePullEnv(ctx context.Context, sshHost, remotePath string) map[string]s
 // `odoo i18n export` subcommand, which only takes `-c`/`-d`; the db
 // credentials are written into an ephemeral in-container odoo.conf
 // (RenderConf) passed with `-c` and removed alongside the .po.
-func pullRemotePO(ctx context.Context, sshHost, remotePath string, t connectTarget, conn odoo.Conn, module, lang string) ([]byte, error) {
+func pullRemotePO(ctx context.Context, sshHost, remotePath string, t connectTarget, conn odoo.Conn, addonsPath, module, lang string) ([]byte, error) {
 	tmp := tmpPathInContainer()
 	cleanup := odoo.Cmd{"rm", "-f", tmp}
 
@@ -345,7 +345,7 @@ func pullRemotePO(ctx context.Context, sshHost, remotePath string, t connectTarg
 	if odoo.Major(t.odooVersion) >= 19 {
 		confPath = tmpConfInContainer()
 		writeArgv := odoo.Cmd{"sh", "-c", "cat > " + confPath}
-		if _, err := runSSH(ctx, sshHost, remoteContainerCmd(remotePath, t, writeArgv), odoo.RenderConf(conn)); err != nil {
+		if _, err := runSSH(ctx, sshHost, remoteContainerCmd(remotePath, t, writeArgv), odoo.RenderConf(conn, addonsPath)); err != nil {
 			return nil, fmt.Errorf("remote conf write: %w", err)
 		}
 		cleanup = append(cleanup, confPath)

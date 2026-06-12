@@ -27,6 +27,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `docker.ExecWithStdin`.
 
 ### Fixed
+- **`i18n-export`/`i18n-update` en Odoo 19** dejaban el `odoo.conf` efímero
+  (con las credenciales, requerido por `odoo i18n … -c`) ilegible para Odoo:
+  se copiaba con `docker cp`, que lo deja `root:root 0600`, y el proceso Odoo
+  (usuario no-root) no podía leerlo → `error: the config file '…' … is not
+  readable` y el export fallaba (exit 2); como además `/tmp` es sticky, el
+  `rm -f` de limpieza daba `exit status 1`, y al no generarse archivo nuevo
+  quedaba el `.po` viejo del repo (parecía que "copiaba" el existente). Ahora
+  el conf se escribe **dentro** del contenedor por stdin (`sh -c 'cat > …'` vía
+  `docker.ExecWithStdin`), quedando propiedad del usuario Odoo —legible y
+  removible—, igual que ya hacía el `i18n-pull` remoto. El `.po` de
+  `i18n-update` no estaba afectado (viene del repo, 0644). Solo afecta Odoo 19+
+  (17/18 usan flags `--db_*`, sin conf).
+- **`i18n-export`/`i18n-pull` en Odoo 19 exportaban un `.po` incompleto**
+  (módulos del proyecto `not installable, skipped` / `Some modules are not
+  loaded`). Causa: el `odoo i18n export -c <conf>` **reemplaza** al conf real
+  del contenedor en vez de fusionarlo, y el conf que Echo generaba solo traía
+  la conexión de BD, **sin `addons_path`** → Odoo no encontraba los módulos del
+  proyecto y el export omitía sus términos. Ahora el conf generado incluye el
+  `addons_path` real (se lee crudo del `odoo.conf` del contenedor con
+  `extractAddonsPath`, sin filtrar enterprise porque un módulo puede depender de
+  él) vía `odoo.RenderConf(conn, addonsPath)`; el pull remoto pasa el
+  `addons_path` del perfil remoto. En 17/18 no aplica (el legacy usa el conf
+  real del contenedor). Nota: con los módulos ahora cargados, desaparece el
+  ERROR de carga que marcaba el comando como `failed`.
 - **`logs`** ahora se pinta **idéntico a `update`** (Unit 58). Dos causas que
   Unit 57 no resolvió:
   1. `docker compose logs -f` antepone un gutter `servicio  | ` a cada línea
