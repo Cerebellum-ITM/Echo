@@ -183,7 +183,7 @@ func isDir(path string) bool {
 // drive a local docker stack, so a missing docker-compose.yml is fine.
 func projectlessOneShot(name string) bool {
 	switch name {
-	case "i18n-pull":
+	case "i18n-pull", "link", "deploy":
 		return true
 	}
 	return false

@@ -35,6 +35,7 @@ Echo is a work in progress; below is what currently ships in `main`.
 | Shell     | `shell`, `bash`, `psql`                                                  | —                               |
 | i18n      | `i18n-export`, `i18n-update`, `i18n-pull` (from a remote)                | —                               |
 | Connect   | `connect` — open Chrome logged in as any user, no password              | —                               |
+| Deploy    | `link` — bind a local repo to a remote target; `deploy` — commit-driven remote update/install over SSH | — |
 | Build     | `<cmd> --build` / `-b` — compose any command interactively, then run/copy | —                             |
 | Scripting | `echo <cmd>` one-shot, `echo run <file>` recipes, `report`              | —                               |
 | REPL UX   | ↑↓ history, fzf picker, level-colored logs, ✓/✗ result, Tab + flag autocomplete, live command/flag highlighting | Full ASCII banners |
@@ -104,6 +105,9 @@ and every command is wired to the right containers.
 | `  --list` | List all project aliases                                         |
 | `  --rm <name>` | Remove an alias                                            |
 | `  --migrate` | Backfill aliases from connect targets with local paths       |
+| `link [<target>]` | Bind this directory to a connect target (no args: picker)  |
+| `  --show` | Show the binding, probe the remote, stream its `compose ps`     |
+| `  --rm`   | Remove this directory's `[connect]` binding                     |
 | `help`   | Print the in-REPL command list, grouped by area                    |
 | `clear`  | Clear screen and reprint the header                                |
 | `exit` / `quit` / `Ctrl+D` | Quit Echo                                        |
@@ -215,6 +219,80 @@ over SSH) and lands the cookie in a dedicated Chrome via CDP. Sessions are
 cached and reused (`--fresh` re-mints); `--new-window` opens an isolated
 incognito window so several users can be open at once. The projectless form
 `echo connect <name>` connects to a saved remote target from anywhere.
+
+### Deploy
+
+`deploy` pushes selected local commits to a remote Odoo instance over SSH:
+pick commits, Echo maps each one to its module, decides install vs update by
+asking the remote database, recreates the containers, and runs one combined
+`-i`/`-u` Odoo pass — all streamed live with the usual log coloring. It
+assumes the code is **already pulled on the server**; `deploy` only handles
+the container and module state.
+
+| Command            | Description                                              |
+|--------------------|----------------------------------------------------------|
+| `deploy`           | Multi-select picker over recent commits, then remote `stop` → `up -d` → `odoo -i/-u` |
+| `  --from <target>`| Use a named connect target (default: this directory's `link`) |
+| `  --limit <N>`    | Commits offered in the picker (default `20`)             |
+| `  --dry-run`      | Resolve modules and show the plan; execute nothing       |
+| `  --force`        | Skip the prod-stage confirmation                         |
+
+Commit → module resolution follows the project's commit scheme
+`[Tag] module_name: title` (valid only when the module exists in the repo);
+when the subject doesn't match, Echo inspects the commit's changed files and
+uses the module if exactly one addon was touched. Commits that resolve to no
+module are skipped with a warning and reported in the final summary — they
+never abort the run.
+
+#### Example: link a repo and deploy (dummy data)
+
+One-time setup. On the **server**, create the Echo profile `deploy` reads
+(containers, DB, stage):
+
+```sh
+ssh erp-prod                      # host alias from your ~/.ssh/config (key auth)
+cd /srv/odoo/my-shop && echo init
+```
+
+On your **laptop**, register the remote as a connect target and bind your
+addons repo to it:
+
+```sh
+echo connect prod                 # one-time: registers ssh_host + remote_path as target "prod"
+cd ~/dev/my-shop-addons           # your local addons repo (no docker-compose.yml needed)
+echo link prod                    # writes this directory's [connect] binding
+echo link --show                  # verify: probes the profile + streams the remote `compose ps`
+```
+
+Then, each deploy (after the server has pulled the new code):
+
+```sh
+echo deploy --dry-run             # pick commits, see the plan, touch nothing
+echo deploy                       # the real thing (red confirm if the remote stage is prod)
+```
+
+```
+  ❯ echo deploy
+  … INFO my-shop echo.deploy.remote: target resolved host=erp-prod path=/srv/odoo/my-shop
+  [multi picker: commits]
+    ❯ a1b2c3d  [FIX] sale_extra: correct tax rounding
+      e4f5a6b  [ADD] website_promo: launch banner
+      0c1d2e3  [IMP] docs: update install notes
+  … INFO my-shop echo.deploy: resolved commit=a1b2c3d module=sale_extra via=subject
+  … INFO my-shop echo.deploy: resolved commit=e4f5a6b module=website_promo via=diff
+  … WARNING my-shop echo.deploy: skipped commit=0c1d2e3 reason=no addon module touched
+  … INFO my-shop echo.deploy: plan update=sale_extra install=website_promo skipped=1
+  … INFO my-shop echo.deploy.compose: stop
+  … INFO my-shop echo.deploy.compose: up -d
+  … INFO my-shop echo.deploy.odoo: running module install/update
+  2026-06-12 … INFO my-shop odoo.modules.loading: Modules loaded.
+  … INFO my-shop echo.deploy: deploy complete update=1 install=1 skipped=1
+  ✓ deploy completed
+```
+
+`sale_extra` is already installed on the remote, so it lands in `-u`;
+`website_promo` isn't, so it gets `-i` — that split comes from the remote's
+`ir_module_module`, not from the commit tags.
 
 ### Output & reporting
 

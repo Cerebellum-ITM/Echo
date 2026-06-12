@@ -201,8 +201,8 @@ func (sess *session) renderPrompt() string {
 // are therefore not part of this slice.
 var dispatchNames = []string{
 	"help", "clear", "copy-last", "report",
-	"init", "reset", "alias",
-	"up", "down", "stop", "restart", "ps", "logs",
+	"init", "reset", "alias", "link",
+	"up", "down", "stop", "restart", "ps", "logs", "deploy",
 	"install", "update", "uninstall", "test", "modules", "modinfo", "modstate", "view",
 	"i18n-export", "i18n-update", "i18n-pull",
 	"db-backup", "db-restore", "db-drop", "db-neutralize", "db-list",
@@ -263,6 +263,8 @@ func (sess *session) dispatchParsed(ctx context.Context, cmd string, args []stri
 		sess.runReset()
 	case "alias":
 		sess.runAlias(ctx, args)
+	case "link":
+		sess.runLink(ctx, args)
 	case "up", "down", "stop", "restart", "ps", "logs":
 		sess.runDocker(ctx, cmd, args)
 	case "install", "update", "uninstall", "test", "modules":
@@ -285,6 +287,8 @@ func (sess *session) dispatchParsed(ctx context.Context, cmd string, args []stri
 		sess.runShellRun(ctx, args)
 	case "connect":
 		sess.runConnect(ctx, args)
+	case "deploy":
+		sess.runDeploy(ctx, args)
 	default:
 		sess.print(Line{Kind: "warn", Text: "unknown command: " + cmd + " — try help"})
 		sess.exitCode = exitUsage
@@ -306,6 +310,9 @@ func helpSections() []helpSection {
 			{"  --list", "List all project aliases"},
 			{"  --rm <name>", "Remove an alias"},
 			{"  --migrate", "Backfill aliases from connect targets (local paths)"},
+			{"link [<target>]", "Bind this directory to a connect target (no args: picker)"},
+			{"  --show", "Show the binding, probe the remote, stream its `ps`"},
+			{"  --rm", "Remove this directory's [connect] binding"},
 		}},
 		{"Modules", []helpEntry{
 			{"install <mod...>", "Install modules in the current DB"},
@@ -380,6 +387,11 @@ func helpSections() []helpSection {
 			{"  --no-follow", "Disable follow; print bounded output"},
 			{"  -c, --copy", "Bounded output and copy to clipboard"},
 			{"  --all", "All compose services (instead of just Odoo)"},
+			{"deploy", "Deploy picked local commits to a remote (stop, up, -i/-u)"},
+			{"  --from <target>", "Use a named connect target (default: this dir's link)"},
+			{"  --limit <N>", "Commits offered in the picker (default 20)"},
+			{"  --dry-run", "Resolve modules and show the plan; execute nothing"},
+			{"  --force", "Skip the prod-stage confirmation prompt"},
 		}},
 		{"Session", []helpEntry{
 			{"copy-last", "Copy the last command's output to clipboard"},

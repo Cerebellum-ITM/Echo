@@ -6,12 +6,12 @@ import "strings"
 // recognised by the REPL. The order matches the help output and
 // determines the order of the match list rendered on a double-Tab.
 var Registry = []string{
-	"init", "reset", "alias",
+	"init", "reset", "alias", "link",
 	"install", "update", "uninstall", "test", "modules", "modinfo", "modstate", "view",
 	"i18n-export", "i18n-update", "i18n-pull",
 	"db-backup", "db-restore", "db-drop", "db-neutralize", "db-list",
 	"bash", "psql", "shell", "shell-run", "connect",
-	"up", "down", "stop", "restart", "ps", "logs",
+	"up", "down", "stop", "restart", "ps", "logs", "deploy",
 	"copy-last", "report",
 	"clear", "help", "exit", "quit",
 }
@@ -22,6 +22,7 @@ var Registry = []string{
 // no known flags. Powers flag highlighting and Tab flag completion.
 var commandFlags = map[string][]string{
 	"alias":         {"--list", "--rm", "--migrate"},
+	"link":          {"--show", "--rm"},
 	"install":       {"--with-demo", "--level"},
 	"update":        {"--all", "--last", "--level", "--i18n"},
 	"uninstall":     {"--level"},
@@ -41,6 +42,7 @@ var commandFlags = map[string][]string{
 	"logs":          {"-t", "--no-follow", "-c", "--copy", "--all"},
 	"shell-run":     {"--no-copy", "--force"},
 	"connect":       {"--all", "--force", "--fresh", "--new-window"},
+	"deploy":        {"--from", "--limit", "--dry-run", "--force"},
 	"copy-last":     {"--errors"},
 	"report":        {"--step", "--level", "--min-level", "--copy"},
 }
