@@ -397,6 +397,8 @@ func helpSections() []helpSection {
 			{"  --limit <N>", "Commits offered in the picker (default 20)"},
 			{"  --dry-run", "Resolve modules and show the plan; execute nothing"},
 			{"  --force", "Skip the prod-stage confirmation prompt"},
+			{"  --i18n", "Force --i18n-overwrite on the update run (default: auto when i18n/ changed)"},
+			{"  --no-i18n", "Suppress --i18n-overwrite even when i18n/ changes are detected"},
 		}},
 		{"Session", []helpEntry{
 			{"copy-last", "Copy the last command's output to clipboard"},
@@ -573,8 +575,9 @@ func (sess *session) runModules(ctx context.Context, name string, args []string)
 			sess.emitStreamLine(lc, line)
 		}),
 		// The start line is emitted here, once the module set is resolved
-		// (after picker / --last), so it names the actual modules.
-		OnResolve: func(resolved []string) { sess.startResolved(name, resolved) },
+		// (after picker / --last), so it names the actual modules and the
+		// flags the user passed (e.g. --i18n, --level).
+		OnResolve: func(resolved []string) { sess.startResolved(name, args, resolved) },
 	}
 
 	var err error

@@ -21,6 +21,26 @@ _(siguiente: Unit 14 — meta-commands. Fix i18n19 Odoo 19 (rama `fix/i18n19-con
 
 ## Completed
 
+- [x] Unit 64 — deploy-i18n-detect. `deploy` autodetecta cambios de
+  traducción y añade `--i18n-overwrite` al run remoto de update. Al
+  resolver cada commit seleccionado se lee su diff (`gitCommitPaths`,
+  ahora también para los resueltos por título — `resolveCommitModule`
+  devuelve los paths del fallback o `nil` y el loop los re-fetchea para los
+  subject-resueltos, degradando a "sin cambio i18n" con `WARNING` si el
+  diff falla) y `pathsTouchI18n(mod, paths)` marca el módulo cuando algún
+  path cae bajo `<mod>/i18n/`. Si un módulo marcado queda en el set `-u`,
+  el único run lleva el flag (envolviendo `odoo.InstallUpdate` con
+  `odoo.WithI18nOverwrite` de Unit 49); los del set `-i` no lo disparan y
+  se loguean ("no overwrite needed"). Decisión extraída a
+  `i18nOverwriteDecision(force, no, detectedUpdate)` → estado
+  `on/off/forced/suppressed` + bool: flags `--i18n` (fuerza) y `--no-i18n`
+  (suprime), mutuamente excluyentes en `parseDeployArgs`; per-invocación,
+  nada persistido. La línea de plan gana el campo `i18n=…`, visible en
+  `--dry-run`. Wiring: `commandFlags["deploy"]` += `--i18n`/`--no-i18n`,
+  `helpSections`. Tests `parseDeployArgs` (overrides + mutuamente
+  excluyentes), `pathsTouchI18n`, `i18nOverwriteDecision`. build/vet/test
+  verdes; verificación EN VIVO contra el servidor pendiente del usuario.
+  Spec `64-deploy-i18n-detect.md`.
 - [x] Unit 63 — shell-pipe. `shell` con stdin no-TTY entra en modo pipe
   headless: el contenido pipeado corre por el shell de Odoo vía la
   maquinaria de shell-run (`runShellPiped` en repl, reusa

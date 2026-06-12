@@ -44,15 +44,24 @@ type deployArgs struct {
 	limit  int
 	dryRun bool
 	force  bool
+	// i18n forces --i18n-overwrite on the run; noI18n suppresses it even
+	// when an i18n/ change is detected. Mutually exclusive; absent both,
+	// the flag is decided by auto-detection.
+	i18n   bool
+	noI18n bool
 }
 
-// parseDeployArgs extracts --from/--limit/--dry-run/--force. Deploy takes
-// no positionals — the commits come from the interactive picker.
+// parseDeployArgs extracts --from/--limit/--dry-run/--force/--i18n/--no-i18n.
+// Deploy takes no positionals — the commits come from the interactive picker.
 func parseDeployArgs(args []string) (deployArgs, error) {
 	out := deployArgs{limit: 20}
 	for i := 0; i < len(args); i++ {
 		a := args[i]
 		switch {
+		case a == "--i18n":
+			out.i18n = true
+		case a == "--no-i18n":
+			out.noI18n = true
 		case a == "--from":
 			if i+1 >= len(args) {
 				return out, fmt.Errorf("--from requires a target name")
@@ -87,6 +96,9 @@ func parseDeployArgs(args []string) (deployArgs, error) {
 		default:
 			return out, fmt.Errorf("deploy takes no positional arguments (commits are picked interactively)")
 		}
+	}
+	if out.i18n && out.noI18n {
+		return out, fmt.Errorf("--i18n and --no-i18n are mutually exclusive")
 	}
 	return out, nil
 }
@@ -145,12 +157,15 @@ func RunDeploy(ctx context.Context, opts DeployOpts) error {
 		[2]string{"n", strconv.Itoa(len(selected))})
 
 	// Commit → module resolution. Unresolved commits are excluded and
-	// reported, never fatal — unless nothing at all resolves.
+	// reported, never fatal — unless nothing at all resolves. Each resolved
+	// commit's diff is also scanned for changes under <module>/i18n/, which
+	// later decides whether the `-u` run carries --i18n-overwrite.
 	seen := map[string]bool{}
+	i18nTouched := map[string]bool{}
 	var modules []string
 	var skipped int
 	for _, c := range selected {
-		mod, via, reason := resolveCommitModule(ctx, opts.Root, c)
+		mod, via, reason, paths := resolveCommitModule(ctx, opts.Root, c)
 		if mod == "" {
 			opts.log("WARNING", "", "skipped", "",
 				[2]string{"commit", c.short()}, [2]string{"reason", reason})
@@ -162,6 +177,23 @@ func RunDeploy(ctx context.Context, opts DeployOpts) error {
 		if !seen[mod] {
 			seen[mod] = true
 			modules = append(modules, mod)
+		}
+		// Subject-resolved commits skip the diff during resolution; fetch
+		// it now so i18n detection covers them too. A diff failure here
+		// degrades to "no i18n change" — it must never drop the module.
+		if paths == nil {
+			p2, err := gitCommitPaths(ctx, opts.Root, c.sha)
+			if err != nil {
+				opts.log("WARNING", "", "i18n detection skipped", "",
+					[2]string{"commit", c.short()}, [2]string{"reason", err.Error()})
+			} else {
+				paths = p2
+			}
+		}
+		if !i18nTouched[mod] && pathsTouchI18n(mod, paths) {
+			i18nTouched[mod] = true
+			opts.log("INFO", "i18n", "i18n changes detected", "",
+				[2]string{"commit", c.short()}, [2]string{"module", mod})
 		}
 	}
 	if len(modules) == 0 {
@@ -204,9 +236,33 @@ func RunDeploy(ctx context.Context, opts DeployOpts) error {
 		return fmt.Errorf("query remote module states: %w", err)
 	}
 	install, update := splitInstallUpdate(modules, states)
-	opts.log("INFO", "", "plan", prof.DBName,
+
+	// --i18n-overwrite decision. Only update-set modules count: a fresh
+	// install loads translations anyway. The flag is global to the one
+	// Odoo run, so any update-set hit overwrites every updated module's
+	// terms. --i18n forces it, --no-i18n suppresses a positive detection.
+	for _, m := range install {
+		if i18nTouched[m] {
+			opts.log("INFO", "i18n", "i18n changes on install-set module — no overwrite needed",
+				prof.DBName, [2]string{"module", m})
+		}
+	}
+	detectedUpdate := false
+	for _, m := range update {
+		if i18nTouched[m] {
+			detectedUpdate = true
+			break
+		}
+	}
+	i18nState, overwrite := i18nOverwriteDecision(p.i18n, p.noI18n, detectedUpdate)
+
+	// The plan rides its own `echo.deploy.plan` logger so it renders in a
+	// distinct color from the other deploy lines — it's the line the
+	// operator reviews before the prod gate.
+	opts.log("INFO", "plan", "modules resolved", prof.DBName,
 		[2]string{"update", strings.Join(update, ",")},
 		[2]string{"install", strings.Join(install, ",")},
+		[2]string{"i18n", i18nState},
 		[2]string{"skipped", strconv.Itoa(skipped)})
 
 	if p.dryRun {
@@ -234,8 +290,20 @@ func RunDeploy(ctx context.Context, opts DeployOpts) error {
 	if err := step("up -d", remoteComposeCmd(remotePath, target.composeCmd, "up", "-d")); err != nil {
 		return err
 	}
-	opts.log("INFO", "odoo", "running module install/update", prof.DBName)
-	argv := odoo.InstallUpdate(conn, install, update)
+	// Name the modules and the effective i18n flag right at the Odoo run, so
+	// the execution line mirrors `update`'s start line.
+	runFields := []([2]string){}
+	if len(update) > 0 {
+		runFields = append(runFields, [2]string{"update", strings.Join(update, ",")})
+	}
+	if len(install) > 0 {
+		runFields = append(runFields, [2]string{"install", strings.Join(install, ",")})
+	}
+	if overwrite {
+		runFields = append(runFields, [2]string{"flags", "--i18n-overwrite"})
+	}
+	opts.log("INFO", "odoo", "running module install/update", prof.DBName, runFields...)
+	argv := odoo.WithI18nOverwrite(odoo.InstallUpdate(conn, install, update), overwrite)
 	if err := runSSHStream(ctx, sshHost, remoteContainerCmd(remotePath, target, argv), nil, opts.StreamOut); err != nil {
 		return fmt.Errorf("odoo run failed: %w", err)
 	}
@@ -298,24 +366,57 @@ func pickDeployCommits(commits []deployCommit, palette theme.Palette) ([]deployC
 // resolveCommitModule maps one commit to its module: the subject scheme
 // first (`[Tag] module: title`, valid only when the module exists as an
 // addon in the repo), then the diff fallback (the commit's changed paths
-// must touch exactly one addon). Returns ("", "", reason) when unresolved.
-func resolveCommitModule(ctx context.Context, root string, c deployCommit) (module, via, reason string) {
+// must touch exactly one addon). Returns ("", "", reason, …) when
+// unresolved. The returned paths are the commit's changed paths when the
+// diff was read (the fallback), and nil for subject-resolved commits — the
+// caller fetches those separately for i18n detection.
+func resolveCommitModule(ctx context.Context, root string, c deployCommit) (module, via, reason string, paths []string) {
 	if m := moduleFromSubject(root, c.subject); m != "" {
-		return m, "subject", ""
+		return m, "subject", "", nil
 	}
 	paths, err := gitCommitPaths(ctx, root, c.sha)
 	if err != nil {
-		return "", "", "git show failed: " + err.Error()
+		return "", "", "git show failed: " + err.Error(), nil
 	}
 	mods := modulesFromPaths(root, paths)
 	switch len(mods) {
 	case 1:
-		return mods[0], "diff", ""
+		return mods[0], "diff", "", paths
 	case 0:
-		return "", "", "no addon module touched"
+		return "", "", "no addon module touched", paths
 	default:
-		return "", "", "touches several modules: " + strings.Join(mods, ", ")
+		return "", "", "touches several modules: " + strings.Join(mods, ", "), paths
 	}
+}
+
+// i18nOverwriteDecision resolves whether the deploy's update run carries
+// --i18n-overwrite and the state label shown in the plan. --i18n forces it
+// on, --no-i18n suppresses a positive detection; otherwise it follows
+// whether an update-set module changed its i18n/ folder.
+func i18nOverwriteDecision(forceI18n, noI18n, detectedUpdate bool) (state string, overwrite bool) {
+	switch {
+	case forceI18n:
+		return "forced", true
+	case noI18n && detectedUpdate:
+		return "suppressed", false
+	case detectedUpdate:
+		return "on", true
+	default:
+		return "off", false
+	}
+}
+
+// pathsTouchI18n reports whether any changed path lives under the module's
+// i18n/ folder (any file: .po, .pot, or otherwise) — the signal that a
+// deploy of this module should overwrite the database translations.
+func pathsTouchI18n(module string, paths []string) bool {
+	prefix := module + "/i18n/"
+	for _, p := range paths {
+		if strings.HasPrefix(filepath.ToSlash(p), prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 // moduleFromSubject extracts the module from the commit-subject scheme,

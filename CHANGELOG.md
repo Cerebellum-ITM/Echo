@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **La línea de inicio de `update`/`install`/`uninstall`/`test` ahora
+  reporta las banderas usadas.** `echo.<cmd>.module.<mod>.start` gana un
+  campo `flags=` con los flags que el usuario pasó (p. ej. `--i18n`,
+  `--level=debug`), junto al `modules=` ya existente, así un
+  `update <mod> --i18n` queda registrado como tal en el log. Sin flags el
+  campo se omite. En `deploy`, la línea del run remoto de Odoo
+  (`echo.deploy.odoo: running module install/update`) ahora nombra los
+  módulos `update=`/`install=` y, cuando aplica, `flags=--i18n-overwrite`,
+  reflejando en el punto de ejecución lo que ya muestra la línea de plan.
+- **La línea de plan de `deploy` ahora cuelga del logger
+  `echo.deploy.plan`** (antes `echo.deploy`), de modo que la rotación de
+  color por logger la pinta en un tono distinto al resto de las líneas del
+  deploy — es la que el operador revisa antes del gate de prod.
+
+### Added
+- **`deploy` detecta cambios de traducción y añade `--i18n-overwrite`
+  automáticamente** (Unit 64): al resolver cada commit seleccionado, `deploy`
+  escanea sus archivos tocados (`git diff-tree`, ahora también para los
+  commits resueltos por título) y marca el módulo cuando alguno cae bajo
+  `<módulo>/i18n/`. Si un módulo marcado queda en el set de actualización
+  (`-u`), el único run de Odoo remoto lleva `--i18n-overwrite`, de modo que
+  los `.po` desplegados sobrescriben las traducciones en la BD. Los módulos
+  del set de instalación (`-i`) no disparan el flag (una instalación fresca
+  ya carga sus traducciones) y se reportan con una línea informativa. Dos
+  overrides per-invocación, mutuamente excluyentes: `--i18n` fuerza el flag
+  aunque no se detecte nada y `--no-i18n` lo suprime aun detectándose; la
+  línea de plan muestra `i18n=on|off|forced|suppressed`, visible también en
+  `--dry-run`.
+
 ## [0.13.0] — 2026-06-12
 
 ### Added

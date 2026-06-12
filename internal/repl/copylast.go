@@ -304,13 +304,31 @@ func (sess *session) startLog(name string, args []string) {
 // module set is known (after picker / --last resolution), so the line
 // names the actual modules — closing the gap where `update --last` or a
 // picker selection produced a generic `echo.update.start`. The logger
-// encodes the target (echo.<cmd>.module.<mod> / .modules / .all) and the
-// modules= field always spells out the full set.
-func (sess *session) startResolved(name string, resolved []string) {
+// encodes the target (echo.<cmd>.module.<mod> / .modules / .all), the
+// modules= field always spells out the full set, and a flags= field names
+// the flags the user passed (e.g. --i18n, --level) so the run records how
+// it was invoked.
+func (sess *session) startResolved(name string, args, resolved []string) {
 	logger := echoCommandLogger(name, resolved) + ".start"
-	emitOdooLog("INFO", logger, name,
-		[]logField{{"modules", moduleField(resolved)}},
+	fields := []logField{{"modules", moduleField(resolved)}}
+	if flags := flagArgs(args); flags != "" {
+		fields = append(fields, logField{"flags", flags})
+	}
+	emitOdooLog("INFO", logger, name, fields,
 		sess.styles, sess.palette, sess.cfg.DBName)
+}
+
+// flagArgs joins the dash-prefixed tokens of a command's args into a
+// space-separated string for the start line's flags= field, preserving
+// order. Returns "" when the command carried no flags.
+func flagArgs(args []string) string {
+	var flags []string
+	for _, a := range args {
+		if strings.HasPrefix(a, "-") {
+			flags = append(flags, a)
+		}
+	}
+	return strings.Join(flags, " ")
 }
 
 // successLog emits the post-command ✓ entry for module commands as
