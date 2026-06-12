@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.0] — 2026-06-12
+
 ### Added
 - Nuevo comando **`link [<target>] [--show] [--rm]`** (Unit 60): enlaza el
   directorio actual (típicamente un repo de addons sin `docker-compose.yml`,
