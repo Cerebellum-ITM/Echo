@@ -26,7 +26,7 @@ import (
 // `0.5.0+abc1234` or `0.5.0+abc1234.dirty`. A plain `go build` without
 // the Makefile leaves VersionMeta empty (bare semver).
 var (
-	Version     = "0.11.0"
+	Version     = "0.12.0"
 	VersionMeta = ""
 )
 
@@ -55,6 +55,10 @@ type session struct {
 	// in one-shot (RunOnce) or recipe (RunRecipe) dispatch. Gates the
 	// `update` empty-picker "repeat last" confirmation.
 	interactive bool
+	// recipe is true while a recipe (RunRecipe) is executing. It suppresses
+	// the interactive `help` pager for a `help` step so a recipe never blocks
+	// on an alt-screen viewer mid-run; the step falls back to flat printing.
+	recipe bool
 	// exitCode records the outcome of the last dispatched command for
 	// one-shot (script) mode. It is set by the terminal log helpers
 	// (finalize, *FailureLog, readonlyFinalize, …) and read by RunOnce /
@@ -202,7 +206,7 @@ var dispatchNames = []string{
 	"install", "update", "uninstall", "test", "modules", "modinfo", "modstate", "view",
 	"i18n-export", "i18n-update", "i18n-pull",
 	"db-backup", "db-restore", "db-drop", "db-neutralize", "db-list",
-	"shell", "bash", "psql", "connect",
+	"shell", "shell-run", "bash", "psql", "connect",
 }
 
 // isMetaCommand returns true for commands whose output should not be
@@ -277,6 +281,8 @@ func (sess *session) dispatchParsed(ctx context.Context, cmd string, args []stri
 		sess.runDB(ctx, cmd, args)
 	case "shell", "bash", "psql":
 		sess.runShell(ctx, cmd, args)
+	case "shell-run":
+		sess.runShellRun(ctx, args)
 	case "connect":
 		sess.runConnect(ctx, args)
 	default:
@@ -353,6 +359,9 @@ func helpSections() []helpSection {
 			{"bash", "Bash session inside the Odoo container"},
 			{"psql", "PostgreSQL client against the configured DB"},
 			{"shell", "Odoo Python shell against the configured DB"},
+			{"shell-run [<file>]", "Run a .py through the Odoo shell (stdin); no file → picker"},
+			{"  --no-copy", "Don't auto-copy the script output to the clipboard"},
+			{"  --force", "Skip the prod-stage confirmation prompt"},
 			{"connect [<login>]", "Impersonate a user (mint session, open Chrome logged in)"},
 			{"  --all", "Include inactive users in the picker"},
 			{"  --fresh", "Ignore the cached session and mint a new one"},
@@ -372,7 +381,7 @@ func helpSections() []helpSection {
 			{"  -c, --copy", "Bounded output and copy to clipboard"},
 			{"  --all", "All compose services (instead of just Odoo)"},
 		}},
-		{"Shell", []helpEntry{
+		{"Session", []helpEntry{
 			{"copy-last", "Copy the last command's output to clipboard"},
 			{"  --errors", "Only copy error/warning lines"},
 			{"report", "Inspect/copy the last run's logs by step and level"},
@@ -387,44 +396,74 @@ func helpSections() []helpSection {
 	}
 }
 
+// scriptingHelpEntries documents the one-shot script mode. It lives outside
+// helpSections() — which is cross-checked against the command Registry —
+// because `echo <cmd>` is not a REPL command.
+var scriptingHelpEntries = []helpEntry{
+	{"echo <cmd> [args]", "Run one command and exit with a status code"},
+	{"echo run <file>", "Run a recipe (one command per line); - reads stdin"},
+	{"  --pick", "Pick a .echo recipe from the current directory"},
+	{"  --last", "Run the most recently created .echo recipe"},
+	{"  --continue-on-error", "Run every step instead of stopping at the first failure"},
+	{"  --log[=<path>]", "Save a plain transcript (default dir, a file, or --log=. for ./<recipe>.log)"},
+	{"  <step> --silent[=lvl]", "Silence a step's output (screen+log); =lvl keeps that level and above"},
+	{"echo -C <dir> <cmd>", "Run from outside the project directory"},
+}
+
+// buildHelpEntries documents the universal build mode — also outside
+// helpSections(), keeping the Registry cross-check clean.
+var buildHelpEntries = []helpEntry{
+	{"<cmd> --build", "Interactively compose the command (pickers + flags), then run/copy it"},
+}
+
+// runHelp shows the command reference. It opens the paginated viewer (one
+// section per page, ←/→ to move) in the interactive REPL and for a one-shot
+// `echo help` run on a real terminal; inside a recipe, on a non-TTY (piped /
+// redirected / CI), or if the pager can't start, it prints the flat listing.
 func (sess *session) runHelp() {
-	s := sess.styles
+	if sess.helpPagerEnabled() {
+		err := sess.runHelpPager()
+		if err == nil || sess.handleQuit(err) {
+			return
+		}
+	}
+	sess.printHelpFlat()
+}
+
+// helpPagerEnabled reports whether `help` should open the interactive pager.
+// It runs in the live REPL, and also for a one-shot `echo help` when both
+// stdin and stdout are real terminals — so running it straight from the
+// shell gets the same paginated viewer. Recipe steps and TTY-less runs
+// (pipes, redirects, CI) stay on the flat printout.
+func (sess *session) helpPagerEnabled() bool {
+	if sess.recipe {
+		return false
+	}
+	if sess.interactive {
+		return true
+	}
+	return stdinIsTTY() && stdoutIsTTY()
+}
+
+// printHelpFlat is the non-interactive help: every section printed in
+// sequence, as `echo help` has always done in script mode.
+func (sess *session) printHelpFlat() {
+	printSection := func(title string, items []helpEntry) {
+		sess.print(Line{Kind: "accent", Text: title})
+		for _, line := range renderHelpEntries(sess.styles, items) {
+			fmt.Println(line)
+		}
+	}
 	for i, sec := range helpSections() {
 		if i > 0 {
 			sess.print(Line{Kind: "out", Text: ""})
 		}
-		sess.print(Line{Kind: "accent", Text: sec.title})
-		for _, it := range sec.items {
-			label := lipgloss.NewStyle().Width(22).Render(it.cmd)
-			fmt.Println("  " + s.Info.Render(label) + s.Out.Render(it.desc))
-		}
+		printSection(sec.title, sec.items)
 	}
-
-	// Script mode is one-shot only (no REPL command), so it lives outside
-	// helpSections() — which is cross-checked against the command Registry.
 	sess.print(Line{Kind: "out", Text: ""})
-	sess.print(Line{Kind: "accent", Text: "Scripting (one-shot, outside the REPL)"})
-	for _, it := range []helpEntry{
-		{"echo <cmd> [args]", "Run one command and exit with a status code"},
-		{"echo run <file>", "Run a recipe (one command per line); - reads stdin"},
-		{"  --pick", "Pick a .echo recipe from the current directory"},
-		{"  --last", "Run the most recently created .echo recipe"},
-		{"  --continue-on-error", "Run every step instead of stopping at the first failure"},
-		{"  --log[=<path>]", "Save a plain transcript (default dir, a file, or --log=. for ./<recipe>.log)"},
-		{"  <step> --silent[=lvl]", "Silence a step's output (screen+log); =lvl keeps that level and above"},
-		{"echo -C <dir> <cmd>", "Run from outside the project directory"},
-	} {
-		label := lipgloss.NewStyle().Width(22).Render(it.cmd)
-		fmt.Println("  " + s.Info.Render(label) + s.Out.Render(it.desc))
-	}
-
-	// Build mode is universal (any routed command) and interactive, so it
-	// lives outside helpSections() — keeping the Registry cross-check clean.
+	printSection("Scripting (one-shot, outside the REPL)", scriptingHelpEntries)
 	sess.print(Line{Kind: "out", Text: ""})
-	sess.print(Line{Kind: "accent", Text: "Build mode (compose interactively)"})
-	buildLabel := lipgloss.NewStyle().Width(22).Render("<cmd> --build")
-	fmt.Println("  " + s.Info.Render(buildLabel) +
-		s.Out.Render("Interactively compose the command (pickers + flags), then run/copy it"))
+	printSection("Build mode (compose interactively)", buildHelpEntries)
 }
 
 // helpCommandNames extracts the flat set of top-level command names
@@ -883,6 +922,15 @@ func (sess *session) runReset() {
 // Odoo log style; everything else goes through the kind classifier (which
 // also keeps traceback continuations grouped via err/warn inheritance).
 func (sess *session) emitStreamLine(lc *logColorer, line string) {
+	// Normalize away any embedded ANSI before parsing. `update`/`install`
+	// run Odoo under `exec -T` (no TTY → plain logs), but `docker compose
+	// logs` replays whatever the container stored, which carries Odoo's
+	// ColoredFormatter SGR codes when it ran attached to a TTY. Those codes
+	// break the Odoo/loguru prefix regexes, so the line would fall through
+	// to a verbatim print with docker's native colors instead of Echo's
+	// per-segment styling. Stripping here routes logs through the exact same
+	// formatter as `update` (matching what the `shell` transform already does).
+	line = stripANSISeq(line)
 	if cl, ok := parseComposeProgress(line); ok {
 		emitOdooLog(cl.level, "docker."+cl.resource, cl.state,
 			[]logField{{"name", cl.name}},

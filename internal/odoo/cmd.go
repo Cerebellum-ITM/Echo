@@ -34,13 +34,20 @@ func Major(version string) int {
 	return n
 }
 
-// RenderConf renders a minimal odoo.conf carrying just the database
-// connection from c. It exists for the Odoo 19 `odoo i18n` subcommand,
+// RenderConf renders a minimal odoo.conf carrying the database connection
+// from c plus addonsPath. It exists for the Odoo 19 `odoo i18n` subcommand,
 // whose only connection inputs are `-c` and `-d` — the `--db_*` flags the
 // legacy path uses are not accepted there, so credentials must ride in a
 // config file. Only non-empty fields are emitted; db_name is intentionally
 // left out because callers pass it via `-d`.
-func RenderConf(c Conn) []byte {
+//
+// addonsPath (the raw, comma-joined value from the container's real
+// odoo.conf) is critical: `-c` *replaces* the default config rather than
+// merging, so without it the subcommand loads only the base addons and skips
+// the project's modules — the i18n export then misses their terms. Empty
+// addonsPath omits the line (callers that can't resolve it fall back to the
+// default, which is wrong for custom modules but better than failing).
+func RenderConf(c Conn, addonsPath string) []byte {
 	var b strings.Builder
 	b.WriteString("[options]\n")
 	if c.Host != "" {
@@ -54,6 +61,9 @@ func RenderConf(c Conn) []byte {
 	}
 	if c.Password != "" {
 		b.WriteString("db_password = " + c.Password + "\n")
+	}
+	if addonsPath != "" {
+		b.WriteString("addons_path = " + addonsPath + "\n")
 	}
 	return []byte(b.String())
 }
@@ -124,6 +134,15 @@ func WithI18nOverwrite(cmd Cmd, on bool) Cmd {
 		return cmd
 	}
 	return append(cmd, "--i18n-overwrite")
+}
+
+// Shell builds the argv for `odoo shell` loaded against c, with HTTP
+// disabled. Shared by the interactive `shell` and the `shell-run` script
+// runner (which pipes a .py to its stdin). The `shell` subcommand goes
+// right after `odoo`, before the connection flags.
+func Shell(c Conn) Cmd {
+	args := append(Cmd{"odoo", "shell"}, c.flags()...)
+	return append(args, "--no-http")
 }
 
 // Install builds the argv to install one or more modules.

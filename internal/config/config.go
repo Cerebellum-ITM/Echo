@@ -40,6 +40,13 @@ type Config struct {
 	// in conf mode to discover addons paths (default /etc/odoo/odoo.conf).
 	ConfPath string
 
+	// ScriptsDir is the directory `shell-run` lists `.py` scripts from
+	// (top-level, non-recursive). Empty means the project root. A relative
+	// value is resolved against the project root; an absolute one is used
+	// as-is. Kept out of the addons tree so the picker doesn't scan the
+	// thousands of modules' `.py`.
+	ScriptsDir string
+
 	// Compose project name override (per project). When empty, the REPL
 	// derives the name from COMPOSE_PROJECT_NAME or the project dir basename.
 	ComposeProject string
@@ -102,6 +109,7 @@ type projectFile struct {
 	AddonsPaths    []string     `toml:"addons_paths"`
 	AddonsMode     string       `toml:"addons_mode"`
 	ConfPath       string       `toml:"conf_path"`
+	ScriptsDir     string       `toml:"scripts_dir"`
 	ComposeProject string       `toml:"compose_project"`
 	ProjectPath    string       `toml:"project_path"`
 	FilestorePath  string       `toml:"filestore_path"`
@@ -199,6 +207,7 @@ func Load(projectPath string) (*Config, error) {
 	cfg.AddonsPaths = p.AddonsPaths
 	cfg.AddonsMode = p.AddonsMode
 	cfg.ConfPath = p.ConfPath
+	cfg.ScriptsDir = p.ScriptsDir
 	cfg.ComposeProject = p.ComposeProject
 	if p.ProjectPath != "" {
 		cfg.ProjectPath = p.ProjectPath
@@ -318,6 +327,7 @@ func SaveProject(cfg *Config) error {
 		AddonsPaths:    cfg.AddonsPaths,
 		AddonsMode:     cfg.AddonsMode,
 		ConfPath:       cfg.ConfPath,
+		ScriptsDir:     cfg.ScriptsDir,
 		ComposeProject: cfg.ComposeProject,
 		ProjectPath:    cfg.ProjectPath,
 		FilestorePath:  cfg.FilestorePath,

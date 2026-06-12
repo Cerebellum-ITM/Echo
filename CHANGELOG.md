@@ -7,6 +7,100 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.12.0] — 2026-06-12
+
+### Added
+- Nuevo comando **`shell-run [<archivo>]`** (Unit 59): corre un script `.py`
+  local a través del Odoo shell pasándolo por stdin —equivalente a
+  `odoo-bin shell -d <db> --no-http < investigar.py`— y **auto-copia** la
+  salida al portapapeles al terminar (`copied N lines`; `--no-copy` lo evita).
+  Sin argumento abre un picker de `.py`; con argumento corre directo. La
+  salida se stremea coloreada estilo Odoo (igual que `update`). El auto-copiado
+  toma **solo la salida del script** (las líneas de `print`), descartando el
+  boot/inicialización del shell de Odoo —se filtran las líneas con formato de
+  log Odoo—; el transcript completo (boot incluido) sigue disponible con
+  `copy-last`. Corre sin TTY (`exec -T`) para que el pipe de stdin funcione.
+  **De dónde salen los `.py`:** una carpeta `scripts/` en la raíz del proyecto
+  se detecta sola (sin config); la config de proyecto `scripts_dir` permite una
+  ruta distinta (relativa al proyecto o absoluta); si no hay ninguna, la raíz
+  del proyecto (top-level, sin recursión, para no escanear los addons). En DB
+  de stage `prod` pide confirmación (`--force` la salta). Builder `odoo.Shell`
+  compartido con el `shell` interactivo; piping a stdin vía
+  `docker.ExecWithStdin`.
+
+### Fixed
+- **`i18n-export`/`i18n-update` en Odoo 19** dejaban el `odoo.conf` efímero
+  (con las credenciales, requerido por `odoo i18n … -c`) ilegible para Odoo:
+  se copiaba con `docker cp`, que lo deja `root:root 0600`, y el proceso Odoo
+  (usuario no-root) no podía leerlo → `error: the config file '…' … is not
+  readable` y el export fallaba (exit 2); como además `/tmp` es sticky, el
+  `rm -f` de limpieza daba `exit status 1`, y al no generarse archivo nuevo
+  quedaba el `.po` viejo del repo (parecía que "copiaba" el existente). Ahora
+  el conf se escribe **dentro** del contenedor por stdin (`sh -c 'cat > …'` vía
+  `docker.ExecWithStdin`), quedando propiedad del usuario Odoo —legible y
+  removible—, igual que ya hacía el `i18n-pull` remoto. El `.po` de
+  `i18n-update` no estaba afectado (viene del repo, 0644). Solo afecta Odoo 19+
+  (17/18 usan flags `--db_*`, sin conf).
+- **`i18n-export`/`i18n-pull` en Odoo 19 exportaban un `.po` incompleto**
+  (módulos del proyecto `not installable, skipped` / `Some modules are not
+  loaded`). Causa: el `odoo i18n export -c <conf>` **reemplaza** al conf real
+  del contenedor en vez de fusionarlo, y el conf que Echo generaba solo traía
+  la conexión de BD, **sin `addons_path`** → Odoo no encontraba los módulos del
+  proyecto y el export omitía sus términos. Ahora el conf generado incluye el
+  `addons_path` real (se lee crudo del `odoo.conf` del contenedor con
+  `extractAddonsPath`, sin filtrar enterprise porque un módulo puede depender de
+  él) vía `odoo.RenderConf(conn, addonsPath)`; el pull remoto pasa el
+  `addons_path` del perfil remoto. En 17/18 no aplica (el legacy usa el conf
+  real del contenedor). Nota: con los módulos ahora cargados, desaparece el
+  ERROR de carga que marcaba el comando como `failed`.
+- **`i18n-pull` en Odoo 19 seguía exportando un `.po` distinto al de
+  `i18n-export`** (parecía traer una versión vieja/incompleta). Causa: el
+  `addons_path` del conf efímero salía de `prof.AddonsPaths`, el **snapshot
+  persistido** en el perfil Echo del servidor (`projects/<hash>.toml`), que
+  (1) no se refresca en el pull —si el `odoo.conf` remoto cambió, se usaban
+  paths viejos—, (2) está **filtrado** por `parseAddonsPath` (descarta dirs
+  `enterprise*`), y (3) en `addons_mode = "host"` guarda subpaths relativos
+  al host, inválidos dentro del contenedor. Como `-c` reemplaza al conf real,
+  cualquiera de esos huecos hacía que Odoo cargara de menos y el export
+  omitiera términos. Ahora el pull lee el `addons_path` **en vivo y crudo**
+  del `odoo.conf` real del contenedor remoto (`remoteAddonsPath`, vía SSH +
+  `extractAddonsPath`) —la misma fuente que usa el `i18n-export` local—, con
+  el snapshot del perfil solo como fallback si el `cat` falla. Una sola
+  lectura por run (no por módulo). En 17/18 no aplica (sin `-c`).
+- **`logs`** ahora se pinta **idéntico a `update`** (Unit 58). Dos causas que
+  Unit 57 no resolvió:
+  1. `docker compose logs -f` antepone un gutter `servicio  | ` a cada línea
+     que rompía el parser de Odoo → se añade `--no-log-prefix` a
+     `Logs`/`LogsFollow`.
+  2. A diferencia de `update`/`install` (`exec -T`, logs planos), `docker
+     compose logs` reproduce el ANSI que Odoo guardó cuando corrió con TTY;
+     esos códigos SGR rompían `formatOdooLine` y la línea caía a impresión
+     cruda con los colores nativos de Odoo (logger sin pastel, etc.). Ahora
+     `emitStreamLine` limpia el ANSI con `stripANSISeq` antes de parsear —el
+     mismo tratamiento que ya hacía `shell`— así `logs` y `update` pasan por
+     el mismo formateador por segmentos (ts dim, chip de nivel, db en acento,
+     logger en pastel, mensaje normal). Para `update` es no-op (no trae ANSI).
+
+### Changed
+- **`help` ahora es un visor paginado** en el REPL interactivo: cada sección
+  (Project, Modules, i18n, Database, Shell, Docker, Session, Scripting, Build)
+  es una página; **←/→** (también `h`/`l` y tab) se mueven entre secciones con
+  wrap, **↑/↓** hacen scroll dentro de una sección alta, `esc` cierra y
+  `Ctrl+X` sale de Echo (igual que en los pickers). Corre en pantalla alterna
+  (no contamina el scrollback) con el mismo estilo "log-framed" del picker:
+  barra `│` tintada por stage, header con tabs y contador `(n/N)`, footer de
+  atajos en faint. La segunda sección "Shell" (copy-last / report / clear /
+  help) se renombró a **"Session"** para que los tabs no se repitan.
+- **`echo help` desde la terminal también abre el visor paginado**: cuando se
+  corre como one-shot (`echo help`) y tanto stdin como stdout son una terminal
+  real, usa el mismo pager que el REPL interactivo. Dentro de una receta, o si
+  la salida está redirigida/entubada (pipes, `>`, CI), `help` sigue imprimiendo
+  el listado plano de siempre.
+- **`modules`** ahora prefija cada módulo con el glyph nerd-font ``
+  (`cod-package`) en color de acento y colorea el nombre, conservando el wrap
+  al ancho de terminal y la línea de cierre `echo.modules: modules listed
+  count=N` (Unit 58).
+
 ## [0.11.0] — 2026-06-11
 
 ### Changed
