@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.12.0] — 2026-06-12
+
 ### Added
 - Nuevo comando **`shell-run [<archivo>]`** (Unit 59): corre un script `.py`
   local a través del Odoo shell pasándolo por stdin —equivalente a
