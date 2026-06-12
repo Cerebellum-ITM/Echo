@@ -130,16 +130,12 @@ func remoteRunFlags(args []string) (from string, remote bool) {
 	return from, remote
 }
 
-// runShellRun implements `shell-run [<file>] [--no-copy]`: pipe a local .py
-// through the Odoo shell (stdin), stream the output Odoo-colored like
-// `update`, and auto-copy the captured output to the clipboard on success.
-func (sess *session) runShellRun(ctx context.Context, args []string) {
-	sess.startLog("shell-run", args)
-
-	noCopy := false
-	var from string
-	var remote bool
-	var positional []string
+// parseShellRunArgs splits shell-run's argument list into its flags and
+// positionals. A lone `-` is a positional (the stdin source), NOT an
+// unknown flag — the dash-prefix catch-all must not swallow it. The
+// `--from` value is consumed so it is never mistaken for a script name;
+// other unknown flags are ignored rather than treated as scripts.
+func parseShellRunArgs(args []string) (noCopy bool, from string, remote bool, positional []string) {
 	for i := 0; i < len(args); i++ {
 		a := args[i]
 		switch {
@@ -148,19 +144,30 @@ func (sess *session) runShellRun(ctx context.Context, args []string) {
 		case a == "--remote":
 			remote = true
 		case a == "--from":
-			// Consume the value too, so it is never mistaken for a script.
 			if i+1 < len(args) {
 				from = args[i+1]
 				i++
 			}
 		case strings.HasPrefix(a, "--from="):
 			from = strings.TrimPrefix(a, "--from=")
+		case a == "-":
+			positional = append(positional, a)
 		case strings.HasPrefix(a, "-"):
 			// ignore unknown flags rather than treating them as a script name
 		default:
 			positional = append(positional, a)
 		}
 	}
+	return noCopy, from, remote, positional
+}
+
+// runShellRun implements `shell-run [<file>] [--no-copy]`: pipe a local .py
+// through the Odoo shell (stdin), stream the output Odoo-colored like
+// `update`, and auto-copy the captured output to the clipboard on success.
+func (sess *session) runShellRun(ctx context.Context, args []string) {
+	sess.startLog("shell-run", args)
+
+	noCopy, from, remote, positional := parseShellRunArgs(args)
 
 	dir := sess.scriptsDir()
 	var scriptPath string

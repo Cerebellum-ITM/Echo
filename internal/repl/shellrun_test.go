@@ -3,6 +3,7 @@ package repl
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 )
 
@@ -106,4 +107,31 @@ func TestResolveScriptArg(t *testing.T) {
 			t.Fatal("expected error for missing file")
 		}
 	})
+}
+
+func TestParseShellRunArgs(t *testing.T) {
+	cases := []struct {
+		in         []string
+		noCopy     bool
+		from       string
+		remote     bool
+		positional []string
+	}{
+		{nil, false, "", false, nil},
+		{[]string{"fix.py"}, false, "", false, []string{"fix.py"}},
+		{[]string{"-"}, false, "", false, []string{"-"}},
+		{[]string{"-", "--remote", "--no-copy"}, true, "", true, []string{"-"}},
+		{[]string{"fix.py", "--from", "prod"}, false, "prod", false, []string{"fix.py"}},
+		{[]string{"--from=staging", "-"}, false, "staging", false, []string{"-"}},
+		{[]string{"--bogus", "fix.py"}, false, "", false, []string{"fix.py"}},
+	}
+	for _, tc := range cases {
+		noCopy, from, remote, positional := parseShellRunArgs(tc.in)
+		if noCopy != tc.noCopy || from != tc.from || remote != tc.remote ||
+			!reflect.DeepEqual(positional, tc.positional) {
+			t.Errorf("parseShellRunArgs(%v) = (%v,%q,%v,%v), want (%v,%q,%v,%v)",
+				tc.in, noCopy, from, remote, positional,
+				tc.noCopy, tc.from, tc.remote, tc.positional)
+		}
+	}
 }
