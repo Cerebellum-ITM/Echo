@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Nuevo comando **`shell-run [<archivo>]`** (Unit 59): corre un script `.py`
+  local a través del Odoo shell pasándolo por stdin —equivalente a
+  `odoo-bin shell -d <db> --no-http < investigar.py`— y **auto-copia** la
+  salida al portapapeles al terminar (`copied N lines`; `--no-copy` lo evita).
+  Sin argumento abre un picker de `.py`; con argumento corre directo. La
+  salida se stremea coloreada estilo Odoo (igual que `update`). El auto-copiado
+  toma **solo la salida del script** (las líneas de `print`), descartando el
+  boot/inicialización del shell de Odoo —se filtran las líneas con formato de
+  log Odoo—; el transcript completo (boot incluido) sigue disponible con
+  `copy-last`. Corre sin TTY (`exec -T`) para que el pipe de stdin funcione.
+  **De dónde salen los `.py`:** una carpeta `scripts/` en la raíz del proyecto
+  se detecta sola (sin config); la config de proyecto `scripts_dir` permite una
+  ruta distinta (relativa al proyecto o absoluta); si no hay ninguna, la raíz
+  del proyecto (top-level, sin recursión, para no escanear los addons). En DB
+  de stage `prod` pide confirmación (`--force` la salta). Builder `odoo.Shell`
+  compartido con el `shell` interactivo; piping a stdin vía
+  `docker.ExecWithStdin`.
+
 ### Fixed
 - **`logs`** ahora se pinta **idéntico a `update`** (Unit 58). Dos causas que
   Unit 57 no resolvió:

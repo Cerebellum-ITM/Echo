@@ -202,7 +202,7 @@ var dispatchNames = []string{
 	"install", "update", "uninstall", "test", "modules", "modinfo", "modstate", "view",
 	"i18n-export", "i18n-update", "i18n-pull",
 	"db-backup", "db-restore", "db-drop", "db-neutralize", "db-list",
-	"shell", "bash", "psql", "connect",
+	"shell", "shell-run", "bash", "psql", "connect",
 }
 
 // isMetaCommand returns true for commands whose output should not be
@@ -277,6 +277,8 @@ func (sess *session) dispatchParsed(ctx context.Context, cmd string, args []stri
 		sess.runDB(ctx, cmd, args)
 	case "shell", "bash", "psql":
 		sess.runShell(ctx, cmd, args)
+	case "shell-run":
+		sess.runShellRun(ctx, args)
 	case "connect":
 		sess.runConnect(ctx, args)
 	default:
@@ -353,6 +355,9 @@ func helpSections() []helpSection {
 			{"bash", "Bash session inside the Odoo container"},
 			{"psql", "PostgreSQL client against the configured DB"},
 			{"shell", "Odoo Python shell against the configured DB"},
+			{"shell-run [<file>]", "Run a .py through the Odoo shell (stdin); no file → picker"},
+			{"  --no-copy", "Don't auto-copy the script output to the clipboard"},
+			{"  --force", "Skip the prod-stage confirmation prompt"},
 			{"connect [<login>]", "Impersonate a user (mint session, open Chrome logged in)"},
 			{"  --all", "Include inactive users in the picker"},
 			{"  --fresh", "Ignore the cached session and mint a new one"},

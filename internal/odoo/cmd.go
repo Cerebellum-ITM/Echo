@@ -126,6 +126,15 @@ func WithI18nOverwrite(cmd Cmd, on bool) Cmd {
 	return append(cmd, "--i18n-overwrite")
 }
 
+// Shell builds the argv for `odoo shell` loaded against c, with HTTP
+// disabled. Shared by the interactive `shell` and the `shell-run` script
+// runner (which pipes a .py to its stdin). The `shell` subcommand goes
+// right after `odoo`, before the connection flags.
+func Shell(c Conn) Cmd {
+	args := append(Cmd{"odoo", "shell"}, c.flags()...)
+	return append(args, "--no-http")
+}
+
 // Install builds the argv to install one or more modules.
 func Install(c Conn, modules []string, withDemo bool) Cmd {
 	args := append(Cmd{"odoo"}, c.flags()...)

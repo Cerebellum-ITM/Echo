@@ -78,9 +78,7 @@ func RunOdooShell(ctx context.Context, opts ShellOpts) (string, bool, error) {
 	if conn.Port == "" {
 		conn.Port = "5432"
 	}
-	argv := append([]string{"odoo", "shell"}, conn.Flags()...)
-	argv = append(argv, "--no-http")
-	return docker.ExecInteractive(ctx, opts.Cfg.ComposeCmd, opts.Root, opts.Cfg.OdooContainer, argv, opts.LineTransform)
+	return docker.ExecInteractive(ctx, opts.Cfg.ComposeCmd, opts.Root, opts.Cfg.OdooContainer, odoo.Shell(conn), opts.LineTransform)
 }
 
 // maybeConfirmProd shows a red huh.Confirm when stage=prod, unless
