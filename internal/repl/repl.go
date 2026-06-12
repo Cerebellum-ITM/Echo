@@ -55,6 +55,10 @@ type session struct {
 	// in one-shot (RunOnce) or recipe (RunRecipe) dispatch. Gates the
 	// `update` empty-picker "repeat last" confirmation.
 	interactive bool
+	// recipe is true while a recipe (RunRecipe) is executing. It suppresses
+	// the interactive `help` pager for a `help` step so a recipe never blocks
+	// on an alt-screen viewer mid-run; the step falls back to flat printing.
+	recipe bool
 	// exitCode records the outcome of the last dispatched command for
 	// one-shot (script) mode. It is set by the terminal log helpers
 	// (finalize, *FailureLog, readonlyFinalize, …) and read by RunOnce /
@@ -412,17 +416,33 @@ var buildHelpEntries = []helpEntry{
 	{"<cmd> --build", "Interactively compose the command (pickers + flags), then run/copy it"},
 }
 
-// runHelp shows the command reference. In the interactive REPL it opens the
-// paginated viewer (one section per page, ←/→ to move); in one-shot /
-// recipe mode — or if the pager can't start — it prints the flat listing.
+// runHelp shows the command reference. It opens the paginated viewer (one
+// section per page, ←/→ to move) in the interactive REPL and for a one-shot
+// `echo help` run on a real terminal; inside a recipe, on a non-TTY (piped /
+// redirected / CI), or if the pager can't start, it prints the flat listing.
 func (sess *session) runHelp() {
-	if sess.interactive {
+	if sess.helpPagerEnabled() {
 		err := sess.runHelpPager()
 		if err == nil || sess.handleQuit(err) {
 			return
 		}
 	}
 	sess.printHelpFlat()
+}
+
+// helpPagerEnabled reports whether `help` should open the interactive pager.
+// It runs in the live REPL, and also for a one-shot `echo help` when both
+// stdin and stdout are real terminals — so running it straight from the
+// shell gets the same paginated viewer. Recipe steps and TTY-less runs
+// (pipes, redirects, CI) stay on the flat printout.
+func (sess *session) helpPagerEnabled() bool {
+	if sess.recipe {
+		return false
+	}
+	if sess.interactive {
+		return true
+	}
+	return stdinIsTTY() && stdoutIsTTY()
 }
 
 // printHelpFlat is the non-interactive help: every section printed in

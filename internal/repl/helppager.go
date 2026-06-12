@@ -2,12 +2,22 @@ package repl
 
 import (
 	"fmt"
+	"os"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/pascualchavez/echo/internal/cmd"
 	"github.com/pascualchavez/echo/internal/theme"
+	"golang.org/x/term"
+)
+
+// stdinIsTTY / stdoutIsTTY report whether the standard streams are real
+// terminals. They are package-level seams so tests can force the flat
+// (non-pager) help path without a real TTY (mirrors stdinIsTTY in cmd).
+var (
+	stdinIsTTY  = func() bool { return term.IsTerminal(int(os.Stdin.Fd())) }
+	stdoutIsTTY = func() bool { return term.IsTerminal(int(os.Stdout.Fd())) }
 )
 
 // helpPage is one pager screen: a section title (the tab label) and its

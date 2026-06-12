@@ -86,6 +86,39 @@ func TestHelpPagerCtrlXFlagsQuit(t *testing.T) {
 	}
 }
 
+func TestHelpPagerEnabled(t *testing.T) {
+	origIn, origOut := stdinIsTTY, stdoutIsTTY
+	defer func() { stdinIsTTY, stdoutIsTTY = origIn, origOut }()
+
+	tty := func(in, out bool) {
+		stdinIsTTY = func() bool { return in }
+		stdoutIsTTY = func() bool { return out }
+	}
+
+	cases := []struct {
+		name        string
+		interactive bool
+		recipe      bool
+		in, out     bool
+		want        bool
+	}{
+		{"interactive REPL", true, false, false, false, true},
+		{"one-shot on a TTY", false, false, true, true, true},
+		{"one-shot piped stdout", false, false, true, false, false},
+		{"one-shot piped stdin", false, false, false, true, false},
+		{"recipe step on a TTY", false, true, true, true, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			tty(tc.in, tc.out)
+			sess := &session{interactive: tc.interactive, recipe: tc.recipe}
+			if got := sess.helpPagerEnabled(); got != tc.want {
+				t.Fatalf("helpPagerEnabled() = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestHelpPagerViewShowsActiveTab(t *testing.T) {
 	m := testHelpPager()
 	v := m.View()

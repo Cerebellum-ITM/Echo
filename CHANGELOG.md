@@ -87,10 +87,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `Ctrl+X` sale de Echo (igual que en los pickers). Corre en pantalla alterna
   (no contamina el scrollback) con el mismo estilo "log-framed" del picker:
   barra `│` tintada por stage, header con tabs y contador `(n/N)`, footer de
-  atajos en faint. En modo script (`echo help` one-shot o recetas) se mantiene
-  la impresión plana de siempre. La segunda sección "Shell" (copy-last /
-  report / clear / help) se renombró a **"Session"** para que los tabs no se
-  repitan.
+  atajos en faint. La segunda sección "Shell" (copy-last / report / clear /
+  help) se renombró a **"Session"** para que los tabs no se repitan.
+- **`echo help` desde la terminal también abre el visor paginado**: cuando se
+  corre como one-shot (`echo help`) y tanto stdin como stdout son una terminal
+  real, usa el mismo pager que el REPL interactivo. Dentro de una receta, o si
+  la salida está redirigida/entubada (pipes, `>`, CI), `help` sigue imprimiendo
+  el listado plano de siempre.
 - **`modules`** ahora prefija cada módulo con el glyph nerd-font ``
   (`cod-package`) en color de acento y colorea el nombre, conservando el wrap
   al ancho de terminal y la línea de cierre `echo.modules: modules listed

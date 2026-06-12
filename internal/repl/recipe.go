@@ -65,6 +65,7 @@ func RunRecipe(s theme.Styles, p theme.Palette, project, id string, stage theme.
 	}
 
 	sess, _ := newSession(s, p, project, id, stage, version, themeName, username, cwd, cfg)
+	sess.recipe = true // a `help` step prints flat; never opens the pager.
 	ctx := context.Background()
 
 	// System-status line: emitted once at the start of the run (not per
