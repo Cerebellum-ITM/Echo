@@ -3,6 +3,7 @@ package repl
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -109,6 +110,26 @@ func resolveScriptArg(arg, scriptsDir, projectDir string) (string, error) {
 	return path, nil
 }
 
+// remoteRunFlags extracts the remote-mode switches (`--from <v>`,
+// `--from=<v>`, `--remote`) from an argument list.
+func remoteRunFlags(args []string) (from string, remote bool) {
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		switch {
+		case a == "--remote":
+			remote = true
+		case a == "--from":
+			if i+1 < len(args) {
+				from = args[i+1]
+				i++
+			}
+		case strings.HasPrefix(a, "--from="):
+			from = strings.TrimPrefix(a, "--from=")
+		}
+	}
+	return from, remote
+}
+
 // runShellRun implements `shell-run [<file>] [--no-copy]`: pipe a local .py
 // through the Odoo shell (stdin), stream the output Odoo-colored like
 // `update`, and auto-copy the captured output to the clipboard on success.
@@ -143,10 +164,20 @@ func (sess *session) runShellRun(ctx context.Context, args []string) {
 
 	dir := sess.scriptsDir()
 	var scriptPath string
+	var stdin io.Reader
 	var err error
-	if len(positional) > 0 {
+	switch {
+	case len(positional) > 0 && positional[0] == "-":
+		// Explicit stdin source, mirroring `echo run -`. A TTY stdin would
+		// block forever waiting for input, so it fails fast instead.
+		if !cmd.StdinPiped() {
+			err = fmt.Errorf("stdin is a terminal — pipe a script or pass a file")
+		} else {
+			stdin = os.Stdin
+		}
+	case len(positional) > 0:
 		scriptPath, err = resolveScriptArg(positional[0], dir, sess.projectDir)
-	} else {
+	default:
 		scriptPath, err = pickScriptFile(dir, sess.palette)
 	}
 	if err != nil {
@@ -160,6 +191,7 @@ func (sess *session) runShellRun(ctx context.Context, args []string) {
 		Cfg:        sess.cfg,
 		Root:       sess.projectDir,
 		ScriptPath: scriptPath,
+		Stdin:      stdin,
 		Args:       args,
 		From:       from,
 		Remote:     remote,
@@ -174,6 +206,33 @@ func (sess *session) runShellRun(ctx context.Context, args []string) {
 		sess.copyShellRunOutput()
 	}
 	sess.readonlyFinalize("shell-run", runErr)
+}
+
+// runShellPiped is `shell`'s headless pipe mode: stdin is not a TTY, so
+// the piped content is fed to the Odoo shell — local or remote per
+// --from/--remote — through the shell-run machinery. Output streams
+// Odoo-colored; unlike shell-run there is no auto-copy (a pipeline
+// consumer owns the output; `copy-last` still works). The caller
+// (runShell) already emitted the start line.
+func (sess *session) runShellPiped(ctx context.Context, args []string) {
+	from, remote := remoteRunFlags(args)
+
+	lc := &logColorer{}
+	stats := &runStats{}
+	runErr := cmd.RunShellScript(ctx, cmd.ShellScriptOpts{
+		Cfg:     sess.cfg,
+		Root:    sess.projectDir,
+		Stdin:   os.Stdin,
+		Args:    args,
+		From:    from,
+		Remote:  remote,
+		Palette: sess.palette,
+		Log:     sess.cmdOdooLogger("shell"),
+		StreamOut: stats.wrap(func(line string) {
+			sess.emitStreamLine(lc, line)
+		}),
+	})
+	sess.readonlyFinalize("shell", runErr)
 }
 
 // copyShellRunOutput copies only the script's own output to the clipboard —

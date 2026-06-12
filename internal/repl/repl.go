@@ -792,6 +792,14 @@ func (sess *session) runShell(ctx context.Context, name string, args []string) {
 	case "psql":
 		captured, interrupted, err = cmd.RunPsql(ctx, opts)
 	case "shell":
+		// Piped stdin (`cat fix.py | echo shell`) → headless pipe mode: feed
+		// stdin to the Odoo shell through the shell-run machinery (local or
+		// remote per --from/--remote) instead of demanding a TTY. Inside the
+		// REPL stdin is always a TTY, so this only fires in one-shot runs.
+		if cmd.StdinPiped() {
+			sess.runShellPiped(ctx, args)
+			return
+		}
 		// Colorize Odoo's startup logs (printed raw through the PTY) so they
 		// match the rest of Echo's Odoo-styled output; non-log lines (IPython
 		// banner, prompt, eval output) pass through verbatim. Under a TTY

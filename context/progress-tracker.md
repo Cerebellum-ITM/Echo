@@ -21,6 +21,21 @@ _(siguiente: Unit 14 — meta-commands. Fix i18n19 Odoo 19 (rama `fix/i18n19-con
 
 ## Completed
 
+- [x] Unit 63 — shell-pipe. `shell` con stdin no-TTY entra en modo pipe
+  headless: el contenido pipeado corre por el shell de Odoo vía la
+  maquinaria de shell-run (`runShellPiped` en repl, reusa
+  `cmd.RunShellScript` con `Stdin: os.Stdin`), local o remoto
+  (`--from`/`--remote`), salida streameada estilo Odoo y SIN auto-copy (el
+  pipe es dueño de la salida; `copy-last` sigue). En el REPL interactivo
+  nada cambia (stdin siempre es TTY ahí). `shell-run -` lee el script de
+  stdin explícito (guard: `-` con TTY falla rápido), conservando
+  auto-copy. Nuevos: `docker.ExecWithStdinReader` (ExecWithStdin delega),
+  `ShellScriptOpts.Stdin io.Reader` (override de ScriptPath; remoto hace
+  io.ReadAll → runSSHStream), `cmd.StdinPiped()`, helper repl
+  `remoteRunFlags`. Prod headless sigue exigiendo `--force` (invariante
+  9). Sin flags nuevas (autodetección); smoke: pipe local fuera de
+  proyecto pide proyecto, pipe --remote resuelve projectless y falla
+  cerrado pidiendo --from. Spec `63-shell-pipe.md`.
 - [x] Unit 62 — remote-shell. `shell --from <target>`/`--remote` abre el
   Odoo shell de la instancia remota vía `ssh -tt -o BatchMode=yes` a través
   de `docker.RunInteractive` (extraído de `ExecInteractive`: misma

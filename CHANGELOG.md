@@ -52,6 +52,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `deploy`/`i18n-pull` (`resolveRemoteTarget`); la confirmación de prod usa
   el stage del perfil remoto. Ambos comandos son projectless one-shot solo
   en modo remoto.
+- **`shell` acepta stdin por pipe** (Unit 63): `cat fix.py | echo shell`
+  (y `… | echo shell --from prod --force`) detecta el stdin no-TTY y corre
+  el contenido por el shell de Odoo en modo headless — local o remoto —
+  con la salida streameada estilo Odoo, sin auto-copy (el consumidor del
+  pipe es dueño de la salida; `copy-last` sigue disponible). En el REPL
+  interactivo nada cambia. Además `shell-run -` lee el script de stdin
+  explícitamente (como `echo run -`), conservando su auto-copy; `-` con
+  stdin TTY falla rápido en vez de bloquearse. Nuevo
+  `docker.ExecWithStdinReader` (la variante con archivo delega en él) y
+  helper `cmd.StdinPiped`. El guard de prod se mantiene: un pipe contra
+  prod exige `--force` (sin TTY no hay confirmación).
 
 ## [0.12.0] — 2026-06-12
 

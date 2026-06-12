@@ -202,6 +202,17 @@ container's Odoo shell — handy for applying one-off data fixes without
 copying files to the server. Prod confirmation uses the remote profile's
 stage.
 
+`shell` also accepts **piped stdin** — with a non-TTY stdin it runs the piped
+content through the Odoo shell headless instead of opening the interactive
+session, local or remote:
+
+```sh
+cat fix_taxes.py | echo shell                    # local
+cat fix_taxes.py | echo shell --from prod --force # remote (prod needs --force headless)
+echo 'env["res.users"].search_count([])' | echo -C my-shop shell
+./generate_fix.sh | echo shell-run -              # `-` = read the script from stdin
+```
+
 ### i18n
 
 | Command                       | Description                                              |

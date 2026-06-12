@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 
 	"github.com/pascualchavez/echo/internal/config"
@@ -18,7 +19,10 @@ type ShellScriptOpts struct {
 	Cfg        *config.Config
 	Root       string
 	ScriptPath string // host path of the .py to feed to the shell's stdin
-	Args       []string
+	// Stdin, when non-nil, overrides ScriptPath as the script source —
+	// the piped forms (`cat fix.py | echo shell`, `shell-run -`).
+	Stdin io.Reader
+	Args  []string
 	// From / Remote select the remote mode: a named connect target, or
 	// the directory's [connect] binding. Both empty/false → local run.
 	From    string
@@ -60,6 +64,10 @@ func RunShellScript(ctx context.Context, opts ShellScriptOpts) error {
 	if conn.Port == "" {
 		conn.Port = "5432"
 	}
+	if opts.Stdin != nil {
+		return docker.ExecWithStdinReader(ctx, opts.Cfg.ComposeCmd, opts.Root,
+			opts.Cfg.OdooContainer, odoo.Shell(conn), opts.Stdin, opts.StreamOut)
+	}
 	return docker.ExecWithStdin(ctx, opts.Cfg.ComposeCmd, opts.Root,
 		opts.Cfg.OdooContainer, odoo.Shell(conn), opts.ScriptPath, opts.StreamOut)
 }
@@ -76,7 +84,12 @@ func runShellScriptRemote(ctx context.Context, opts ShellScriptOpts) error {
 	if err := confirmRemoteProd(opts.Palette, "shell-run", rsc, opts.Args); err != nil {
 		return err
 	}
-	script, err := os.ReadFile(opts.ScriptPath)
+	var script []byte
+	if opts.Stdin != nil {
+		script, err = io.ReadAll(opts.Stdin)
+	} else {
+		script, err = os.ReadFile(opts.ScriptPath)
+	}
 	if err != nil {
 		return fmt.Errorf("read script: %w", err)
 	}
