@@ -283,7 +283,7 @@ func (m fuzzyPicker) View() string {
 			}
 			row += headStyle.Render(head)
 			if tail != "" {
-				row += dim.Render(tail)
+				row += renderTailWithTags(tail, dim, p)
 			}
 			b.WriteString(row + "\n")
 		}

@@ -19,6 +19,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   amarillo staging / rojo prod, leído del `.env`/perfil), igual que la
   barra izquierda, así el entorno se lee de un vistazo también en la línea
   de filtro.
+- **Cada `[TAG]` de los commits en el picker de `deploy` se colorea por
+  tipo** (ADD verde, FIX rojo, IMP cian, REF/MERGE acento, DOC ámbar,
+  REL acento, …); un tag no reconocido recibe un pastel estable elegido por
+  hash, de modo que la taxonomía propia del proyecto también se distingue
+  por color sin estar cableada.
 - **La línea de inicio de `update`/`install`/`uninstall`/`test` ahora
   reporta las banderas usadas.** `echo.<cmd>.module.<mod>.start` gana un
   campo `flags=` con los flags que el usuario pasó (p. ej. `--i18n`,
