@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **El placeholder `type to filter…` del picker ya se muestra completo.**
+  bubbles dimensiona el buffer del placeholder a `Width+1`, y con `Width=0`
+  lo truncaba a una sola runa — el filtro mostraba un `t` fijo que parecía
+  texto tecleado. El input del picker ahora fija `Width` para que el
+  placeholder se renderice entero.
+
 ### Changed
 - **La línea de inicio de `update`/`install`/`uninstall`/`test` ahora
   reporta las banderas usadas.** `echo.<cmd>.module.<mod>.start` gana un

@@ -57,10 +57,18 @@ type pickerItem struct {
 	recent   bool // part of the previous run (e.g. last `update`); tinted
 }
 
+// filterWidth gives the filter input a non-zero Width. bubbles' textinput
+// truncates its placeholder to a single rune when Width is 0 (it sizes the
+// placeholder buffer to Width+1), so "type to filter…" rendered as just "t".
+// A fixed width is plenty for a fuzzy filter and makes the placeholder show
+// in full; the trailing padding is invisible spaces.
+const filterWidth = 48
+
 func newFuzzyPicker(title string, available, recent []string, palette theme.Palette) fuzzyPicker {
 	ti := textinput.New()
 	ti.Placeholder = "type to filter…"
 	ti.PlaceholderStyle = lipgloss.NewStyle().Foreground(palette.Faint)
+	ti.Width = filterWidth
 	ti.Focus()
 
 	recentSet := make(map[string]bool, len(recent))
