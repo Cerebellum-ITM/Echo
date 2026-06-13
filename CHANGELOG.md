@@ -15,6 +15,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   placeholder se renderice entero.
 
 ### Changed
+- **El prompt `filter ›` del picker toma el color del stage** (verde dev /
+  amarillo staging / rojo prod, leído del `.env`/perfil), igual que la
+  barra izquierda, así el entorno se lee de un vistazo también en la línea
+  de filtro.
 - **La línea de inicio de `update`/`install`/`uninstall`/`test` ahora
   reporta las banderas usadas.** `echo.<cmd>.module.<mod>.start` gana un
   campo `flags=` con los flags que el usuario pasó (p. ej. `--i18n`,

@@ -92,12 +92,13 @@ func newFuzzyPicker(title string, available, recent []string, palette theme.Pale
 }
 
 // setAccent sets the picker's highlight color (cursor, selected name, filter
-// caret) and rebuilds the filter prompt to match. Stage-aware callers pass
-// palette.PromptColor(stage); the default is palette.Accent.
+// label + caret) and rebuilds the filter prompt to match. Stage-aware callers
+// pass palette.PromptColor(stage), so the `filter ›` prompt itself signals the
+// environment (green dev / yellow staging / red prod); the default is
+// palette.Accent.
 func (m *fuzzyPicker) setAccent(c lipgloss.Color) {
 	m.accent = c
-	m.filter.Prompt = lipgloss.NewStyle().Foreground(m.palette.Faint).Render("filter ") +
-		lipgloss.NewStyle().Foreground(c).Render("› ")
+	m.filter.Prompt = lipgloss.NewStyle().Foreground(c).Render("filter › ")
 }
 
 func (m *fuzzyPicker) recompute() {
