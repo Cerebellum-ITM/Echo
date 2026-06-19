@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Banner del header coloreado por environment, con dos estilos figlet del
+  wordmark `echo` elegidos al azar** (Unit 15). Reemplaza el box `ECHO`
+  hardcodeado por: **B (soundwave)** — Calvin S de doble trazo (`╔═╗`) con una
+  onda `▁▂▃▅▇▅▃▂▁` debajo — y **D (shadow)** — ANSI Shadow (`█`) con degradado
+  vertical y un ripple `)))` opcional. El **color principal sale del stage
+  activo** (`PromptColor`: dev→verde, staging→ámbar, prod→rojo del tema en uso)
+  y el degradado/onda se **derivan en código** aclarando/oscureciendo ese color
+  con los nuevos helpers `theme.Lighten`/`theme.Darken` — sin hex hardcodeado,
+  así funciona en los 4 temas. Al arrancar el REPL el estilo se elige al azar
+  entre B y D; nueva config `banner = auto|soundwave|shadow` (default `auto`)
+  para fijarlo. Un **guard de ancho** respeta la columna izquierda del header:
+  D (gradiente) aparece desde ~85 cols de terminal, el ripple desde ~95, y por
+  debajo cae a B — nunca desborda el borde. Para previews/demos, la env var
+  `ECHO_BANNER=soundwave|shadow` fuerza el estilo y **salta el guard de ancho**
+  (puede desbordar en terminal angosta; ese es el precio del opt-in explícito).
+  Archivos: `internal/banner/echo.go`
+  (arte + `resolveBannerStyle` + `renderEchoBanner`), `internal/banner/header.go`
+  (cableado del banner + `Opts.Banner`), `internal/theme/theme.go`
+  (`Lighten`/`Darken`), `internal/config` (`Banner`, default `auto`),
+  `internal/repl/repl.go` (opts). Tests `echo_test.go` (selección + invariante
+  de ancho) y `shade_test.go` (límites de mezcla). Verificación visual en TTY
+  ancho pendiente del usuario.
+
+### Changed
+- **El bloque "What's new" del header dejó de promocionar contenido obsoleto.**
+  Mostraba "First release — header + prompt" y sugería `ls` (comando que ya no
+  existe en el `Registry`). Ahora destaca capacidades reales y actuales: el
+  banner coloreado por stage, `deploy` (mandar commits a un servidor) y
+  `connect` (abrir Odoo como cualquier usuario).
+
 ## [0.14.0] — 2026-06-19
 
 ### Added

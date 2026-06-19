@@ -5,6 +5,7 @@ import "time"
 var Defaults = Config{
 	Theme:          "charm",
 	Logo:           "echo",
+	Banner:         "auto",
 	OdooVersion:    "18",
 	OdooContainer:  "odoo",
 	DBContainer:    "db",
@@ -23,6 +24,9 @@ func applyDefaults(cfg *Config) {
 	}
 	if cfg.Logo == "" {
 		cfg.Logo = Defaults.Logo
+	}
+	if cfg.Banner == "" {
+		cfg.Banner = Defaults.Banner
 	}
 	if cfg.OdooVersion == "" {
 		cfg.OdooVersion = Defaults.OdooVersion
