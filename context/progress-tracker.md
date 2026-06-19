@@ -6,8 +6,10 @@
 
 ## Current Goal
 
-Unit 14 (meta-commands: `theme`, `logo`, `version`, `stage`) y Unit 15
-(banner), aún pendientes del plan original.
+Unit 14 (meta-commands: `theme`, `logo`, `version`, `stage`) — único pendiente
+del plan original. Unit 15 (banner) entregada: banner del header con dos estilos
+figlet del wordmark `echo` (soundwave / shadow) elegidos al azar y coloreados
+por el stage activo.
 
 ## In Progress
 
@@ -21,6 +23,28 @@ _(siguiente: Unit 14 — meta-commands. Fix i18n19 Odoo 19 (rama `fix/i18n19-con
 
 ## Completed
 
+- [x] Unit 15 — banner-stage-colored. Reemplaza el box `ECHO` hardcodeado de
+  `buildLeft` (`internal/banner/header.go`) por el wordmark `echo` renderizado
+  en uno de dos estilos figlet: **B (soundwave)** Calvin S doble trazo (`╔═╗`)
+  + onda `▁▂▃▅▇▅▃▂▁`, y **D (shadow)** ANSI Shadow (`█`) con degradado vertical
+  + ripple `)))` opcional. El color principal sale del stage activo
+  (`PromptColor`: dev→`success`, staging→`warning`, prod→`error` del tema en
+  uso) y el degradado/onda se derivan en código con `theme.Lighten`/
+  `theme.Darken` (mezcla por canal hacia blanco/negro) — sin hex hardcodeado,
+  cumple el invariante 1 y funciona en los 4 temas. Estilo elegido al azar al
+  arrancar (`math/rand`); nueva config `banner = auto|soundwave|shadow`
+  (default `auto`) para fijarlo, cableada en `config` (`Banner`, load/save +
+  default) y en `banner.Opts.Banner` vía `repl.go`. Guard de ancho computado
+  del arte (`computeShadowWidth`): D aparece desde ~85 cols, el ripple desde
+  ~95, y por debajo cae a B — nunca desborda el borde derecho del header.
+  Lógica pura/testeable: `resolveBannerStyle(mode, shadowFits, coin)` y
+  `renderEchoBanner(p, stage, style, withRipple)` en `internal/banner/echo.go`.
+  Tests `echo_test.go` (matriz de selección + invariante de ancho por estilo) y
+  `theme/shade_test.go` (límites/midpoint/no-hex). build/vet/test verdes;
+  verificación visual en TTY ancho pendiente del usuario. Spec
+  `15-banner-stage-colored.md`. Fuera de alcance (futuro): logos
+  `planet`/`python`/`anchor` y el comando `logo` (van con Unit 14); banner
+  full-width arriba (descartado, se mantiene el header de dos columnas).
 - [x] Unit 65 — deploy-history. `deploy` recuerda los commits ya
   desplegados a cada target y los atenúa en el picker. Storage local
   `internal/config/deploy_history.go`:

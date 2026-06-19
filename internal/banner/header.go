@@ -2,6 +2,7 @@ package banner
 
 import (
 	"fmt"
+	"math/rand"
 	"os"
 	"strings"
 
@@ -17,6 +18,9 @@ type Opts struct {
 	Theme    string
 	Stage    string
 	Path     string
+	// Banner selects the `echo` wordmark style: "auto" (random), "soundwave"
+	// or "shadow". Empty is treated as "auto".
+	Banner string
 }
 
 // Render returns the full startup header as a printable string.
@@ -30,7 +34,7 @@ func Render(s theme.Styles, p theme.Palette, opts Opts) string {
 	// row = │ space leftW space │ space rightW space │  → overhead = 7
 	rightW := w - leftW - 7
 
-	leftLines := buildLeft(s, opts)
+	leftLines := buildLeft(s, p, opts, leftW)
 	rightLines := buildRight(s, opts, rightW)
 
 	for len(leftLines) < len(rightLines) {
@@ -56,13 +60,17 @@ func Render(s theme.Styles, p theme.Palette, opts Opts) string {
 	return strings.Join(rows, "\n")
 }
 
-func buildLeft(s theme.Styles, opts Opts) []string {
-	logo := []string{
-		s.Accent.Render("   ╔══════════╗"),
-		s.Accent.Render("   ║  ") + s.Accent.Bold(true).Render("ECHO") + s.Accent.Render("    ║"),
-		s.Accent.Render("   ║   CLI    ║"),
-		s.Accent.Render("   ╚══════════╝"),
+func buildLeft(s theme.Styles, p theme.Palette, opts Opts, leftW int) []string {
+	mode := opts.Banner
+	shadowFits := leftW >= shadowWidth
+	// ECHO_BANNER forces the style and bypasses the width guard — for previews,
+	// demos and VHS recordings. On a terminal too narrow for the shadow banner
+	// this may overflow the header box; that's the explicit opt-in price.
+	if env := os.Getenv("ECHO_BANNER"); env == "soundwave" || env == "shadow" {
+		mode, shadowFits = env, true
 	}
+	style := resolveBannerStyle(mode, shadowFits, func() bool { return rand.Intn(2) == 0 })
+	logo := renderEchoBanner(p, theme.StageFromString(opts.Stage), style, leftW >= shadowRippleWidth)
 
 	lines := []string{
 		"",
@@ -89,8 +97,9 @@ func buildRight(s theme.Styles, opts Opts, w int) []string {
 		s.Out.Render("Type ") + s.Info.Render("exit") + s.Out.Render(" or Ctrl+D / Ctrl+X to quit"),
 		divider,
 		s.Label.Render("What's new"),
-		s.Dim.Render("· First release — header + prompt"),
-		s.Dim.Render("· Run ") + s.Info.Render("ls") + s.Dim.Render(" to list the current directory"),
+		s.Dim.Render("· Stage-colored startup banner"),
+		s.Dim.Render("· Run ") + s.Info.Render("deploy") + s.Dim.Render(" to ship commits to a server"),
+		s.Dim.Render("· Run ") + s.Info.Render("connect") + s.Dim.Render(" to open Odoo as any user"),
 		"",
 	}
 }

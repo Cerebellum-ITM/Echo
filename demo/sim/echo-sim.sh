@@ -120,37 +120,45 @@ echo_ps1() {
 }
 
 # --- the startup header (banner.Render), rendered once for the hero GIF -------
-# Box geometry mirrors banner.Render: leftW=30, rightW=39, so the inner width
-# between the corner glyphs is 1+30+1+1+1+39+1 = 74. Bars are built from that
-# width so the corners line up with every row's │.
+# Box geometry mirrors banner.Render: leftW=40, rightW=39, so each row spans
+# 1+1+40+1+1+1+39+1+1 = 86 cols. The left column shows the SHADOW banner style
+# (ANSI Shadow "ECHO" with a per-row gradient of the dev-stage colour + ripple),
+# matching internal/banner/echo.go. The gradient steps are Lighten/Darken of the
+# tokyo SUCCESS token (dev stage), computed with the same factors as the Go code.
 echo_header() {
-  local title='─── Echo v0.13.0 '   # 17 visible cols
+  local title='─── Echo v0.14.0 '   # 17 visible cols
+  # gradient of SUCCESS (158;206;106): lighten top rows, darken bottom rows.
+  local G1='202;228;173' G2='179;217;139' G3='158;206;106'
+  local G4='139;181;93'  G5='120;157;81'  G6='101;132;68'
+  local RP='192;223;158'   # ripple = Lighten(success, 0.35)
   printf '%s%s%s%s\n' "$(_c "$FAINT" '╭')" "$(_c "$ACCENT" "$title")" \
-    "$(_c "$FAINT" "$(_dash 57)")" "$(_c "$FAINT" '╮')"
-  _hrow ""                                              ""
-  _hrow "$(_cb "$FG" '   Welcome back pascual!')"       "$(_cb "$WARNING" 'Tips for getting started')"
-  _hrow ""                                              "$(_c "$FG" 'Run ')$(_c "$INFO" 'help')$(_c "$FG" ' to see all commands')"
-  _hrow "$(_c "$ACCENT" '   ╔══════════╗')"             "$(_c "$FG" 'Type ')$(_c "$INFO" 'exit')$(_c "$FG" ' or Ctrl+D to quit')"
-  _hrow "$(_c "$ACCENT" '   ║  ')$(_cb "$ACCENT" 'ECHO')$(_c "$ACCENT" '    ║')" "$(_c "$FAINT" "$(_dash 37)")"
-  _hrow "$(_c "$ACCENT" '   ║   CLI    ║')"             "$(_cb "$WARNING" "What's new")"
-  _hrow "$(_c "$ACCENT" '   ╚══════════╝')"             "$(_c "$DIM" '· commit-driven deploy over SSH')"
-  _hrow ""                                              "$(_c "$DIM" '· i18n overwrite on update')"
-  _hrow "$(_c "$DIM" '   tokyo · dev')"                 ""
-  _hrow "$(_c "$DIM" '   ~/dev/my-shop')"               ""
-  _hrow ""                                              ""
-  printf '%s%s%s\n' "$(_c "$FAINT" '╰')" "$(_c "$FAINT" "$(_dash 74)")" "$(_c "$FAINT" '╯')"
+    "$(_c "$FAINT" "$(_dash 67)")" "$(_c "$FAINT" '╮')"
+  _hrow ""                                                          ""
+  _hrow "$(_cb "$FG" '  Welcome back pascual!')"                    "$(_cb "$WARNING" 'Tips for getting started')"
+  _hrow ""                                                          "$(_c "$FG" 'Run ')$(_c "$INFO" 'help')$(_c "$FG" ' to see all commands')"
+  _hrow "$(_cb "$G1" '  ███████╗ ██████╗██╗  ██╗ ██████╗ ')$(_c "$RP" '·')"        "$(_c "$FG" 'Type ')$(_c "$INFO" 'exit')$(_c "$FG" ' or Ctrl+D to quit')"
+  _hrow "$(_cb "$G2" '  ██╔════╝██╔════╝██║  ██║██╔═══██╗ ')$(_c "$RP" ')))')"      "$(_c "$FAINT" "$(_dash 37)")"
+  _hrow "$(_cb "$G3" '  █████╗  ██║     ███████║██║   ██║ ')$(_c "$RP" ' ·')"       "$(_cb "$WARNING" "What's new")"
+  _hrow "$(_cb "$G4" '  ██╔══╝  ██║     ██╔══██║██║   ██║')"                        "$(_c "$DIM" '· Stage-colored startup banner')"
+  _hrow "$(_cb "$G5" '  ███████╗╚██████╗██║  ██║╚██████╔╝')"                        "$(_c "$DIM" '· ')$(_c "$INFO" 'deploy')$(_c "$DIM" ' — ship commits to a server')"
+  _hrow "$(_cb "$G6" '  ╚══════╝ ╚═════╝╚═╝  ╚═╝ ╚═════╝')"                         "$(_c "$DIM" '· ')$(_c "$INFO" 'connect')$(_c "$DIM" ' — open Odoo as any user')"
+  _hrow ""                                                          ""
+  _hrow "$(_c "$DIM" '  tokyo · dev')"                              ""
+  _hrow "$(_c "$DIM" '  ~/dev/my-shop')"                            ""
+  _hrow ""                                                          ""
+  printf '%s%s%s\n' "$(_c "$FAINT" '╰')" "$(_c "$FAINT" "$(_dash 84)")" "$(_c "$FAINT" '╯')"
 }
 
 # _dash N — N box-drawing dashes (─), built in a loop so it works on bash 3.2.
 _dash() { local i s=''; for (( i = 0; i < $1; i++ )); do s+='─'; done; printf '%s' "$s"; }
 
-# _hrow LEFT RIGHT — one header row, padded to the box columns (leftW=30,
+# _hrow LEFT RIGHT — one header row, padded to the box columns (leftW=40,
 # rightW=39). Padding is computed on the plain text, then colored, so ANSI
 # escapes never throw off the alignment.
 _hrow() {
   local lp rp bar
   bar="$(_c "$FAINT" '│')"
-  lp="$(_pad "$1" 30)"; rp="$(_pad "$2" 39)"
+  lp="$(_pad "$1" 40)"; rp="$(_pad "$2" 39)"
   printf '%s %s %s %s %s\n' "$bar" "$lp" "$bar" "$rp" "$bar"
 }
 

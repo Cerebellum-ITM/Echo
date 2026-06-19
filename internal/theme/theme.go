@@ -1,6 +1,11 @@
 package theme
 
-import "github.com/charmbracelet/lipgloss"
+import (
+	"fmt"
+	"strconv"
+
+	"github.com/charmbracelet/lipgloss"
+)
 
 type Palette struct {
 	Bg, Fg, Dim, Faint            lipgloss.Color
@@ -90,6 +95,47 @@ func PaletteByName(name string) Palette {
 	default:
 		return Charm
 	}
+}
+
+// Lighten returns c mixed toward white by t (t in [0,1]); t=0 returns c
+// unchanged, t=1 returns white. Used to derive banner gradient/segment
+// shades from an active-theme color instead of hardcoding hex (invariant 1).
+func Lighten(c lipgloss.Color, t float64) lipgloss.Color {
+	return mix(c, 255, 255, 255, t)
+}
+
+// Darken returns c mixed toward black by t (t in [0,1]); t=0 returns c
+// unchanged, t=1 returns black.
+func Darken(c lipgloss.Color, t float64) lipgloss.Color {
+	return mix(c, 0, 0, 0, t)
+}
+
+// mix blends the #rrggbb color c toward (tr,tg,tb) by t, per channel. If c is
+// not a parseable 6-digit hex it is returned unchanged.
+func mix(c lipgloss.Color, tr, tg, tb int, t float64) lipgloss.Color {
+	r, g, b, ok := parseHex(string(c))
+	if !ok {
+		return c
+	}
+	if t < 0 {
+		t = 0
+	} else if t > 1 {
+		t = 1
+	}
+	lerp := func(from, to int) int { return int(float64(from) + (float64(to)-float64(from))*t + 0.5) }
+	return lipgloss.Color(fmt.Sprintf("#%02x%02x%02x", lerp(r, tr), lerp(g, tg), lerp(b, tb)))
+}
+
+// parseHex parses a "#rrggbb" string into channel ints.
+func parseHex(s string) (r, g, b int, ok bool) {
+	if len(s) != 7 || s[0] != '#' {
+		return 0, 0, 0, false
+	}
+	v, err := strconv.ParseUint(s[1:], 16, 32)
+	if err != nil {
+		return 0, 0, 0, false
+	}
+	return int(v >> 16 & 0xff), int(v >> 8 & 0xff), int(v & 0xff), true
 }
 
 func StageFromString(s string) Stage {

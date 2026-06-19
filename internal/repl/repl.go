@@ -125,6 +125,7 @@ func newSession(s theme.Styles, p theme.Palette, project, id string, stage theme
 		Theme:    themeName,
 		Stage:    string(stage),
 		Path:     cwd,
+		Banner:   cfg.Banner,
 	}
 
 	sess := &session{

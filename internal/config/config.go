@@ -14,6 +14,7 @@ import (
 type Config struct {
 	Theme         string
 	Logo          string
+	Banner        string
 	ComposeCmd    string
 	OdooVersion   string
 	OdooContainer string
@@ -81,6 +82,7 @@ type Config struct {
 type globalFile struct {
 	Theme          string                        `toml:"theme"`
 	Logo           string                        `toml:"logo"`
+	Banner         string                        `toml:"banner"`
 	ComposeCmd     string                        `toml:"compose_cmd"`
 	Prompt         *promptFile                   `toml:"prompt"`
 	ConnectTargets map[string]*connectTargetFile `toml:"connect_targets"`
@@ -179,6 +181,7 @@ func Load(projectPath string) (*Config, error) {
 	}
 	cfg.Theme = g.Theme
 	cfg.Logo = g.Logo
+	cfg.Banner = g.Banner
 	cfg.ComposeCmd = g.ComposeCmd
 	cfg.ConnectTargets = sortedConnectTargets(g.ConnectTargets)
 	cfg.ProjectAliases = g.ProjectAliases
@@ -286,6 +289,7 @@ func SaveGlobal(cfg *Config) error {
 	g := globalFile{
 		Theme:          cfg.Theme,
 		Logo:           cfg.Logo,
+		Banner:         cfg.Banner,
 		ComposeCmd:     cfg.ComposeCmd,
 		ConnectTargets: connectTargetsToFile(cfg.ConnectTargets),
 		ProjectAliases: cfg.ProjectAliases,
@@ -408,6 +412,7 @@ func LoadGlobal() (*Config, error) {
 	}
 	cfg.Theme = g.Theme
 	cfg.Logo = g.Logo
+	cfg.Banner = g.Banner
 	cfg.ComposeCmd = g.ComposeCmd
 	cfg.ConnectTargets = sortedConnectTargets(g.ConnectTargets)
 	cfg.ProjectAliases = g.ProjectAliases
