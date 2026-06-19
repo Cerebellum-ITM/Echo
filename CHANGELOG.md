@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.15.0] — 2026-06-19
+
 ### Added
 - **Banner del header coloreado por environment, con dos estilos figlet del
   wordmark `echo` elegidos al azar** (Unit 15). Reemplaza el box `ECHO`
