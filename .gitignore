@@ -1,5 +1,8 @@
 # Build output
 bin/
 
+# macOS
+.DS_Store
+
 # Local verification notes (untested checklist)
 .unverified/

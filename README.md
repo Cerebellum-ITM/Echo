@@ -9,18 +9,12 @@ Output streams in real time, colored by log level, and every long-running
 command ends with a clear ✓/✗ result line. The same commands also run
 non-interactively (`echo <cmd>`) and as multi-step recipes (`echo run`).
 
-```
- ❯ echo
- ┌─ ECHO ────────────────────────────────────────────────────────────┐
- │ Welcome, pascual                       Theme: tokyo · Logo: echo  │
- │ Project: my-shop · Odoo 18 · dev                                  │
- └───────────────────────────────────────────────────────────────────┘
+<p align="center">
+  <img src="demo/gifs/hero.gif" alt="Echo: launch the REPL and bring the stack up" width="860">
+</p>
 
-  echo my-shop-a1b2 [dev/18.0]:~$ up
-  2026-06-09 12:00:00,000 1 INFO my-shop docker.container: started name=db-1
-  2026-06-09 12:00:00,100 1 INFO my-shop docker.container: started name=odoo-1
-  ✓ up completed
-```
+> Demos are recorded with [VHS](https://github.com/charmbracelet/vhs); the data
+> shown is illustrative (see [`demo/`](demo/)).
 
 ## Status
 
@@ -168,6 +162,16 @@ it with nothing selected offers to repeat that last update. The start line
 names the resolved modules (picker / `--last` / `--all`) so you always know
 what's running.
 
+`update sale --i18n` resolves the module, streams Odoo's own loading log, and
+overwrites the shipped translations along the way:
+
+<p align="center"><img src="demo/gifs/update.gif" alt="echo update sale --i18n" width="860"></p>
+
+`modinfo` compares the version Odoo recorded as installed against the manifest —
+`up to date` stays INFO, a pending upgrade is flagged WARN:
+
+<p align="center"><img src="demo/gifs/modinfo.gif" alt="echo modinfo" width="860"></p>
+
 ### Database
 
 | Command                          | Description                                                       |
@@ -181,6 +185,8 @@ what's running.
 
 On the first successful backup, Echo appends `backups/` to your `.gitignore`
 when one exists at the project root.
+
+<p align="center"><img src="demo/gifs/db-list.gif" alt="echo db-list" width="860"></p>
 
 ### Shell
 
@@ -251,6 +257,8 @@ asking the remote database, recreates the containers, and runs one combined
 `-i`/`-u` Odoo pass — all streamed live with the usual log coloring. It
 assumes the code is **already pulled on the server**; `deploy` only handles
 the container and module state.
+
+<p align="center"><img src="demo/gifs/deploy.gif" alt="echo deploy — commit picker, install/update split, live log" width="860"></p>
 
 | Command            | Description                                              |
 |--------------------|----------------------------------------------------------|

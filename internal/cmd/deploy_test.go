@@ -23,6 +23,9 @@ func TestParseDeployArgs(t *testing.T) {
 		{[]string{"--from"}, deployArgs{}, true},
 		{[]string{"--bogus"}, deployArgs{}, true},
 		{[]string{"some_module"}, deployArgs{}, true},
+		{[]string{"--i18n"}, deployArgs{limit: 20, i18n: true}, false},
+		{[]string{"--no-i18n"}, deployArgs{limit: 20, noI18n: true}, false},
+		{[]string{"--i18n", "--no-i18n"}, deployArgs{}, true}, // mutually exclusive
 	}
 	for _, tc := range cases {
 		got, err := parseDeployArgs(tc.in)
@@ -115,6 +118,49 @@ func TestSplitInstallUpdate(t *testing.T) {
 	}
 	if !reflect.DeepEqual(install, []string{"brand_new", "old_mod"}) {
 		t.Errorf("install = %v", install)
+	}
+}
+
+func TestPathsTouchI18n(t *testing.T) {
+	cases := []struct {
+		module string
+		paths  []string
+		want   bool
+	}{
+		{"sale_extra", []string{"sale_extra/i18n/es.po"}, true},
+		{"sale_extra", []string{"sale_extra/i18n/sale_extra.pot"}, true},
+		{"sale_extra", []string{"sale_extra/models/sale.py"}, false},
+		{"sale_extra", []string{"sale_extra/i18n_helpers/x.py"}, false}, // not the i18n/ dir
+		{"sale_extra", []string{"stock_extra/i18n/es.po"}, false},       // another module's i18n
+		{"sale_extra", nil, false},
+	}
+	for _, tc := range cases {
+		if got := pathsTouchI18n(tc.module, tc.paths); got != tc.want {
+			t.Errorf("pathsTouchI18n(%q, %v) = %v, want %v", tc.module, tc.paths, got, tc.want)
+		}
+	}
+}
+
+func TestI18nOverwriteDecision(t *testing.T) {
+	cases := []struct {
+		name                      string
+		force, no, detectedUpdate bool
+		wantState                 string
+		wantOverwrite             bool
+	}{
+		{"auto on", false, false, true, "on", true},
+		{"auto off", false, false, false, "off", false},
+		{"forced no detection", true, false, false, "forced", true},
+		{"forced with detection", true, false, true, "forced", true},
+		{"suppressed detection", false, true, true, "suppressed", false},
+		{"no-i18n without detection", false, true, false, "off", false},
+	}
+	for _, tc := range cases {
+		state, ov := i18nOverwriteDecision(tc.force, tc.no, tc.detectedUpdate)
+		if state != tc.wantState || ov != tc.wantOverwrite {
+			t.Errorf("%s: i18nOverwriteDecision(%v,%v,%v) = (%q,%v), want (%q,%v)",
+				tc.name, tc.force, tc.no, tc.detectedUpdate, state, ov, tc.wantState, tc.wantOverwrite)
+		}
 	}
 }
 
