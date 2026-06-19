@@ -9,7 +9,7 @@ import (
 
 func TestNewFuzzyPickerRecentMarking(t *testing.T) {
 	var pal theme.Palette
-	m := newFuzzyPicker("t", []string{"sale", "account", "stock"}, []string{"account"}, pal)
+	m := newFuzzyPicker("t", []string{"sale", "account", "stock"}, []string{"account"}, nil, pal)
 
 	want := map[string]bool{"sale": false, "account": true, "stock": false}
 	for _, it := range m.items {
@@ -24,7 +24,7 @@ func TestNewFuzzyPickerRecentMarking(t *testing.T) {
 
 func TestNewFuzzyPickerNoRecent(t *testing.T) {
 	var pal theme.Palette
-	m := newFuzzyPicker("t", []string{"sale", "account"}, nil, pal)
+	m := newFuzzyPicker("t", []string{"sale", "account"}, nil, nil, pal)
 	for _, it := range m.items {
 		if it.recent {
 			t.Errorf("%s: recent should be false with nil recent", it.name)
@@ -32,6 +32,22 @@ func TestNewFuzzyPickerNoRecent(t *testing.T) {
 	}
 	if m.hasRecent() {
 		t.Error("hasRecent should be false with nil recent")
+	}
+}
+
+func TestNewFuzzyPickerDeployedMarking(t *testing.T) {
+	var pal theme.Palette
+	m := newFuzzyPicker("t", []string{"a1 subj", "b2 subj", "c3 subj"},
+		nil, []string{"b2 subj"}, pal)
+
+	want := map[string]bool{"a1 subj": false, "b2 subj": true, "c3 subj": false}
+	for _, it := range m.items {
+		if it.deployed != want[it.name] {
+			t.Errorf("%s: deployed=%v, want %v", it.name, it.deployed, want[it.name])
+		}
+	}
+	if !m.hasDeployed() {
+		t.Error("hasDeployed should be true when a deployed item is present")
 	}
 }
 

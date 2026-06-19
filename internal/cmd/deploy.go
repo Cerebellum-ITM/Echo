@@ -140,6 +140,12 @@ func RunDeploy(ctx context.Context, opts DeployOpts) error {
 	opts.log("INFO", "remote", "target resolved", "",
 		[2]string{"host", sshHost}, [2]string{"path", remotePath})
 
+	// Local deploy history: which commits were already deployed to THIS
+	// target from THIS repo, so the picker can mute them. Best-effort.
+	projectKey := config.ProjectKey(opts.Root)
+	targetKey := config.DeployTargetKey(sshHost, remotePath)
+	deployedSet := config.LoadDeployedSHAs(projectKey, targetKey)
+
 	// Commit selection — interactive by design; a headless run fails closed
 	// inside the picker (ErrNonInteractive).
 	commits, err := gitRecentCommits(ctx, opts.Root, p.limit)
@@ -149,7 +155,7 @@ func RunDeploy(ctx context.Context, opts DeployOpts) error {
 	if len(commits) == 0 {
 		return fmt.Errorf("no commits found in %s", opts.Root)
 	}
-	selected, err := pickDeployCommits(commits, opts.Palette)
+	selected, err := pickDeployCommits(commits, deployedSet, opts.Palette)
 	if err != nil {
 		return err
 	}
@@ -163,6 +169,7 @@ func RunDeploy(ctx context.Context, opts DeployOpts) error {
 	seen := map[string]bool{}
 	i18nTouched := map[string]bool{}
 	var modules []string
+	var deployedShas []string // selected commits that resolved → recorded on success
 	var skipped int
 	for _, c := range selected {
 		mod, via, reason, paths := resolveCommitModule(ctx, opts.Root, c)
@@ -174,6 +181,7 @@ func RunDeploy(ctx context.Context, opts DeployOpts) error {
 		}
 		opts.log("INFO", "", "resolved", "",
 			[2]string{"commit", c.short()}, [2]string{"module", mod}, [2]string{"via", via})
+		deployedShas = append(deployedShas, c.sha)
 		if !seen[mod] {
 			seen[mod] = true
 			modules = append(modules, mod)
@@ -308,6 +316,14 @@ func RunDeploy(ctx context.Context, opts DeployOpts) error {
 		return fmt.Errorf("odoo run failed: %w", err)
 	}
 
+	// The run succeeded: remember the deployed commits for this target so a
+	// later picker mutes them. Best-effort — a write failure never fails the
+	// deploy that already landed.
+	if err := config.MarkDeployed(projectKey, targetKey, deployedShas); err == nil {
+		opts.log("INFO", "history", "recorded deployed commits", prof.DBName,
+			[2]string{"n", strconv.Itoa(len(deployedShas))})
+	}
+
 	opts.log("INFO", "", "deploy complete", prof.DBName,
 		[2]string{"update", strconv.Itoa(len(update))},
 		[2]string{"install", strconv.Itoa(len(install))},
@@ -342,17 +358,28 @@ func resolveRemoteTarget(cfg *config.Config, palette theme.Palette, from string,
 }
 
 // pickDeployCommits opens the multi-select picker over the commit list and
-// maps the chosen labels back to commits, preserving list order.
-func pickDeployCommits(commits []deployCommit, palette theme.Palette) ([]deployCommit, error) {
+// maps the chosen labels back to commits, preserving list order. Commits
+// whose full SHA is in deployedSet are passed as "deployed" labels so the
+// picker mutes them (already shipped to this target). An empty selection or
+// a cancel maps to ErrCancelled, matching the rest of deploy.
+func pickDeployCommits(commits []deployCommit, deployedSet map[string]bool, palette theme.Palette) ([]deployCommit, error) {
 	labels := make([]string, len(commits))
 	byLabel := make(map[string]deployCommit, len(commits))
+	var deployedLabels []string
 	for i, c := range commits {
 		labels[i] = c.short() + "  " + c.subject
 		byLabel[labels[i]] = c
+		if deployedSet[c.sha] {
+			deployedLabels = append(deployedLabels, labels[i])
+		}
 	}
-	picked, err := runFuzzyPicker("Select commits to deploy", labels, palette)
+	picked, canceled, err := runFuzzyPickerCore(
+		"Select commits to deploy", labels, nil, deployedLabels, palette, "")
 	if err != nil {
 		return nil, err
+	}
+	if canceled || len(picked) == 0 {
+		return nil, ErrCancelled
 	}
 	out := make([]deployCommit, 0, len(picked))
 	for _, lbl := range picked {

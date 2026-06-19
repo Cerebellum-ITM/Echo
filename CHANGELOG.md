@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **GIFs de demo del README, generados con [VHS](https://github.com/charmbracelet/vhs).**
+  Nueva carpeta `demo/` con un `.tape` por GIF (`hero`, `update`, `deploy`,
+  `db-list`, `modinfo`) y un dispatcher de simulación en `sim/echo-sim.sh`:
+  como Echo envuelve Docker/Odoo/SSH, grabar el binario real exigiría un stack
+  vivo y filtraría hosts, DBs y rutas privadas, así que los GIFs reproducen el
+  estilizado exacto de Echo (paleta tokyo, formato de log Odoo por segmento,
+  glifos Nerd Font extraídos del código) con datos inventados. El mockup ASCII
+  estático del README se reemplaza por el GIF *hero* real, y cada sección
+  (módulos, base de datos, deploy) lleva su GIF embebido.
+- **`deploy` recuerda qué commits ya desplegó a cada target y los atenúa en
+  el picker** (Unit 65). Tras un deploy exitoso, los commits seleccionados
+  que resolvieron a módulo se guardan localmente en
+  `~/.config/echo/deploy-history/<projectKey>.toml`, keyeados por target
+  (hash de host+path), así un commit mandado a *staging* no cuenta como
+  desplegado a *prod*. En el siguiente `deploy` esos commits salen en color
+  tenue (`Faint`) con la leyenda `muted = already deployed`, dejando ver de
+  un vistazo lo nuevo desde el último despliegue. Best-effort como el resto
+  del recall: un archivo ausente/corrupto degrada a "nada desplegado" sin
+  error; `--dry-run`, un gate de prod rechazado o un paso fallido no
+  registran nada. El historial se cap­ea a los 1000 SHAs más recientes por
+  target.
+
 ### Fixed
 - **El placeholder `type to filter…` del picker ya se muestra completo.**
   bubbles dimensiona el buffer del placeholder a `Width+1`, y con `Width=0`
