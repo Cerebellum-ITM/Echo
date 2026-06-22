@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Comando `db-admin [name]` para recuperar acceso al administrador**
+  (Unit 66). Resetea el login **y** la contraseña del usuario `id = 2`
+  (el admin de Odoo) a `admin` / `admin` para entrar al back office sin
+  conocer las credenciales actuales. La DB destino sale de `cfg.DBName`,
+  la sobreescribe un argumento posicional y, si no hay ninguna, abre el
+  mismo picker que `db-drop`/`db-neutralize`. Es una operación puramente
+  PostgreSQL (`UPDATE res_users SET login='admin', password='admin' WHERE
+  id=2 RETURNING id` vía la maquinaria `psql` existente, nuevo
+  `docker.ResetUserCredentials`): la contraseña se guarda en **texto
+  plano** a propósito — el crypt context por defecto de Odoo mantiene el
+  esquema `plaintext` deprecado, así que la verifica en el siguiente login
+  y la re-hashea a `pbkdf2_sha512` (funciona en Odoo 16/17/18/19). Guarda
+  un confirm rojo cuando `stage=prod` (un admin/admin en producción es un
+  agujero de seguridad), salteable con `--force`; la DB activa no se
+  protege porque es el destino normal. Si no existe la fila `id=2` falla
+  con `no user with id 2 in "<db>"` en vez de un no-op silencioso.
+  Archivos: `internal/docker/postgres.go` (`ResetUserCredentials`),
+  `internal/cmd/db.go` (`RunDBAdmin` + `confirmAdminReset`), wiring en
+  `internal/repl/commands.go` y `internal/repl/repl.go`. Spec
+  `66-db-admin-reset.md`. Verificación EN VIVO contra un contenedor
+  pendiente del usuario.
+
 ## [0.15.0] — 2026-06-19
 
 ### Added

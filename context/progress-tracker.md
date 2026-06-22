@@ -23,6 +23,28 @@ _(siguiente: Unit 14 — meta-commands. Fix i18n19 Odoo 19 (rama `fix/i18n19-con
 
 ## Completed
 
+- [x] Unit 66 — db-admin. Nuevo comando `db-admin [name]` en la categoría
+  Database que resetea login+password del usuario `id=2` (admin de Odoo) a
+  `admin`/`admin` para recuperar acceso al back office. DB destino:
+  `cfg.DBName` → arg posicional → picker (igual que `db-drop`/
+  `db-neutralize`). Operación pura PostgreSQL vía la maquinaria `psql`
+  existente: nuevo `docker.ResetUserCredentials` corre
+  `UPDATE res_users SET login='admin', password='admin' WHERE id=2
+  RETURNING id` (login/password escapados con `escapeIdent`; `found` =
+  output no vacío). La contraseña se guarda en texto plano a propósito —
+  el crypt context por defecto de Odoo mantiene el esquema `plaintext`
+  deprecado, lo verifica en el siguiente login y lo re-hashea a
+  `pbkdf2_sha512` (Odoo 16–19). `RunDBAdmin`+`confirmAdminReset` en
+  `internal/cmd/db.go` (constantes `adminUserID=2`/`adminLogin`/
+  `adminPassword`): guarda un confirm rojo solo si `stage=prod`
+  (`--force` lo saltea); la DB activa no se protege porque es el destino
+  normal; si falta la fila `id=2` falla con `no user with id 2 in "<db>"`.
+  Wiring en `commands.go` (Registry primero en el cluster db, `commandFlags
+  ["db-admin"]={"--force"}`) y `repl.go` (dispatchNames, case del
+  dispatch, switch de `runDB`, help). Test `registry_test.go`
+  `TestMatchPrefix` actualizado con `db-admin`. build/vet/test verdes;
+  verificación EN VIVO contra un contenedor pendiente del usuario. Spec
+  `66-db-admin-reset.md`.
 - [x] Unit 15 — banner-stage-colored. Reemplaza el box `ECHO` hardcodeado de
   `buildLeft` (`internal/banner/header.go`) por el wordmark `echo` renderizado
   en uno de dos estilos figlet: **B (soundwave)** Calvin S doble trazo (`╔═╗`)

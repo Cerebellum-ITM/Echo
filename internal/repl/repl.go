@@ -206,7 +206,7 @@ var dispatchNames = []string{
 	"up", "down", "stop", "restart", "ps", "logs", "deploy",
 	"install", "update", "uninstall", "test", "modules", "modinfo", "modstate", "view",
 	"i18n-export", "i18n-update", "i18n-pull",
-	"db-backup", "db-restore", "db-drop", "db-neutralize", "db-list",
+	"db-admin", "db-backup", "db-restore", "db-drop", "db-neutralize", "db-list",
 	"shell", "shell-run", "bash", "psql", "connect",
 }
 
@@ -280,7 +280,7 @@ func (sess *session) dispatchParsed(ctx context.Context, cmd string, args []stri
 		sess.runI18n(ctx, cmd, args)
 	case "i18n-pull":
 		sess.runI18nPull(ctx, args)
-	case "db-backup", "db-restore", "db-drop", "db-neutralize", "db-list":
+	case "db-admin", "db-backup", "db-restore", "db-drop", "db-neutralize", "db-list":
 		sess.runDB(ctx, cmd, args)
 	case "shell", "bash", "psql":
 		sess.runShell(ctx, cmd, args)
@@ -352,6 +352,8 @@ func helpSections() []helpSection {
 			{"  --installed", "List candidates from the DB (all installed), not just the project's addons"},
 		}},
 		{"Database", []helpEntry{
+			{"db-admin [name]", "Reset admin (uid 2) login+password to admin/admin"},
+			{"  --force", "Skip the prod confirmation"},
 			{"db-backup [name]", "Dump DB (default: configured) to ./backups/"},
 			{"  --with-filestore", "Include filestore (.zip instead of .dump)"},
 			{"db-restore [--as N]", "Pick a backup and restore (creates DB)"},
@@ -757,6 +759,8 @@ func (sess *session) runDB(ctx context.Context, name string, args []string) {
 
 	var err error
 	switch name {
+	case "db-admin":
+		err = cmd.RunDBAdmin(ctx, opts)
 	case "db-backup":
 		err = cmd.RunDBBackup(ctx, opts)
 	case "db-restore":

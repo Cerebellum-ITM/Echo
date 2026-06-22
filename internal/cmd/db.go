@@ -563,6 +563,95 @@ func confirmNeutralize(palette theme.Palette, name string) error {
 	return nil
 }
 
+// Admin-reset constants: Odoo's admin user is id 2 (id 1 is the system
+// superuser), and we reset both its login and password to "admin".
+const (
+	adminUserID   = 2
+	adminLogin    = "admin"
+	adminPassword = "admin"
+)
+
+// RunDBAdmin resets the login and password of user id 2 (Odoo's admin
+// user) to admin/admin so you can sign into the back office without
+// knowing the current credentials. Target defaults to cfg.DBName; a
+// positional arg overrides it; if neither resolves, a picker is shown.
+// The password is stored in plain text and Odoo re-hashes it on the next
+// successful login. Confirms (red) when stage=prod — resetting prod admin
+// to a known password is a security hole — unless --force is passed.
+func RunDBAdmin(ctx context.Context, opts DBOpts) error {
+	if err := requireDBContainer(opts.Cfg); err != nil {
+		return err
+	}
+	flags, positional := parseDBArgs(opts.Args)
+
+	target := opts.Cfg.DBName
+	if len(positional) > 0 {
+		target = positional[0]
+	}
+	if target == "" {
+		names, err := docker.ListDatabases(ctx, opts.Cfg.ComposeCmd, opts.Root, opts.Cfg.DBContainer, dbUser(opts))
+		if err != nil {
+			return err
+		}
+		if len(names) == 0 {
+			return errors.New("no databases available")
+		}
+		picked, err := runSingleFuzzyPicker("Pick a database to reset admin on", names, opts.Palette)
+		if err != nil {
+			return err
+		}
+		target = picked
+	}
+	if target == "" {
+		return ErrNoTargetDB
+	}
+
+	// Guard prod: a known admin/admin on production is a security hole.
+	if !flags.force && strings.EqualFold(opts.Cfg.Stage, "prod") {
+		if err := confirmAdminReset(opts.Palette, target); err != nil {
+			return err
+		}
+	}
+
+	found, err := docker.ResetUserCredentials(ctx, opts.Cfg.ComposeCmd, opts.Root, opts.Cfg.DBContainer, dbUser(opts), target, adminUserID, adminLogin, adminPassword)
+	if err != nil {
+		return err
+	}
+	if !found {
+		return fmt.Errorf("no user with id %d in %q", adminUserID, target)
+	}
+	if opts.StreamOut != nil {
+		opts.StreamOut(fmt.Sprintf("→ %s  %s / %s (uid %d)", target, adminLogin, adminPassword, adminUserID))
+	}
+	return nil
+}
+
+func confirmAdminReset(palette theme.Palette, name string) error {
+	if err := requireTTY("pass --force to reset admin without a prompt"); err != nil {
+		return err
+	}
+	red := lipgloss.NewStyle().Foreground(palette.Error).Bold(true).Render(name)
+	confirmed := false
+	form := huh.NewForm(huh.NewGroup(
+		huh.NewConfirm().
+			Title("⚠  About to reset admin on " + red).
+			Description("Sets the admin login and password to admin/admin. Don't run this on production.").
+			Affirmative("Reset").
+			Negative("Cancel").
+			Value(&confirmed),
+	)).
+		WithTheme(BuildHuhTheme(palette)).
+		WithInput(os.Stdin).
+		WithOutput(os.Stdout)
+	if err := form.Run(); err != nil {
+		return err
+	}
+	if !confirmed {
+		return ErrCancelled
+	}
+	return nil
+}
+
 func assertNoActiveConns(ctx context.Context, opts DBOpts, db string) error {
 	n, err := docker.ActiveConnections(ctx, opts.Cfg.ComposeCmd, opts.Root, opts.Cfg.DBContainer, dbUser(opts), db)
 	if err != nil {
