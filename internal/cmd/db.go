@@ -652,6 +652,69 @@ func confirmAdminReset(palette theme.Palette, name string) error {
 	return nil
 }
 
+// RunDBUse switches the project's active database (cfg.DBName) — the one
+// db-list marks with ●, and the implicit target of update/shell/psql/
+// modstate/db-admin/…. With no positional arg it opens a picker over the
+// database list; with a name it switches to that DB after verifying it
+// exists. The change is persisted to the project config (db_name) so it
+// survives restarts; because the session holds the same *config.Config,
+// the prompt picks up the new DB on the next render. Switching to the DB
+// already active is a reported no-op.
+func RunDBUse(ctx context.Context, opts DBOpts) error {
+	if err := requireDBContainer(opts.Cfg); err != nil {
+		return err
+	}
+	_, positional := parseDBArgs(opts.Args)
+
+	names, err := docker.ListDatabases(ctx, opts.Cfg.ComposeCmd, opts.Root, opts.Cfg.DBContainer, dbUser(opts))
+	if err != nil {
+		return err
+	}
+	if len(names) == 0 {
+		return errors.New("no databases available")
+	}
+
+	target := ""
+	if len(positional) > 0 {
+		target = positional[0]
+		found := false
+		for _, n := range names {
+			if n == target {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return fmt.Errorf("no database named %q", target)
+		}
+	} else {
+		picked, err := runSingleFuzzyPicker("Pick the active database", names, opts.Palette)
+		if err != nil {
+			return err
+		}
+		target = picked
+	}
+	if target == "" {
+		return ErrNoTargetDB
+	}
+
+	if target == opts.Cfg.DBName {
+		if opts.StreamOut != nil {
+			opts.StreamOut("→ " + target + " (already active)")
+		}
+		return nil
+	}
+
+	opts.Cfg.DBName = target
+	if err := config.SaveProject(opts.Cfg); err != nil {
+		return err
+	}
+	if opts.StreamOut != nil {
+		opts.StreamOut("→ " + target)
+	}
+	return nil
+}
+
 func assertNoActiveConns(ctx context.Context, opts DBOpts, db string) error {
 	n, err := docker.ActiveConnections(ctx, opts.Cfg.ComposeCmd, opts.Root, opts.Cfg.DBContainer, dbUser(opts), db)
 	if err != nil {

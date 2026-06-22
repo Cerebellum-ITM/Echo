@@ -8,6 +8,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Comando `db-use [name]` para cambiar la base de datos activa** (Unit
+  66). Cambia la `cfg.DBName` del proyecto — la que `db-list` marca con
+  `●` y el destino implícito de `update`/`install`/`shell`/`psql`/
+  `modstate`/`db-admin`/etc. Sin argumento abre un picker sobre la lista
+  de bases (como `db-drop`); con nombre cambia directo tras verificar que
+  existe (`no database named "<x>"` si no). Persiste `db_name` vía
+  `config.SaveProject`, así que sobrevive reinicios; como la sesión
+  comparte el mismo `*config.Config`, el prompt toma la nueva DB en el
+  siguiente render. Cambiar a la DB ya activa es un no-op reportado
+  (`→ <db> (already active)`). `RunDBUse` en `internal/cmd/db.go`; wiring
+  en `commands.go`/`repl.go`.
 - **Comando `db-admin [name]` para recuperar acceso al administrador**
   (Unit 66). Resetea el login **y** la contraseña del usuario `id = 2`
   (el admin de Odoo) a `admin` / `admin` para entrar al back office sin

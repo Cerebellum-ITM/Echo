@@ -206,7 +206,7 @@ var dispatchNames = []string{
 	"up", "down", "stop", "restart", "ps", "logs", "deploy",
 	"install", "update", "uninstall", "test", "modules", "modinfo", "modstate", "view",
 	"i18n-export", "i18n-update", "i18n-pull",
-	"db-admin", "db-backup", "db-restore", "db-drop", "db-neutralize", "db-list",
+	"db-admin", "db-backup", "db-restore", "db-drop", "db-neutralize", "db-list", "db-use",
 	"shell", "shell-run", "bash", "psql", "connect",
 }
 
@@ -280,7 +280,7 @@ func (sess *session) dispatchParsed(ctx context.Context, cmd string, args []stri
 		sess.runI18n(ctx, cmd, args)
 	case "i18n-pull":
 		sess.runI18nPull(ctx, args)
-	case "db-admin", "db-backup", "db-restore", "db-drop", "db-neutralize", "db-list":
+	case "db-admin", "db-backup", "db-restore", "db-drop", "db-neutralize", "db-list", "db-use":
 		sess.runDB(ctx, cmd, args)
 	case "shell", "bash", "psql":
 		sess.runShell(ctx, cmd, args)
@@ -364,6 +364,7 @@ func helpSections() []helpSection {
 			{"db-neutralize [name]", "Neutralize a DB (disable mail/cron/payments)"},
 			{"  --force", "Skip the active-DB / prod confirmation"},
 			{"db-list", "List DBs with size, date; ● marks the active one"},
+			{"db-use [name]", "Switch the active DB (picker when no name)"},
 		}},
 		{"Shell", []helpEntry{
 			{"bash", "Bash session inside the Odoo container"},
@@ -761,6 +762,8 @@ func (sess *session) runDB(ctx context.Context, name string, args []string) {
 	switch name {
 	case "db-admin":
 		err = cmd.RunDBAdmin(ctx, opts)
+	case "db-use":
+		err = cmd.RunDBUse(ctx, opts)
 	case "db-backup":
 		err = cmd.RunDBBackup(ctx, opts)
 	case "db-restore":

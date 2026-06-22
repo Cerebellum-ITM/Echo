@@ -83,11 +83,35 @@ Steps:
    if `!found`, return `fmt.Errorf("no user with id %d in %q", …)`.
 5. On success: `opts.StreamOut("→ " + target + "  admin / admin (uid 2)")`.
 
+### `RunDBUse` (`internal/cmd/db.go`) — switch the active DB
+
+Companion command added in the same unit. Switches `cfg.DBName` (the DB
+`db-list` marks `●`, and the implicit target of `update`/`shell`/`psql`/
+`modstate`/`db-admin`/…):
+
+```go
+func RunDBUse(ctx context.Context, opts DBOpts) error
+```
+
+Steps:
+
+1. `requireDBContainer` + `docker.ListDatabases(…)` (error if empty).
+2. Resolve `target`: positional arg (verify it's in the list →
+   `no database named "<x>"`) → else picker `"Pick the active database"`.
+3. If `target == cfg.DBName`: report `→ <db> (already active)` and return.
+4. `opts.Cfg.DBName = target` + `config.SaveProject(opts.Cfg)`. Because
+   the session holds the same `*config.Config`, the prompt updates on the
+   next render — no restart. Footer `→ <target>`.
+
+No flags. No prod guard (switching the pointer is harmless; the dangerous
+ops keep their own guards).
+
 ### REPL wiring
 
 - `internal/repl/commands.go`:
-  - `Registry`: add `"db-admin"` first in the Database cluster.
-  - `commandFlags`: `"db-admin": {"--force"}`.
+  - `Registry`: add `"db-admin"` first and `"db-use"` last in the Database
+    cluster.
+  - `commandFlags`: `"db-admin": {"--force"}` (db-use takes none).
 - `internal/repl/repl.go`:
   - `dispatch` switch list + `dispatchNames`: add `"db-admin"`.
   - `runDB` switch: `case "db-admin": err = cmd.RunDBAdmin(ctx, opts)`.

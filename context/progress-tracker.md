@@ -23,6 +23,19 @@ _(siguiente: Unit 14 — meta-commands. Fix i18n19 Odoo 19 (rama `fix/i18n19-con
 
 ## Completed
 
+- [x] Unit 66 — db-use. Nuevo comando `db-use [name]` que cambia la base
+  activa (`cfg.DBName`) del proyecto — la que `db-list` marca con `●` y el
+  destino implícito de `update`/`shell`/`psql`/`modstate`/`db-admin`/etc.
+  Sin arg abre picker sobre `docker.ListDatabases` (como `db-drop`); con
+  nombre cambia directo tras verificar que exista (`no database named
+  "<x>"`). Persiste `db_name` con `config.SaveProject(opts.Cfg)`; como
+  `sess.cfg` y `DBOpts.Cfg` son el mismo `*config.Config`, el prompt toma
+  la nueva DB en el siguiente render sin reiniciar. No-op reportado al
+  cambiar a la ya activa (`→ <db> (already active)`). `RunDBUse` en
+  `internal/cmd/db.go`; wiring en `commands.go` (Registry, sin flags) y
+  `repl.go` (dispatchNames, case del dispatch, switch de `runDB`, help);
+  `TestMatchPrefix` actualizado. build/vet/test verdes. Spec
+  `66-db-admin-reset.md` (extendida con db-use).
 - [x] Unit 66 — db-admin. Nuevo comando `db-admin [name]` en la categoría
   Database que resetea login+password del usuario `id=2` (admin de Odoo) a
   `admin`/`admin` para recuperar acceso al back office. DB destino:
