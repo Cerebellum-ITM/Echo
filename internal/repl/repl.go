@@ -751,6 +751,20 @@ func (sess *session) runDB(ctx context.Context, name string, args []string) {
 		Args:      args,
 		Palette:   sess.palette,
 		StreamOut: func(line string) { sess.print(Line{Kind: "out", Text: line}) },
+		Log: func(level, step, msg, db string, fields ...[2]string) {
+			logger := "echo." + name
+			if step != "" {
+				logger += "." + step
+			}
+			if db == "" {
+				db = sess.cfg.DBName
+			}
+			lf := make([]logField, 0, len(fields))
+			for _, f := range fields {
+				lf = append(lf, logField{f[0], f[1]})
+			}
+			emitOdooLog(level, logger, msg, lf, sess.styles, sess.palette, db)
+		},
 	}
 
 	if name == "db-list" {

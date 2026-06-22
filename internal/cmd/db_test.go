@@ -48,6 +48,41 @@ func TestNeutralizeBuilder(t *testing.T) {
 	}
 }
 
+func TestRestoreLineLogger(t *testing.T) {
+	type event struct{ level, step, msg, db string }
+	var got []event
+	opts := DBOpts{Log: func(level, step, msg, db string, fields ...[2]string) {
+		got = append(got, event{level, step, msg, db})
+	}}
+	fn := restoreLineLogger(opts, "mydb")
+
+	fn("pg_restore: creating TABLE \"public\".\"res_users\"")
+	fn("   ")                  // whitespace only → dropped
+	fn("")                     // empty → dropped
+	fn("pg_restore: processing data for table \"public\".\"ir_attachment\"")
+	fn("plain line without prefix")
+
+	want := []event{
+		{"DEBUG", "restore", `creating TABLE "public"."res_users"`, "mydb"},
+		{"DEBUG", "restore", `processing data for table "public"."ir_attachment"`, "mydb"},
+		{"DEBUG", "restore", "plain line without prefix", "mydb"},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("got %d events, want %d: %+v", len(got), len(want), got)
+	}
+	for i, w := range want {
+		if got[i] != w {
+			t.Errorf("event %d = %+v, want %+v", i, got[i], w)
+		}
+	}
+}
+
+// restoreLineLogger with a nil Log must not panic (commands run silent).
+func TestRestoreLineLoggerNilLog(t *testing.T) {
+	fn := restoreLineLogger(DBOpts{}, "mydb")
+	fn("pg_restore: creating TABLE x") // should be a no-op, no panic
+}
+
 func TestDBNameFromBackup(t *testing.T) {
 	cases := []struct {
 		name, want string

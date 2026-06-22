@@ -23,6 +23,25 @@ _(siguiente: Unit 14 — meta-commands. Fix i18n19 Odoo 19 (rama `fix/i18n19-con
 
 ## Completed
 
+- [x] Unit 67 — db-restore-progress. `db-restore` ya no trabaja en
+  silencio: narra cada fase como línea INFO estilo Odoo
+  (`echo.db-restore.restore`: dropping existing database / creating
+  database / restoring data con `file=`/`format=` / extracting archive /
+  copying filestore / neutralizing) y además streamea en vivo el paso
+  largo. `docker.Restore`/`RestoreSQL` ganan un callback `onLine` (último
+  arg); con él, `pg_restore` corre con `--verbose` y su stderr se escanea
+  línea a línea (helper `streamStderr`, buffer 1 MB) reenviando cada una a
+  `onLine` y reservando las líneas `error`/`fatal` para el mensaje de
+  fallo (`joinErrDetail`) — sin volcar todo el verbose al error. En `cmd`:
+  nuevo tipo `DBLogger` + campo `DBOpts.Log` (nil-safe vía `opts.log`) y
+  `restoreLineLogger(opts, target)` que strip-ea el prefijo `pg_restore:`,
+  descarta líneas vacías y emite cada una como `DEBUG` bajo el mismo
+  logger. El REPL cablea `opts.Log` en `runDB` igual que el logger de
+  `connect` (`echo.<name>.<step>`, db→`sess.cfg.DBName` por defecto).
+  `db-backup`/`Dump` quedan igual (fuera de alcance). Tests
+  `TestRestoreLineLogger` (+ nil-log no-panic) en `db_test.go`.
+  build/vet/test verdes; verificación EN VIVO contra un contenedor
+  pendiente del usuario. Spec `67-db-restore-progress.md`.
 - [x] Unit 66 — db-use. Nuevo comando `db-use [name]` que cambia la base
   activa (`cfg.DBName`) del proyecto — la que `db-list` marca con `●` y el
   destino implícito de `update`/`shell`/`psql`/`modstate`/`db-admin`/etc.

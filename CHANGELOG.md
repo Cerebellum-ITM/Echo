@@ -41,6 +41,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `66-db-admin-reset.md`. Verificación EN VIVO contra un contenedor
   pendiente del usuario.
 
+### Changed
+- **`db-restore` ahora narra su progreso en vivo en vez de trabajar en
+  silencio** (Unit 67). Antes, tras el picker de backup no se mostraba
+  nada hasta el `→ <target>` final, aunque el `CREATE DATABASE` + el
+  `pg_restore` de una base real tardan segundos o minutos. Ahora emite una
+  línea INFO estilo Odoo por cada fase (`echo.db-restore.restore`):
+  dropping existing database, creating database, restoring data
+  (`file=`/`format=`), extracting archive, copying filestore,
+  neutralizing; y además **streamea en vivo la salida del paso largo**:
+  `docker.Restore`/`RestoreSQL` reciben un callback `onLine` y `pg_restore`
+  corre con `--verbose`, así cada línea de progreso (creación de tablas,
+  carga de datos) fluye como una línea `DEBUG` atenuada bajo el mismo
+  logger mientras los hitos INFO marcan los límites de fase. La detección
+  de fallo conserva solo las líneas de error (`error`/`fatal`) para el
+  mensaje, no el volcado verbose completo. Nuevo `DBOpts.Log` (tipo
+  `DBLogger`), cableado en el `runDB` del REPL igual que el logger de
+  `connect`. `db-backup` queda igual (fuera de alcance). Spec
+  `67-db-restore-progress.md`.
+
 ## [0.15.0] — 2026-06-19
 
 ### Added

@@ -1,6 +1,7 @@
 package docker
 
 import (
+	"bufio"
 	"context"
 	"fmt"
 	"os"
@@ -39,8 +40,11 @@ func Dump(ctx context.Context, composeCmd, dir, dbContainer, user, db, outPath s
 }
 
 // Restore pipes the contents of inPath into `pg_restore -d <db>
-// --no-owner --role=<user>` inside dbContainer.
-func Restore(ctx context.Context, composeCmd, dir, dbContainer, user, db, inPath string) error {
+// --no-owner --role=<user>` inside dbContainer. When onLine is non-nil,
+// pg_restore runs with --verbose and every stderr line is forwarded to it
+// live (so the caller can show progress during the long restore);
+// error/fatal lines are still collected for the failure message.
+func Restore(ctx context.Context, composeCmd, dir, dbContainer, user, db, inPath string, onLine func(string)) error {
 	if user == "" {
 		user = "postgres"
 	}
@@ -48,6 +52,9 @@ func Restore(ctx context.Context, composeCmd, dir, dbContainer, user, db, inPath
 		"exec", "-T", dbContainer,
 		"pg_restore", "-U", user, "-d", db, "--no-owner", "--role="+user,
 	)
+	if onLine != nil {
+		args = append(args, "--verbose")
+	}
 	cmd := exec.CommandContext(ctx, args[0], args[1:]...)
 	cmd.Dir = dir
 
@@ -56,12 +63,11 @@ func Restore(ctx context.Context, composeCmd, dir, dbContainer, user, db, inPath
 		return err
 	}
 	defer f.Close()
-
-	var stderr strings.Builder
 	cmd.Stdin = f
-	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("pg_restore: %s: %s", err, strings.TrimSpace(stderr.String()))
+
+	detail, werr := streamStderr(cmd, onLine)
+	if werr != nil {
+		return fmt.Errorf("pg_restore: %s", joinErrDetail(werr, detail))
 	}
 	return nil
 }
@@ -71,7 +77,7 @@ func Restore(ctx context.Context, composeCmd, dir, dbContainer, user, db, inPath
 // carry SQL text rather than a pg_dump custom-format file. psql exits
 // non-zero only on fatal/connection errors (no ON_ERROR_STOP), matching a
 // manual `psql < dump.sql` against a freshly-created, --no-owner dump.
-func RestoreSQL(ctx context.Context, composeCmd, dir, dbContainer, user, db, inPath string) error {
+func RestoreSQL(ctx context.Context, composeCmd, dir, dbContainer, user, db, inPath string, onLine func(string)) error {
 	if user == "" {
 		user = "postgres"
 	}
@@ -87,13 +93,49 @@ func RestoreSQL(ctx context.Context, composeCmd, dir, dbContainer, user, db, inP
 		return err
 	}
 	defer f.Close()
-
-	var stderr strings.Builder
 	cmd.Stdin = f
-	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("psql restore: %s: %s", err, strings.TrimSpace(stderr.String()))
+
+	detail, werr := streamStderr(cmd, onLine)
+	if werr != nil {
+		return fmt.Errorf("psql restore: %s", joinErrDetail(werr, detail))
 	}
 	return nil
+}
+
+// streamStderr starts cmd, scans its stderr line by line forwarding each
+// to onLine (when non-nil) for live progress, and collects the lines that
+// look like errors (error/fatal) into the returned detail string for the
+// failure message. It returns cmd.Wait()'s error.
+func streamStderr(cmd *exec.Cmd, onLine func(string)) (string, error) {
+	stderr, err := cmd.StderrPipe()
+	if err != nil {
+		return "", err
+	}
+	if err := cmd.Start(); err != nil {
+		return "", err
+	}
+	var errLines []string
+	sc := bufio.NewScanner(stderr)
+	sc.Buffer(make([]byte, 0, 64*1024), 1<<20)
+	for sc.Scan() {
+		line := sc.Text()
+		if onLine != nil {
+			onLine(line)
+		}
+		low := strings.ToLower(line)
+		if strings.Contains(low, "error") || strings.Contains(low, "fatal") {
+			errLines = append(errLines, strings.TrimSpace(line))
+		}
+	}
+	return strings.Join(errLines, "; "), cmd.Wait()
+}
+
+// joinErrDetail composes a restore failure message: the wait error, plus
+// the collected error-line detail when there is any.
+func joinErrDetail(werr error, detail string) string {
+	if detail == "" {
+		return werr.Error()
+	}
+	return werr.Error() + ": " + detail
 }
 

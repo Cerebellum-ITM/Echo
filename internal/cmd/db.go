@@ -28,6 +28,36 @@ type DBOpts struct {
 	Args      []string
 	Palette   theme.Palette
 	StreamOut func(string)
+	Log       DBLogger
+}
+
+// DBLogger receives a structured progress event from a db command so the
+// REPL can render it as an Odoo-style line (echo.<cmd>.<step>). step is the
+// sub-logger segment; db names the database the step acts on (empty → the
+// session falls back to the active DB). Optional: a nil Log means the
+// command runs without progress narration.
+type DBLogger func(level, step, msg, db string, fields ...[2]string)
+
+// log emits a progress event through opts.Log when set; no-op otherwise.
+func (o DBOpts) log(level, step, msg, db string, fields ...[2]string) {
+	if o.Log != nil {
+		o.Log(level, step, msg, db, fields...)
+	}
+}
+
+// restoreLineLogger returns the onLine callback fed to docker.Restore /
+// RestoreSQL: it strips pg_restore's `pg_restore: ` prefix, drops blank
+// lines, and emits each surviving line as a subdued DEBUG progress line
+// under echo.db-restore.restore for target.
+func restoreLineLogger(opts DBOpts, target string) func(string) {
+	return func(line string) {
+		line = strings.TrimSpace(line)
+		line = strings.TrimSpace(strings.TrimPrefix(line, "pg_restore:"))
+		if line == "" {
+			return
+		}
+		opts.log("DEBUG", "restore", line, target)
+	}
 }
 
 var (
@@ -268,6 +298,7 @@ func RunDBRestore(ctx context.Context, opts DBOpts) error {
 		if !flags.force {
 			return fmt.Errorf("%w (%q)", ErrDBExists, target)
 		}
+		opts.log("INFO", "restore", "dropping existing database", target)
 		if err := docker.TerminateConnections(ctx, opts.Cfg.ComposeCmd, opts.Root, opts.Cfg.DBContainer, dbUser(opts), target); err != nil {
 			return err
 		}
@@ -276,6 +307,7 @@ func RunDBRestore(ctx context.Context, opts DBOpts) error {
 		}
 	}
 
+	opts.log("INFO", "restore", "creating database", target)
 	if err := docker.CreateDatabase(ctx, opts.Cfg.ComposeCmd, opts.Root, opts.Cfg.DBContainer, dbUser(opts), target); err != nil {
 		return err
 	}
@@ -288,7 +320,8 @@ func RunDBRestore(ctx context.Context, opts DBOpts) error {
 		}
 		note = n
 	} else {
-		if err := docker.Restore(ctx, opts.Cfg.ComposeCmd, opts.Root, opts.Cfg.DBContainer, dbUser(opts), target, picked); err != nil {
+		opts.log("INFO", "restore", "restoring data", target, [2]string{"file", filepath.Base(picked)})
+		if err := docker.Restore(ctx, opts.Cfg.ComposeCmd, opts.Root, opts.Cfg.DBContainer, dbUser(opts), target, picked, restoreLineLogger(opts, target)); err != nil {
 			return err
 		}
 	}
@@ -297,6 +330,7 @@ func RunDBRestore(ctx context.Context, opts DBOpts) error {
 	// non-production DB. Run last so a neutralize failure surfaces after
 	// the data is already in place.
 	if flags.neutralize {
+		opts.log("INFO", "restore", "neutralizing", target)
 		if err := neutralizeDB(ctx, opts, target); err != nil {
 			return err
 		}
@@ -321,20 +355,25 @@ func restoreFromZip(ctx context.Context, opts DBOpts, target, zipPath string) (s
 	}
 	defer os.RemoveAll(tmpDir)
 
+	opts.log("INFO", "restore", "extracting archive", target, [2]string{"file", filepath.Base(zipPath)})
 	if err := unzip(zipPath, tmpDir); err != nil {
 		return "", err
 	}
+
+	onLine := restoreLineLogger(opts, target)
 
 	// Pick the restore path by which dump the archive carries: Echo's own
 	// backups ship a pg_dump custom-format `dump.backup` (pg_restore),
 	// while a native Odoo backup ships a plain `dump.sql` (psql).
 	switch {
 	case fileExists(filepath.Join(tmpDir, "dump.backup")):
-		if err := docker.Restore(ctx, opts.Cfg.ComposeCmd, opts.Root, opts.Cfg.DBContainer, dbUser(opts), target, filepath.Join(tmpDir, "dump.backup")); err != nil {
+		opts.log("INFO", "restore", "restoring data", target, [2]string{"format", "custom"})
+		if err := docker.Restore(ctx, opts.Cfg.ComposeCmd, opts.Root, opts.Cfg.DBContainer, dbUser(opts), target, filepath.Join(tmpDir, "dump.backup"), onLine); err != nil {
 			return "", err
 		}
 	case fileExists(filepath.Join(tmpDir, "dump.sql")):
-		if err := docker.RestoreSQL(ctx, opts.Cfg.ComposeCmd, opts.Root, opts.Cfg.DBContainer, dbUser(opts), target, filepath.Join(tmpDir, "dump.sql")); err != nil {
+		opts.log("INFO", "restore", "restoring data", target, [2]string{"format", "sql"})
+		if err := docker.RestoreSQL(ctx, opts.Cfg.ComposeCmd, opts.Root, opts.Cfg.DBContainer, dbUser(opts), target, filepath.Join(tmpDir, "dump.sql"), onLine); err != nil {
 			return "", err
 		}
 	default:
@@ -350,6 +389,7 @@ func restoreFromZip(ctx context.Context, opts DBOpts, target, zipPath string) (s
 		}
 		return "", nil
 	}
+	opts.log("INFO", "restore", "copying filestore", target)
 	if err := copyFilestoreToContainer(ctx, opts, target, srcFilestore); err != nil {
 		return "", fmt.Errorf("filestore copy: %w", err)
 	}
