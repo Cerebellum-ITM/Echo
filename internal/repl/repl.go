@@ -356,7 +356,7 @@ func helpSections() []helpSection {
 			{"  --force", "Skip the prod confirmation"},
 			{"db-backup [name]", "Dump DB (default: configured) to ./backups/"},
 			{"  --with-filestore", "Include filestore (.zip instead of .dump)"},
-			{"db-restore [--as N]", "Pick a backup and restore (creates DB)"},
+			{"db-restore [--as N]", "Pick a backup, name the target, and restore"},
 			{"  --force", "Replace target DB (terminates its connections)"},
 			{"  --neutralize", "Neutralize the DB after restoring"},
 			{"db-drop [name]", "Drop a database (confirmation by default)"},

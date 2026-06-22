@@ -83,6 +83,21 @@ func TestRestoreLineLoggerNilLog(t *testing.T) {
 	fn("pg_restore: creating TABLE x") // should be a no-op, no panic
 }
 
+func TestValidateDBName(t *testing.T) {
+	valid := []string{"mydb", "my_db_2", "habitta_prod", "a"}
+	for _, s := range valid {
+		if err := validateDBName(s); err != nil {
+			t.Errorf("validateDBName(%q) = %v, want nil", s, err)
+		}
+	}
+	invalid := []string{"", "   ", "has space", "tab\tname", "line\nbreak"}
+	for _, s := range invalid {
+		if err := validateDBName(s); err == nil {
+			t.Errorf("validateDBName(%q) = nil, want error", s)
+		}
+	}
+}
+
 func TestDBNameFromBackup(t *testing.T) {
 	cases := []struct {
 		name, want string

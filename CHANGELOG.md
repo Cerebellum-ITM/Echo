@@ -42,6 +42,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   pendiente del usuario.
 
 ### Changed
+- **`db-restore` ahora deja renombrar la base antes de restaurarla** (Unit
+  68). Tras elegir el backup en el picker aparece un input "Restore as"
+  pre-llenado con el nombre derivado del archivo: lo editas para acortarlo
+  (típico de un dump de odoo.sh con nombre kilométrico que si no ensucia
+  todos los logs) o presionas Enter para aceptarlo. `--as <name>` salta el
+  prompt (intención no-interactiva); en modo no-TTY cae al nombre derivado
+  como antes. El nombre se valida inline (no vacío, sin espacios) y
+  Esc/Ctrl+C cancela limpio sin crear la DB. Nuevos `promptRestoreName` y
+  `validateDBName` en `internal/cmd/db.go`. Spec `68-db-restore-rename.md`.
 - **`db-restore` ahora narra su progreso en vivo en vez de trabajar en
   silencio** (Unit 67). Antes, tras el picker de backup no se mostraba
   nada hasta el `→ <target>` final, aunque el `CREATE DATABASE` + el

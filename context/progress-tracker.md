@@ -23,6 +23,19 @@ _(siguiente: Unit 14 — meta-commands. Fix i18n19 Odoo 19 (rama `fix/i18n19-con
 
 ## Completed
 
+- [x] Unit 68 — db-restore-rename. `db-restore` deja renombrar la base
+  antes de restaurarla. Tras el picker, si no se pasó `--as`, sale un
+  `huh.Input` "Restore as" pre-llenado con `dbNameFromBackup(...)` (el
+  nombre derivado): editable para acortar nombres kilométricos (dump de
+  odoo.sh) que si no ensucian todos los logs, Enter acepta el default.
+  `--as <name>` salta el prompt; en no-TTY (`stdinIsTTY()` false) cae al
+  derivado como antes. `promptRestoreName(palette, suggested)` +
+  `validateDBName` (no vacío, sin espacios) en `internal/cmd/db.go`;
+  Esc/Ctrl+C → `huh.ErrUserAborted` que `runDB` ya mapea a cancelado (sin
+  crear DB). El guard de DB existente (`ErrDBExists` sin `--force`) intacto.
+  Help de `db-restore` actualizado. Test `TestValidateDBName`.
+  build/vet/test verdes; verificación EN VIVO pendiente del usuario. Spec
+  `68-db-restore-rename.md`.
 - [x] Unit 67 — db-restore-progress. `db-restore` ya no trabaja en
   silencio: narra cada fase como línea INFO estilo Odoo
   (`echo.db-restore.restore`: dropping existing database / creating

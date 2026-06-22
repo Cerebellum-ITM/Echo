@@ -282,9 +282,22 @@ func RunDBRestore(ctx context.Context, opts DBOpts) error {
 		}
 	}
 
+	// Resolve the target DB name: --as wins (non-interactive intent);
+	// otherwise prompt with the name derived from the backup pre-filled so
+	// the user can shorten an unwieldy name (e.g. an odoo.sh dump) before it
+	// bloats every log line; non-TTY falls back to the derived name.
 	target := flags.asName
 	if target == "" {
-		target = dbNameFromBackup(filepath.Base(picked))
+		derived := dbNameFromBackup(filepath.Base(picked))
+		if stdinIsTTY() {
+			named, err := promptRestoreName(opts.Palette, derived)
+			if err != nil {
+				return err
+			}
+			target = named
+		} else {
+			target = derived
+		}
 	}
 	if target == "" {
 		return ErrNoTargetDB
@@ -751,6 +764,43 @@ func RunDBUse(ctx context.Context, opts DBOpts) error {
 	}
 	if opts.StreamOut != nil {
 		opts.StreamOut("→ " + target)
+	}
+	return nil
+}
+
+// promptRestoreName asks the user to confirm or edit the target database
+// name before restoring, pre-filled with suggested (the name derived from
+// the backup file). Lets you shorten an unwieldy name — e.g. an odoo.sh
+// dump — so it doesn't bloat every log line. Callers only reach this with
+// a TTY (the picker already required one); --as skips it entirely.
+func promptRestoreName(palette theme.Palette, suggested string) (string, error) {
+	name := suggested
+	form := huh.NewForm(huh.NewGroup(
+		huh.NewInput().
+			Title("Restore as").
+			Description("Database name to create — edit to rename, Enter to accept").
+			Value(&name).
+			Validate(validateDBName),
+	)).
+		WithTheme(BuildHuhTheme(palette)).
+		WithInput(os.Stdin).
+		WithOutput(os.Stdout)
+	if err := form.Run(); err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(name), nil
+}
+
+// validateDBName rejects empty/whitespace-only names and names containing
+// whitespace — Odoo/Postgres database names never carry spaces. Used as the
+// restore-name input's validator.
+func validateDBName(s string) error {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return errors.New("database name cannot be empty")
+	}
+	if strings.ContainsAny(s, " \t\n\r") {
+		return errors.New("database name cannot contain spaces")
 	}
 	return nil
 }
