@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.16.0] — 2026-06-23
+
 ### Added
 - **El nombre de la DB se acorta en los logs cuando supera un límite, para
   no provocar wrap** (Unit 71). En cada línea de log estilo Odoo el nombre
