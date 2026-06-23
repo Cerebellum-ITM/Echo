@@ -23,6 +23,24 @@ _(siguiente: Unit 14 — meta-commands. Fix i18n19 Odoo 19 (rama `fix/i18n19-con
 
 ## Completed
 
+- [x] Unit 69 — deploy-dirty-modules. `deploy` ofrece los addons con
+  cambios sin commitear (dirty) como entradas seleccionables en el mismo
+  picker, arriba de los commits. `gitDirtyModules` (best-effort) corre
+  `git status --porcelain` → `parsePorcelainPaths` (maneja renames `->` y
+  paths citados) → `dirtyModulesFromPaths` (agrupa por addon top-level vía
+  `isAddonDir`, ordenado, conserva paths por módulo). `pickDeployItems`
+  (reemplaza `pickDeployCommits`) lista dirty primero con label
+  `~ <module>  ·  uncommitted (N files)` —distinto del label de commit
+  `<sha7>  <subject>`— y separa la selección en commits + dirty. En
+  `RunDeploy` los dirty seleccionados resuelven directo (`via=dirty`),
+  alimentan `pathsTouchI18n`, se unen (dedup vía `seen`) al set de módulos
+  antes del loop de commits, y disparan un `WARNING` único (el código
+  dirty no está en el server; deploy actualiza pero no lo sube). La línea
+  de selección ahora es `items selected commits=.. dirty=..`. Help de
+  `deploy` actualizado. Tests `TestParsePorcelainPaths` +
+  `TestDirtyModulesFromPaths` (reusa `addonsRepo`). build/vet/test verdes;
+  verificación EN VIVO contra el servidor pendiente del usuario. Spec
+  `69-deploy-dirty-modules.md`.
 - [x] Unit 68 — db-restore-rename. `db-restore` deja renombrar la base
   antes de restaurarla. Tras el picker, si no se pasó `--as`, sale un
   `huh.Input` "Restore as" pre-llenado con `dbNameFromBackup(...)` (el

@@ -8,6 +8,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **`deploy` ahora ofrece los módulos con cambios sin commitear (dirty) en
+  el mismo picker** (Unit 69). Antes solo ofrecía commits; ahora detecta
+  los addons con cambios en el working tree (`git status --porcelain`,
+  modificados + sin trackear) y los lista como entradas seleccionables
+  arriba de los commits (`~ <module>  ·  uncommitted (N files)`). El set
+  final de módulos es la **unión** de los módulos resueltos de los commits
+  elegidos más los módulos dirty seleccionados (deduplicado); cada dirty
+  resuelve directo (`via=dirty`) y sus paths alimentan la detección de
+  i18n (`i18n/` → `--i18n-overwrite`). Como el código dirty no está
+  commiteado ni en el servidor, al seleccionar dirty se emite un
+  `WARNING`: deploy los actualiza en el server pero no sube el código (eso
+  lo hace tu otra herramienta). Detección best-effort: árbol limpio o
+  `git status` que falla → picker solo con commits, como antes. Nuevos
+  `dirtyModule`, `gitDirtyModules`, `parsePorcelainPaths`,
+  `dirtyModulesFromPaths` y `pickDeployItems` (reemplaza
+  `pickDeployCommits`) en `internal/cmd/deploy.go`. Spec
+  `69-deploy-dirty-modules.md`.
 - **Comando `db-use [name]` para cambiar la base de datos activa** (Unit
   66). Cambia la `cfg.DBName` del proyecto — la que `db-list` marca con
   `●` y el destino implícito de `update`/`install`/`shell`/`psql`/

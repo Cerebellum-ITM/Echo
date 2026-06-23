@@ -396,7 +396,7 @@ func helpSections() []helpSection {
 			{"  --no-follow", "Disable follow; print bounded output"},
 			{"  -c, --copy", "Bounded output and copy to clipboard"},
 			{"  --all", "All compose services (instead of just Odoo)"},
-			{"deploy", "Deploy picked local commits to a remote (stop, up, -i/-u)"},
+			{"deploy", "Deploy picked commits + dirty modules to a remote (stop, up, -i/-u)"},
 			{"  --from <target>", "Use a named connect target (default: this dir's link)"},
 			{"  --limit <N>", "Commits offered in the picker (default 20)"},
 			{"  --dry-run", "Resolve modules and show the plan; execute nothing"},

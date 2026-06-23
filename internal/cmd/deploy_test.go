@@ -105,6 +105,45 @@ func TestModulesFromPaths(t *testing.T) {
 	}
 }
 
+func TestParsePorcelainPaths(t *testing.T) {
+	out := " M sale_extra/models/sale.py\n" +
+		"?? stock_extra/views/new.xml\n" +
+		"A  sale_extra/i18n/es.po\n" +
+		`R  old_mod/x.py -> new_mod/x.py` + "\n" +
+		` M "weird name/with space.py"` + "\n" +
+		"\n" // trailing blank line
+	got := parsePorcelainPaths(out)
+	want := []string{
+		"sale_extra/models/sale.py",
+		"stock_extra/views/new.xml",
+		"sale_extra/i18n/es.po",
+		"new_mod/x.py",
+		"weird name/with space.py",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("parsePorcelainPaths = %v, want %v", got, want)
+	}
+}
+
+func TestDirtyModulesFromPaths(t *testing.T) {
+	root := addonsRepo(t, "sale_extra", "stock_extra")
+	paths := []string{
+		"sale_extra/models/sale.py",
+		"docs/readme.md",            // non-addon → dropped
+		"stock_extra/views/s.xml",
+		"sale_extra/i18n/es.po",     // groups under sale_extra
+		"README.md",                 // top-level non-addon → dropped
+	}
+	got := dirtyModulesFromPaths(root, paths)
+	want := []dirtyModule{
+		{name: "sale_extra", paths: []string{"sale_extra/models/sale.py", "sale_extra/i18n/es.po"}},
+		{name: "stock_extra", paths: []string{"stock_extra/views/s.xml"}},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("dirtyModulesFromPaths = %+v, want %+v", got, want)
+	}
+}
+
 func TestSplitInstallUpdate(t *testing.T) {
 	states := map[string]string{
 		"sale_extra":  "installed",
