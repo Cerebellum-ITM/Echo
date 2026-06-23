@@ -8,6 +8,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **El nombre de la DB se acorta en los logs cuando supera un límite, para
+  no provocar wrap** (Unit 71). En cada línea de log estilo Odoo el nombre
+  de la base va en la columna `db`; uno largo (típico de un dump de odoo.sh
+  como `mycompany-main-prod_2026-06-18_23-42-53`) empujaba el resto de la
+  línea y la envolvía. Ahora se trunca **solo en pantalla** con elipsis en
+  medio (`mycompany-…_23-42-53`), conservando inicio y fin; los nombres
+  normales (`habitta_prod`, `my_shop`) quedan intactos. El límite es la
+  config global `log_db_max` (default 20). Cubre las dos rutas de render
+  (`renderOdooLog` para las líneas `echo.<cmd>` y `formatOdooLine` para las
+  líneas de Odoo streameadas) y el connect projectless; el portapapeles
+  (`copy-last`) y el transcript de `echo run --log` conservan el nombre
+  completo. Helper puro `theme.MiddleTruncate(s, max)` (rune-aware). Spec
+  `71-log-db-name-truncate.md`.
 - **`update --installed` ofrece todos los módulos instalados en el picker,
   no solo los del repo** (Unit 70). Sin el flag, el picker de `update` solo
   lista los addons del proyecto, así que no había forma de *descubrir* y

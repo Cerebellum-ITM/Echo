@@ -144,6 +144,7 @@ func newSession(s theme.Styles, p theme.Palette, project, id string, stage theme
 	valid, unknown := validatePromptSegments(cfg.PromptSegments)
 	cfg.PromptSegments = valid
 	sess.prompt = newPromptBuilder(sess)
+	logDBMax = cfg.LogDBMax
 	return sess, unknown
 }
 

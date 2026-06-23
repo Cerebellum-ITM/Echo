@@ -77,6 +77,11 @@ type Config struct {
 	PromptSegments []string
 	PromptNameMax  int
 	HealthTTL      time.Duration
+
+	// LogDBMax is the max display width (runes) of the database name in log
+	// lines before it's middle-truncated, so a long name doesn't wrap the
+	// rest of the line. Global; default 20. Display-only.
+	LogDBMax int
 }
 
 type globalFile struct {
@@ -84,6 +89,7 @@ type globalFile struct {
 	Logo           string                        `toml:"logo"`
 	Banner         string                        `toml:"banner"`
 	ComposeCmd     string                        `toml:"compose_cmd"`
+	LogDBMax       int                           `toml:"log_db_max"`
 	Prompt         *promptFile                   `toml:"prompt"`
 	ConnectTargets map[string]*connectTargetFile `toml:"connect_targets"`
 	ProjectAliases map[string]string             `toml:"project_aliases"`
@@ -183,6 +189,7 @@ func Load(projectPath string) (*Config, error) {
 	cfg.Logo = g.Logo
 	cfg.Banner = g.Banner
 	cfg.ComposeCmd = g.ComposeCmd
+	cfg.LogDBMax = g.LogDBMax
 	cfg.ConnectTargets = sortedConnectTargets(g.ConnectTargets)
 	cfg.ProjectAliases = g.ProjectAliases
 	if g.Prompt != nil {
@@ -291,6 +298,7 @@ func SaveGlobal(cfg *Config) error {
 		Logo:           cfg.Logo,
 		Banner:         cfg.Banner,
 		ComposeCmd:     cfg.ComposeCmd,
+		LogDBMax:       cfg.LogDBMax,
 		ConnectTargets: connectTargetsToFile(cfg.ConnectTargets),
 		ProjectAliases: cfg.ProjectAliases,
 	}
@@ -414,6 +422,7 @@ func LoadGlobal() (*Config, error) {
 	cfg.Logo = g.Logo
 	cfg.Banner = g.Banner
 	cfg.ComposeCmd = g.ComposeCmd
+	cfg.LogDBMax = g.LogDBMax
 	cfg.ConnectTargets = sortedConnectTargets(g.ConnectTargets)
 	cfg.ProjectAliases = g.ProjectAliases
 	applyDefaults(cfg)

@@ -7,6 +7,21 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
+// MiddleTruncate shortens s to at most max display runes, keeping its head
+// and tail around a single … in the middle — so a long value (e.g. a
+// database name in a log line) doesn't push the rest of the line into a
+// wrap. s already within max, or max <= 1, is returned unchanged. Rune-aware.
+func MiddleTruncate(s string, max int) string {
+	r := []rune(s)
+	if max <= 1 || len(r) <= max {
+		return s
+	}
+	keep := max - 1 // runes kept besides the …
+	head := (keep + 1) / 2
+	tail := keep - head
+	return string(r[:head]) + "…" + string(r[len(r)-tail:])
+}
+
 type Palette struct {
 	Bg, Fg, Dim, Faint            lipgloss.Color
 	Accent, Accent2               lipgloss.Color

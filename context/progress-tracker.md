@@ -23,6 +23,22 @@ _(siguiente: Unit 14 — meta-commands. Fix i18n19 Odoo 19 (rama `fix/i18n19-con
 
 ## Completed
 
+- [x] Unit 71 — log-db-name-truncate. El nombre de la DB en las líneas de
+  log se trunca (solo display) cuando supera `log_db_max` (config global,
+  default 20) con elipsis en medio, para no causar wrap del resto de la
+  línea. Helper puro `theme.MiddleTruncate(s, max)` (rune-aware, conserva
+  head+tail). Aplicado en las dos rutas de render de `repl`
+  (`renderOdooLog` en logemit.go para `echo.<cmd>`, `formatOdooLine` en
+  logrender.go para las líneas de Odoo streameadas; var de paquete
+  `logDBMax` seteada en `newSession` desde `cfg.LogDBMax`) y en el connect
+  projectless (`cmd.renderOdooLogLine`/`directConnectLogger` reciben
+  `dbMax` desde `cfg.LogDBMax` de `LoadGlobal`). Las versiones plain
+  (`plainOdooLog`/tee del run-log) y el texto crudo streameado conservan el
+  nombre completo → `copy-last` y `--log` quedan fieles. Config
+  `LogDBMax`/`log_db_max` cableada en Config/globalFile/Load×2/SaveGlobal/
+  Defaults/applyDefaults. Tests `TestMiddleTruncate`. build/vet/test
+  verdes; verificación visual en TTY pendiente del usuario. Spec
+  `71-log-db-name-truncate.md`.
 - [x] Unit 70 — update-installed-picker. `update --installed` llena el
   picker desde los módulos instalados en la DB (`ir_module_module`, vía
   `docker.ModuleStates(..., installedOnly=true)`, misma consulta que

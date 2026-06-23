@@ -28,7 +28,7 @@ func RunDirectConnect(ctx context.Context, args []string) error {
 
 	name, login, add, passthrough := parseDirectArgs(args)
 
-	logf := directConnectLogger(palette)
+	logf := directConnectLogger(palette, cfg.LogDBMax)
 	// Start line, mirroring the REPL's startLog (echo.connect.start).
 	var startFields [][2]string
 	if positional := strings.TrimSpace(strings.Join(directPositionals(args), " ")); positional != "" {
