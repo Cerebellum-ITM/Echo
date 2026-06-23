@@ -449,6 +449,7 @@ line, all in Echo's Odoo log style and captured by `--log`.
 ## Output features
 
 - **Level-colored streams.** Odoo log lines (`DEBUG`/`INFO`/`WARNING`/`ERROR`/`CRITICAL`) are recolored using the active theme; Python tracebacks inherit the color of the line that triggered them.
+- **DB-name truncation.** A long database name (e.g. an odoo.sh dump) in the log lines' `db` column is middle-truncated on screen past `log_db_max` chars (default 20) — `mycompany-…_23-42-53` — so it doesn't wrap the rest of the line. Display-only: `copy-last` and `echo run --log` keep the full name.
 - **Foreign-line normalization.** `docker compose` progress and loose-severity tool stderr (e.g. wkhtmltopdf's `Warn: Can't find .pfb …`) are reformatted into the same Odoo log style instead of leaking as raw text. The `shell` command also recolors Odoo's own startup logs (which arrive raw over the PTY) and dims the Python/IPython banner.
 - **Migration detection.** `install` / `update` / `uninstall` passively watch the stream for Odoo migrations and close with one `echo.<cmd>.migration` line per migrated module (`module=… version=… phases=…`); `report` reconstructs the same summary from the last run.
 - **Action result line.** Every long-running command finishes with `✓ <name> completed` or `✗ <name> failed: …`. Silent failures — exit 0 with `ERROR`/`CRITICAL` log lines — render as `✗ <name> finished with N error(s)`. A failure auto-copies the relevant log slice to the clipboard.
@@ -467,7 +468,7 @@ projects. Stage modifies the prompt accent: `dev` (green), `staging`
 
 ```
 ~/.config/echo/
-├── global.toml          # theme, logo, compose flavor, prompt, connect targets, project aliases
+├── global.toml          # theme, logo, compose flavor, prompt, log_db_max, connect targets, project aliases
 ├── history              # REPL command history
 ├── run-logs/            # `echo run --log` transcripts + last-run.json (for `report`)
 ├── connect-sessions/    # cached `connect` web sessions, per target
