@@ -19,6 +19,12 @@ import (
 // locking is needed beyond what sess.print already assumes.
 var runLogSink io.Writer
 
+// logDBMax is the max display width of the database name in styled log
+// lines before it's middle-truncated (so a long name doesn't wrap the rest
+// of the line). Defaults to the config default; newSession overrides it
+// from cfg.LogDBMax at session start.
+var logDBMax = 20
+
 // teeRunLog writes a plain line (plus newline) to the run-log sink when
 // one is active. No-op otherwise.
 func teeRunLog(plain string) {
@@ -75,6 +81,7 @@ func renderOdooLog(level, logger, msg string, fields []logField, s theme.Styles,
 	if db == "" {
 		db = "-"
 	}
+	db = theme.MiddleTruncate(db, logDBMax)
 
 	short, levelStyle := shortLevel(level, p)
 	dbStyle := lipgloss.NewStyle().Foreground(p.Accent)

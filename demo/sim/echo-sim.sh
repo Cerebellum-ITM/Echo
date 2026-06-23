@@ -42,6 +42,8 @@ _logcolor() {
     echo.up)                            printf '155;246;255';;  # cyan
     echo.update.module.sale.start)      printf '202;255;191';;  # mint
     echo.update.module.sale)            printf '255;179;186';;  # coral
+    echo.update.module.base.start)      printf '160;196;255';;  # sky
+    echo.update.module.base)            printf '255;198;255';;  # pink
     odoo.modules.loading)               printf '255;214;165';;  # peach
     odoo.modules.registry)              printf '255;179;186';;  # coral
     odoo.addons.base.models.ir_module)  printf '202;255;191';;  # mint
@@ -53,6 +55,8 @@ _logcolor() {
     echo.deploy.compose)                printf '240;166;202';;  # rose
     echo.deploy.odoo)                   printf '255;179;186';;  # coral
     echo.db-list)                       printf '155;246;255';;  # cyan
+    echo.db-restore)                    printf '155;246;255';;  # cyan
+    echo.db-restore.restore)            printf '240;166;202';;  # rose
     echo.modinfo)                       printf '202;255;191';;  # mint
     *)                                  printf '202;255;191';;
   esac
@@ -187,6 +191,7 @@ up() {
 }
 
 update() {
+  if [ "$1" = "--installed" ]; then _update_installed; return; fi
   _log INFO "$EPID" echo.update.module.sale.start "update" "modules=sale" "flags=--i18n"
   sleep 0.25
   _log INFO "$OPID" odoo.modules.loading              "loading 1 modules...";                       sleep 0.22
@@ -200,25 +205,51 @@ update() {
   _log INFO "$EPID" echo.update.module.sale "update completed"
 }
 
+# update --installed: the picker is sourced from the DB's installed modules
+# (ir_module_module), so core modules like `base` are pickable — not just the
+# repo's addons. Here `base` is selected and updated.
+_update_installed() {
+  printf '\n  %s\n' "$(_cb "$WARNING" 'Installed modules to update')"
+  printf '  %s %s  %s\n' "$(_c "$ACCENT" '▸')" "$(_c "$SUCCESS" '☑')" "$(_c "$FG"  'base')"
+  printf '    %s  %s\n'  "$(_c "$FAINT" '☐')"                         "$(_c "$DIM" 'web')"
+  printf '    %s  %s\n'  "$(_c "$FAINT" '☐')"                         "$(_c "$DIM" 'mail')"
+  printf '    %s  %s\n'  "$(_c "$FAINT" '☐')"                         "$(_c "$DIM" 'account')"
+  printf '    %s  %s\n'  "$(_c "$FAINT" '☐')"                         "$(_c "$DIM" 'sale')"
+  printf '    %s  %s\n'  "$(_c "$FAINT" '☐')"                         "$(_c "$DIM" 'sale_extra')"
+  printf '\n'; sleep 0.6
+  _log INFO "$EPID" echo.update.module.base.start "update" "modules=base"; sleep 0.25
+  _log INFO "$OPID" odoo.modules.loading  "loading 1 modules...";                         sleep 0.22
+  _log INFO "$OPID" odoo.modules.loading  "Loading module base (1/1)";                     sleep 0.32
+  _log INFO "$OPID" odoo.modules.loading  "Module base loaded in 0.88s, 612 queries";      sleep 0.22
+  _log INFO "$OPID" odoo.modules.loading  "1 modules loaded in 0.91s, 612 queries";        sleep 0.15
+  _log INFO "$OPID" odoo.modules.registry "Registry loaded in 1.02s";                      sleep 0.20
+  printf '\n'
+  _log INFO "$EPID" echo.update.module.base "update completed"
+}
+
 deploy() {
   _log INFO "$EPID" echo.deploy.remote "target resolved" "host=erp-prod" "path=/srv/odoo/my-shop"
   sleep 0.30
-  printf '\n  %s\n' "$(_cb "$WARNING" 'Select commits to deploy')"
-  printf '  %s %s  %s\n' "$(_c "$ACCENT" '▸')" "$(_c "$SUCCESS" '☑')" "$(_c "$FG"  'a1b2c3d  [FIX] sale_extra: correct tax rounding')"
+  printf '\n  %s\n' "$(_cb "$WARNING" 'Select commits / dirty modules to deploy')"
+  printf '  %s %s  %s\n' "$(_c "$ACCENT" '▸')" "$(_c "$SUCCESS" '☑')" "$(_c "$WARNING" '~ stock_extra  ·  uncommitted (3 files)')"
+  printf '    %s  %s\n'   "$(_c "$SUCCESS" '☑')"                      "$(_c "$FG"  'a1b2c3d  [FIX] sale_extra: correct tax rounding')"
   printf '    %s  %s\n'   "$(_c "$SUCCESS" '☑')"                      "$(_c "$FG"  'e4f5a6b  [ADD] website_promo: launch banner')"
   printf '    %s  %s\n'   "$(_c "$FAINT" '☐')"                       "$(_c "$DIM" '0c1d2e3  [IMP] docs: update install notes')"
   printf '\n'; sleep 0.55
-  _log INFO "$EPID" echo.deploy         "resolved" "commit=a1b2c3d" "module=sale_extra"    "via=subject"; sleep 0.15
-  _log INFO "$EPID" echo.deploy         "resolved" "commit=e4f5a6b" "module=website_promo" "via=diff";    sleep 0.22
-  _log INFO "$EPID" echo.deploy         "plan"     "update=sale_extra" "install=website_promo" "skipped=1"; sleep 0.28
+  _log INFO    "$EPID" echo.deploy "items selected" "commits=2" "dirty=1"; sleep 0.18
+  _log INFO    "$EPID" echo.deploy "resolved" "module=stock_extra"   "via=dirty";   sleep 0.15
+  _log WARNING "$EPID" echo.deploy "selected modules have uncommitted changes — deploy updates them on the server but does not push the code" "modules=stock_extra"; sleep 0.30
+  _log INFO    "$EPID" echo.deploy "resolved" "commit=a1b2c3d" "module=sale_extra"    "via=subject"; sleep 0.15
+  _log INFO    "$EPID" echo.deploy "resolved" "commit=e4f5a6b" "module=website_promo" "via=diff";    sleep 0.22
+  _log INFO    "$EPID" echo.deploy "plan"     "update=sale_extra,stock_extra" "install=website_promo" "skipped=1"; sleep 0.28
   _log INFO "$EPID" echo.deploy.compose "stop";  sleep 0.22
   _log INFO "$EPID" echo.deploy.compose "up -d"; sleep 0.28
   _log INFO "$EPID" echo.deploy.odoo    "running module install/update"; sleep 0.30
-  _log INFO "$OPID" odoo.modules.loading "loading 2 modules...";                  sleep 0.25
+  _log INFO "$OPID" odoo.modules.loading "loading 3 modules...";                  sleep 0.25
   _log INFO "$OPID" odoo.modules.loading "Module website_promo loaded in 0.61s";  sleep 0.22
   _log INFO "$OPID" odoo.modules.loading "Modules loaded.";                       sleep 0.20
   printf '\n'
-  _log INFO "$EPID" echo.deploy "deploy complete" "update=1" "install=1" "skipped=1"
+  _log INFO "$EPID" echo.deploy "deploy complete" "update=2" "install=1" "skipped=1"
 }
 
 db-list() {
@@ -247,6 +278,33 @@ _dbrow() {
   fi
   printf '%s%s  %s  %s\n' "$mark" "$name" \
     "$(_c "$DIM" "$(printf '%-5s' "$3")")" "$(_c "$DIM" "$4")"
+}
+
+db-restore() {
+  # 1) backup picker — an odoo.sh dump with a long, unwieldy name
+  printf '\n  %s\n' "$(_cb "$WARNING" 'Pick a backup to restore')"
+  printf '  %s %s\n' "$(_c "$ACCENT" '▸')" "$(_c "$FG"  'mycompany-main-prod_2026-06-18_23-42-53.zip')"
+  printf '    %s\n'  "$(_c "$DIM" 'my_shop_20260611-1147.dump')"
+  printf '\n'; sleep 0.7
+
+  # 2) rename prompt — derived name pre-filled, then edited to a short one
+  printf '  %s  %s\n' "$(_cb "$ACCENT" 'Restore as')" "$(_c "$DIM" 'edit to rename, Enter to accept')"
+  printf '  %s %s' "$(_c "$ACCENT" '›')" "$(_c "$FAINT" 'mycompany-main-prod')"; sleep 0.9
+  printf '\r%s[K  %s %s\n' "$ESC" "$(_c "$ACCENT" '›')" "$(_c "$FG" 'staging')"; sleep 0.5
+
+  # 3) live progress — milestones (INFO) bracket the pg_restore stream (DEBUG)
+  local DB='staging'
+  printf '\n'
+  _log INFO  "$EPID" echo.db-restore.restore "creating database"; sleep 0.30
+  _log INFO  "$EPID" echo.db-restore.restore "restoring data" "file=mycompany-main-prod_2026-06-18_23-42-53.zip"; sleep 0.30
+  _log DEBUG "$EPID" echo.db-restore.restore 'creating TABLE "public"."res_partner"';            sleep 0.16
+  _log DEBUG "$EPID" echo.db-restore.restore 'restoring data for table "public"."account_move"'; sleep 0.16
+  _log DEBUG "$EPID" echo.db-restore.restore 'creating INDEX "public"."sale_order_pkey"';         sleep 0.16
+  _log DEBUG "$EPID" echo.db-restore.restore 'creating CONSTRAINT FK "public"."account_move_line"'; sleep 0.16
+  _log INFO  "$EPID" echo.db-restore.restore "copying filestore"; sleep 0.28
+  printf '  %s %s\n' "$(_c "$SUCCESS" '→')" "$(_c "$FG" 'staging (with filestore)')"
+  printf '\n'
+  _log INFO  "$EPID" echo.db-restore "db-restore completed"
 }
 
 modinfo() {

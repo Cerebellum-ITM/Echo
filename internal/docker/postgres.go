@@ -196,6 +196,27 @@ func TerminateConnections(ctx context.Context, composeCmd, dir, dbContainer, use
 	return psqlExec(ctx, composeCmd, dir, dbContainer, user, "postgres", query)
 }
 
+// ResetUserCredentials sets the login and password of the res_users row
+// with the given id, returning found=false when no such user exists. The
+// password is stored as plain text: Odoo's default crypt context keeps a
+// deprecated `plaintext` scheme, so it verifies on the next login and is
+// transparently re-hashed to pbkdf2_sha512 then. Intended for dev
+// databases where regaining admin access matters more than the stored hash.
+func ResetUserCredentials(ctx context.Context, composeCmd, dir, dbContainer, user, db string, uid int, login, password string) (bool, error) {
+	if user == "" {
+		user = "postgres"
+	}
+	stmt := fmt.Sprintf(
+		"UPDATE res_users SET login = '%s', password = '%s' WHERE id = %d RETURNING id;",
+		escapeIdent(login), escapeIdent(password), uid,
+	)
+	out, err := psqlScalar(ctx, composeCmd, dir, dbContainer, user, db, stmt)
+	if err != nil {
+		return false, err
+	}
+	return strings.TrimSpace(out) != "", nil
+}
+
 // ModuleVersion returns the name, latest_version and state recorded in
 // ir_module_module for a module, or found=false when there is no row.
 // latest_version may be empty (NULL) for a never-installed module.

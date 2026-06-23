@@ -60,6 +60,7 @@ func formatOdooLine(line string, s theme.Styles, p theme.Palette) (string, bool)
 		return "", false
 	}
 	ts, pid, level, db, logger, msg := m[1], m[2], m[3], m[4], m[5], m[6]
+	db = theme.MiddleTruncate(db, logDBMax)
 
 	short, levelStyle := shortLevel(level, p)
 	dbStyle := lipgloss.NewStyle().Foreground(p.Accent)

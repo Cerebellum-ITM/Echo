@@ -180,7 +180,7 @@ func RunUpdate(ctx context.Context, opts ModulesOpts) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	all, last, i18n := false, false, false
+	all, last, i18n, installed := false, false, false, false
 	modules := make([]string, 0, len(rest))
 	for _, a := range rest {
 		switch a {
@@ -190,6 +190,8 @@ func RunUpdate(ctx context.Context, opts ModulesOpts) ([]string, error) {
 			last = true
 		case "--i18n":
 			i18n = true
+		case "--installed":
+			installed = true
 		default:
 			modules = append(modules, a)
 		}
@@ -225,7 +227,7 @@ func RunUpdate(ctx context.Context, opts ModulesOpts) ([]string, error) {
 
 	prev, hasPrev := config.LoadLastUpdate(opts.Cfg.ProjectKey, opts.Cfg.DBName)
 	if len(modules) == 0 {
-		picked, canceled, err := pickModulesForUpdate(ctx, opts, prev.Modules)
+		picked, canceled, err := pickModulesForUpdate(ctx, opts, prev.Modules, installed)
 		if err != nil {
 			return nil, err
 		}
@@ -403,16 +405,55 @@ func pickModulesInteractive(ctx context.Context, opts ModulesOpts, title string,
 // pickModulesForUpdate is the `update`-specific picker: it tints the
 // previous run's modules and reports `canceled` (Esc) distinctly from an
 // empty confirm (Enter with nothing selected), so RunUpdate can fall back
-// to repeating the last update on an empty confirm.
-func pickModulesForUpdate(ctx context.Context, opts ModulesOpts, recent []string) (picked []string, canceled bool, err error) {
-	available, err := resolveModules(ctx, opts)
+// to repeating the last update on an empty confirm. With installed=true the
+// candidates are every installed module in the DB (so core modules like
+// `base` are pickable), instead of just the project's addons.
+func pickModulesForUpdate(ctx context.Context, opts ModulesOpts, recent []string, installed bool) (picked []string, canceled bool, err error) {
+	var available []string
+	title := "Modules to update"
+	if installed {
+		available, err = installedModules(ctx, opts)
+		title = "Installed modules to update"
+	} else {
+		available, err = resolveModules(ctx, opts)
+	}
 	if err != nil {
 		return nil, false, err
 	}
 	if len(available) == 0 {
 		return nil, false, ErrNoModulesAvailable
 	}
-	return runFuzzyPickerCore("Modules to update", available, recent, nil, opts.Palette, opts.Cfg.Stage)
+	return runFuzzyPickerCore(title, available, recent, nil, opts.Palette, opts.Cfg.Stage)
+}
+
+// installedModules lists every module marked installed in the active
+// database (ir_module_module) — not just the project's addons — so the
+// `update --installed` picker can target core modules like `base`. Needs DB
+// access; a missing container/db is a clear error rather than an empty list.
+func installedModules(ctx context.Context, opts ModulesOpts) ([]string, error) {
+	if opts.Cfg.DBContainer == "" || opts.Cfg.DBName == "" {
+		return nil, ErrNoDB
+	}
+	user := env.Load(opts.Root)["POSTGRES_USER"]
+	rows, err := docker.ModuleStates(ctx,
+		opts.Cfg.ComposeCmd, opts.Root, opts.Cfg.DBContainer, user, opts.Cfg.DBName, true)
+	if err != nil {
+		return nil, fmt.Errorf("query installed modules: %w", err)
+	}
+	return installedModuleNames(rows), nil
+}
+
+// installedModuleNames extracts the (already name-sorted) module names from
+// ir_module_module rows, dropping any blank. Pure — the testable core of
+// installedModules.
+func installedModuleNames(rows []docker.ModuleStateRow) []string {
+	out := make([]string, 0, len(rows))
+	for _, r := range rows {
+		if r.Name != "" {
+			out = append(out, r.Name)
+		}
+	}
+	return out
 }
 
 // addons modes recorded in the per-project config.

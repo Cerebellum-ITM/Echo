@@ -42,7 +42,7 @@ func TestMatchPrefix(t *testing.T) {
 		{"", nil},
 		{"zz", nil},
 		{"in", []string{"init", "install"}},
-		{"db-", []string{"db-backup", "db-restore", "db-drop", "db-neutralize", "db-list"}},
+		{"db-", []string{"db-admin", "db-backup", "db-restore", "db-drop", "db-neutralize", "db-list", "db-use"}},
 		{"install", []string{"install"}},
 	}
 	for _, tc := range cases {

@@ -7,6 +7,111 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **El nombre de la DB se acorta en los logs cuando supera un límite, para
+  no provocar wrap** (Unit 71). En cada línea de log estilo Odoo el nombre
+  de la base va en la columna `db`; uno largo (típico de un dump de odoo.sh
+  como `mycompany-main-prod_2026-06-18_23-42-53`) empujaba el resto de la
+  línea y la envolvía. Ahora se trunca **solo en pantalla** con elipsis en
+  medio (`mycompany-…_23-42-53`), conservando inicio y fin; los nombres
+  normales (`habitta_prod`, `my_shop`) quedan intactos. El límite es la
+  config global `log_db_max` (default 20). Cubre las dos rutas de render
+  (`renderOdooLog` para las líneas `echo.<cmd>` y `formatOdooLine` para las
+  líneas de Odoo streameadas) y el connect projectless; el portapapeles
+  (`copy-last`) y el transcript de `echo run --log` conservan el nombre
+  completo. Helper puro `theme.MiddleTruncate(s, max)` (rune-aware). Spec
+  `71-log-db-name-truncate.md`.
+- **`update --installed` ofrece todos los módulos instalados en el picker,
+  no solo los del repo** (Unit 70). Sin el flag, el picker de `update` solo
+  lista los addons del proyecto, así que no había forma de *descubrir* y
+  actualizar módulos core como `base`/`web`/`account` desde el picker (sí
+  escribiendo `update base` a mano). Con `--installed` el picker se llena
+  desde `ir_module_module` (los marcados como instalados en la DB activa,
+  misma consulta que `modstate`), así cualquier módulo instalado —core o de
+  terceros— es seleccionable. Solo cambia la fuente del picker: el resto
+  (`-u`, `--last`, start line, `--i18n`/`--level`) queda igual; el flag es
+  inerte si se combina con módulos explícitos/`--all`/`--last` (que saltan
+  el picker). Nuevos `installedModules`/`installedModuleNames` en
+  `internal/cmd/modules.go`; `pickModulesForUpdate` gana el parámetro
+  `installed`. Spec `70-update-installed-picker.md`.
+- **`deploy` ahora ofrece los módulos con cambios sin commitear (dirty) en
+  el mismo picker** (Unit 69). Antes solo ofrecía commits; ahora detecta
+  los addons con cambios en el working tree (`git status --porcelain`,
+  modificados + sin trackear) y los lista como entradas seleccionables
+  arriba de los commits (`~ <module>  ·  uncommitted (N files)`). El set
+  final de módulos es la **unión** de los módulos resueltos de los commits
+  elegidos más los módulos dirty seleccionados (deduplicado); cada dirty
+  resuelve directo (`via=dirty`) y sus paths alimentan la detección de
+  i18n (`i18n/` → `--i18n-overwrite`). Como el código dirty no está
+  commiteado ni en el servidor, al seleccionar dirty se emite un
+  `WARNING`: deploy los actualiza en el server pero no sube el código (eso
+  lo hace tu otra herramienta). Detección best-effort: árbol limpio o
+  `git status` que falla → picker solo con commits, como antes. Nuevos
+  `dirtyModule`, `gitDirtyModules`, `parsePorcelainPaths`,
+  `dirtyModulesFromPaths` y `pickDeployItems` (reemplaza
+  `pickDeployCommits`) en `internal/cmd/deploy.go`. Spec
+  `69-deploy-dirty-modules.md`.
+- **Comando `db-use [name]` para cambiar la base de datos activa** (Unit
+  66). Cambia la `cfg.DBName` del proyecto — la que `db-list` marca con
+  `●` y el destino implícito de `update`/`install`/`shell`/`psql`/
+  `modstate`/`db-admin`/etc. Sin argumento abre un picker sobre la lista
+  de bases (como `db-drop`); con nombre cambia directo tras verificar que
+  existe (`no database named "<x>"` si no). Persiste `db_name` vía
+  `config.SaveProject`, así que sobrevive reinicios; como la sesión
+  comparte el mismo `*config.Config`, el prompt toma la nueva DB en el
+  siguiente render. Cambiar a la DB ya activa es un no-op reportado
+  (`→ <db> (already active)`). `RunDBUse` en `internal/cmd/db.go`; wiring
+  en `commands.go`/`repl.go`.
+- **Comando `db-admin [name]` para recuperar acceso al administrador**
+  (Unit 66). Resetea el login **y** la contraseña del usuario `id = 2`
+  (el admin de Odoo) a `admin` / `admin` para entrar al back office sin
+  conocer las credenciales actuales. La DB destino sale de `cfg.DBName`,
+  la sobreescribe un argumento posicional y, si no hay ninguna, abre el
+  mismo picker que `db-drop`/`db-neutralize`. Es una operación puramente
+  PostgreSQL (`UPDATE res_users SET login='admin', password='admin' WHERE
+  id=2 RETURNING id` vía la maquinaria `psql` existente, nuevo
+  `docker.ResetUserCredentials`): la contraseña se guarda en **texto
+  plano** a propósito — el crypt context por defecto de Odoo mantiene el
+  esquema `plaintext` deprecado, así que la verifica en el siguiente login
+  y la re-hashea a `pbkdf2_sha512` (funciona en Odoo 16/17/18/19). Guarda
+  un confirm rojo cuando `stage=prod` (un admin/admin en producción es un
+  agujero de seguridad), salteable con `--force`; la DB activa no se
+  protege porque es el destino normal. Si no existe la fila `id=2` falla
+  con `no user with id 2 in "<db>"` en vez de un no-op silencioso.
+  Archivos: `internal/docker/postgres.go` (`ResetUserCredentials`),
+  `internal/cmd/db.go` (`RunDBAdmin` + `confirmAdminReset`), wiring en
+  `internal/repl/commands.go` y `internal/repl/repl.go`. Spec
+  `66-db-admin-reset.md`. Verificación EN VIVO contra un contenedor
+  pendiente del usuario.
+
+### Changed
+- **`db-restore` ahora deja renombrar la base antes de restaurarla** (Unit
+  68). Tras elegir el backup en el picker aparece un input "Restore as"
+  pre-llenado con el nombre derivado del archivo: lo editas para acortarlo
+  (típico de un dump de odoo.sh con nombre kilométrico que si no ensucia
+  todos los logs) o presionas Enter para aceptarlo. `--as <name>` salta el
+  prompt (intención no-interactiva); en modo no-TTY cae al nombre derivado
+  como antes. El nombre se valida inline (no vacío, sin espacios) y
+  Esc/Ctrl+C cancela limpio sin crear la DB. Nuevos `promptRestoreName` y
+  `validateDBName` en `internal/cmd/db.go`. Spec `68-db-restore-rename.md`.
+- **`db-restore` ahora narra su progreso en vivo en vez de trabajar en
+  silencio** (Unit 67). Antes, tras el picker de backup no se mostraba
+  nada hasta el `→ <target>` final, aunque el `CREATE DATABASE` + el
+  `pg_restore` de una base real tardan segundos o minutos. Ahora emite una
+  línea INFO estilo Odoo por cada fase (`echo.db-restore.restore`):
+  dropping existing database, creating database, restoring data
+  (`file=`/`format=`), extracting archive, copying filestore,
+  neutralizing; y además **streamea en vivo la salida del paso largo**:
+  `docker.Restore`/`RestoreSQL` reciben un callback `onLine` y `pg_restore`
+  corre con `--verbose`, así cada línea de progreso (creación de tablas,
+  carga de datos) fluye como una línea `DEBUG` atenuada bajo el mismo
+  logger mientras los hitos INFO marcan los límites de fase. La detección
+  de fallo conserva solo las líneas de error (`error`/`fatal`) para el
+  mensaje, no el volcado verbose completo. Nuevo `DBOpts.Log` (tipo
+  `DBLogger`), cableado en el `runDB` del REPL igual que el logger de
+  `connect`. `db-backup` queda igual (fuera de alcance). Spec
+  `67-db-restore-progress.md`.
+
 ## [0.15.0] — 2026-06-19
 
 ### Added

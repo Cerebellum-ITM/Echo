@@ -28,6 +28,36 @@ type DBOpts struct {
 	Args      []string
 	Palette   theme.Palette
 	StreamOut func(string)
+	Log       DBLogger
+}
+
+// DBLogger receives a structured progress event from a db command so the
+// REPL can render it as an Odoo-style line (echo.<cmd>.<step>). step is the
+// sub-logger segment; db names the database the step acts on (empty → the
+// session falls back to the active DB). Optional: a nil Log means the
+// command runs without progress narration.
+type DBLogger func(level, step, msg, db string, fields ...[2]string)
+
+// log emits a progress event through opts.Log when set; no-op otherwise.
+func (o DBOpts) log(level, step, msg, db string, fields ...[2]string) {
+	if o.Log != nil {
+		o.Log(level, step, msg, db, fields...)
+	}
+}
+
+// restoreLineLogger returns the onLine callback fed to docker.Restore /
+// RestoreSQL: it strips pg_restore's `pg_restore: ` prefix, drops blank
+// lines, and emits each surviving line as a subdued DEBUG progress line
+// under echo.db-restore.restore for target.
+func restoreLineLogger(opts DBOpts, target string) func(string) {
+	return func(line string) {
+		line = strings.TrimSpace(line)
+		line = strings.TrimSpace(strings.TrimPrefix(line, "pg_restore:"))
+		if line == "" {
+			return
+		}
+		opts.log("DEBUG", "restore", line, target)
+	}
 }
 
 var (
@@ -252,9 +282,22 @@ func RunDBRestore(ctx context.Context, opts DBOpts) error {
 		}
 	}
 
+	// Resolve the target DB name: --as wins (non-interactive intent);
+	// otherwise prompt with the name derived from the backup pre-filled so
+	// the user can shorten an unwieldy name (e.g. an odoo.sh dump) before it
+	// bloats every log line; non-TTY falls back to the derived name.
 	target := flags.asName
 	if target == "" {
-		target = dbNameFromBackup(filepath.Base(picked))
+		derived := dbNameFromBackup(filepath.Base(picked))
+		if stdinIsTTY() {
+			named, err := promptRestoreName(opts.Palette, derived)
+			if err != nil {
+				return err
+			}
+			target = named
+		} else {
+			target = derived
+		}
 	}
 	if target == "" {
 		return ErrNoTargetDB
@@ -268,6 +311,7 @@ func RunDBRestore(ctx context.Context, opts DBOpts) error {
 		if !flags.force {
 			return fmt.Errorf("%w (%q)", ErrDBExists, target)
 		}
+		opts.log("INFO", "restore", "dropping existing database", target)
 		if err := docker.TerminateConnections(ctx, opts.Cfg.ComposeCmd, opts.Root, opts.Cfg.DBContainer, dbUser(opts), target); err != nil {
 			return err
 		}
@@ -276,6 +320,7 @@ func RunDBRestore(ctx context.Context, opts DBOpts) error {
 		}
 	}
 
+	opts.log("INFO", "restore", "creating database", target)
 	if err := docker.CreateDatabase(ctx, opts.Cfg.ComposeCmd, opts.Root, opts.Cfg.DBContainer, dbUser(opts), target); err != nil {
 		return err
 	}
@@ -288,7 +333,8 @@ func RunDBRestore(ctx context.Context, opts DBOpts) error {
 		}
 		note = n
 	} else {
-		if err := docker.Restore(ctx, opts.Cfg.ComposeCmd, opts.Root, opts.Cfg.DBContainer, dbUser(opts), target, picked); err != nil {
+		opts.log("INFO", "restore", "restoring data", target, [2]string{"file", filepath.Base(picked)})
+		if err := docker.Restore(ctx, opts.Cfg.ComposeCmd, opts.Root, opts.Cfg.DBContainer, dbUser(opts), target, picked, restoreLineLogger(opts, target)); err != nil {
 			return err
 		}
 	}
@@ -297,6 +343,7 @@ func RunDBRestore(ctx context.Context, opts DBOpts) error {
 	// non-production DB. Run last so a neutralize failure surfaces after
 	// the data is already in place.
 	if flags.neutralize {
+		opts.log("INFO", "restore", "neutralizing", target)
 		if err := neutralizeDB(ctx, opts, target); err != nil {
 			return err
 		}
@@ -321,20 +368,25 @@ func restoreFromZip(ctx context.Context, opts DBOpts, target, zipPath string) (s
 	}
 	defer os.RemoveAll(tmpDir)
 
+	opts.log("INFO", "restore", "extracting archive", target, [2]string{"file", filepath.Base(zipPath)})
 	if err := unzip(zipPath, tmpDir); err != nil {
 		return "", err
 	}
+
+	onLine := restoreLineLogger(opts, target)
 
 	// Pick the restore path by which dump the archive carries: Echo's own
 	// backups ship a pg_dump custom-format `dump.backup` (pg_restore),
 	// while a native Odoo backup ships a plain `dump.sql` (psql).
 	switch {
 	case fileExists(filepath.Join(tmpDir, "dump.backup")):
-		if err := docker.Restore(ctx, opts.Cfg.ComposeCmd, opts.Root, opts.Cfg.DBContainer, dbUser(opts), target, filepath.Join(tmpDir, "dump.backup")); err != nil {
+		opts.log("INFO", "restore", "restoring data", target, [2]string{"format", "custom"})
+		if err := docker.Restore(ctx, opts.Cfg.ComposeCmd, opts.Root, opts.Cfg.DBContainer, dbUser(opts), target, filepath.Join(tmpDir, "dump.backup"), onLine); err != nil {
 			return "", err
 		}
 	case fileExists(filepath.Join(tmpDir, "dump.sql")):
-		if err := docker.RestoreSQL(ctx, opts.Cfg.ComposeCmd, opts.Root, opts.Cfg.DBContainer, dbUser(opts), target, filepath.Join(tmpDir, "dump.sql")); err != nil {
+		opts.log("INFO", "restore", "restoring data", target, [2]string{"format", "sql"})
+		if err := docker.RestoreSQL(ctx, opts.Cfg.ComposeCmd, opts.Root, opts.Cfg.DBContainer, dbUser(opts), target, filepath.Join(tmpDir, "dump.sql"), onLine); err != nil {
 			return "", err
 		}
 	default:
@@ -350,6 +402,7 @@ func restoreFromZip(ctx context.Context, opts DBOpts, target, zipPath string) (s
 		}
 		return "", nil
 	}
+	opts.log("INFO", "restore", "copying filestore", target)
 	if err := copyFilestoreToContainer(ctx, opts, target, srcFilestore); err != nil {
 		return "", fmt.Errorf("filestore copy: %w", err)
 	}
@@ -559,6 +612,195 @@ func confirmNeutralize(palette theme.Palette, name string) error {
 	}
 	if !confirmed {
 		return ErrCancelled
+	}
+	return nil
+}
+
+// Admin-reset constants: Odoo's admin user is id 2 (id 1 is the system
+// superuser), and we reset both its login and password to "admin".
+const (
+	adminUserID   = 2
+	adminLogin    = "admin"
+	adminPassword = "admin"
+)
+
+// RunDBAdmin resets the login and password of user id 2 (Odoo's admin
+// user) to admin/admin so you can sign into the back office without
+// knowing the current credentials. Target defaults to cfg.DBName; a
+// positional arg overrides it; if neither resolves, a picker is shown.
+// The password is stored in plain text and Odoo re-hashes it on the next
+// successful login. Confirms (red) when stage=prod — resetting prod admin
+// to a known password is a security hole — unless --force is passed.
+func RunDBAdmin(ctx context.Context, opts DBOpts) error {
+	if err := requireDBContainer(opts.Cfg); err != nil {
+		return err
+	}
+	flags, positional := parseDBArgs(opts.Args)
+
+	target := opts.Cfg.DBName
+	if len(positional) > 0 {
+		target = positional[0]
+	}
+	if target == "" {
+		names, err := docker.ListDatabases(ctx, opts.Cfg.ComposeCmd, opts.Root, opts.Cfg.DBContainer, dbUser(opts))
+		if err != nil {
+			return err
+		}
+		if len(names) == 0 {
+			return errors.New("no databases available")
+		}
+		picked, err := runSingleFuzzyPicker("Pick a database to reset admin on", names, opts.Palette)
+		if err != nil {
+			return err
+		}
+		target = picked
+	}
+	if target == "" {
+		return ErrNoTargetDB
+	}
+
+	// Guard prod: a known admin/admin on production is a security hole.
+	if !flags.force && strings.EqualFold(opts.Cfg.Stage, "prod") {
+		if err := confirmAdminReset(opts.Palette, target); err != nil {
+			return err
+		}
+	}
+
+	found, err := docker.ResetUserCredentials(ctx, opts.Cfg.ComposeCmd, opts.Root, opts.Cfg.DBContainer, dbUser(opts), target, adminUserID, adminLogin, adminPassword)
+	if err != nil {
+		return err
+	}
+	if !found {
+		return fmt.Errorf("no user with id %d in %q", adminUserID, target)
+	}
+	if opts.StreamOut != nil {
+		opts.StreamOut(fmt.Sprintf("→ %s  %s / %s (uid %d)", target, adminLogin, adminPassword, adminUserID))
+	}
+	return nil
+}
+
+func confirmAdminReset(palette theme.Palette, name string) error {
+	if err := requireTTY("pass --force to reset admin without a prompt"); err != nil {
+		return err
+	}
+	red := lipgloss.NewStyle().Foreground(palette.Error).Bold(true).Render(name)
+	confirmed := false
+	form := huh.NewForm(huh.NewGroup(
+		huh.NewConfirm().
+			Title("⚠  About to reset admin on " + red).
+			Description("Sets the admin login and password to admin/admin. Don't run this on production.").
+			Affirmative("Reset").
+			Negative("Cancel").
+			Value(&confirmed),
+	)).
+		WithTheme(BuildHuhTheme(palette)).
+		WithInput(os.Stdin).
+		WithOutput(os.Stdout)
+	if err := form.Run(); err != nil {
+		return err
+	}
+	if !confirmed {
+		return ErrCancelled
+	}
+	return nil
+}
+
+// RunDBUse switches the project's active database (cfg.DBName) — the one
+// db-list marks with ●, and the implicit target of update/shell/psql/
+// modstate/db-admin/…. With no positional arg it opens a picker over the
+// database list; with a name it switches to that DB after verifying it
+// exists. The change is persisted to the project config (db_name) so it
+// survives restarts; because the session holds the same *config.Config,
+// the prompt picks up the new DB on the next render. Switching to the DB
+// already active is a reported no-op.
+func RunDBUse(ctx context.Context, opts DBOpts) error {
+	if err := requireDBContainer(opts.Cfg); err != nil {
+		return err
+	}
+	_, positional := parseDBArgs(opts.Args)
+
+	names, err := docker.ListDatabases(ctx, opts.Cfg.ComposeCmd, opts.Root, opts.Cfg.DBContainer, dbUser(opts))
+	if err != nil {
+		return err
+	}
+	if len(names) == 0 {
+		return errors.New("no databases available")
+	}
+
+	target := ""
+	if len(positional) > 0 {
+		target = positional[0]
+		found := false
+		for _, n := range names {
+			if n == target {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return fmt.Errorf("no database named %q", target)
+		}
+	} else {
+		picked, err := runSingleFuzzyPicker("Pick the active database", names, opts.Palette)
+		if err != nil {
+			return err
+		}
+		target = picked
+	}
+	if target == "" {
+		return ErrNoTargetDB
+	}
+
+	if target == opts.Cfg.DBName {
+		if opts.StreamOut != nil {
+			opts.StreamOut("→ " + target + " (already active)")
+		}
+		return nil
+	}
+
+	opts.Cfg.DBName = target
+	if err := config.SaveProject(opts.Cfg); err != nil {
+		return err
+	}
+	if opts.StreamOut != nil {
+		opts.StreamOut("→ " + target)
+	}
+	return nil
+}
+
+// promptRestoreName asks the user to confirm or edit the target database
+// name before restoring, pre-filled with suggested (the name derived from
+// the backup file). Lets you shorten an unwieldy name — e.g. an odoo.sh
+// dump — so it doesn't bloat every log line. Callers only reach this with
+// a TTY (the picker already required one); --as skips it entirely.
+func promptRestoreName(palette theme.Palette, suggested string) (string, error) {
+	name := suggested
+	form := huh.NewForm(huh.NewGroup(
+		huh.NewInput().
+			Title("Restore as").
+			Description("Database name to create — edit to rename, Enter to accept").
+			Value(&name).
+			Validate(validateDBName),
+	)).
+		WithTheme(BuildHuhTheme(palette)).
+		WithInput(os.Stdin).
+		WithOutput(os.Stdout)
+	if err := form.Run(); err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(name), nil
+}
+
+// validateDBName rejects empty/whitespace-only names and names containing
+// whitespace — Odoo/Postgres database names never carry spaces. Used as the
+// restore-name input's validator.
+func validateDBName(s string) error {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return errors.New("database name cannot be empty")
+	}
+	if strings.ContainsAny(s, " \t\n\r") {
+		return errors.New("database name cannot contain spaces")
 	}
 	return nil
 }

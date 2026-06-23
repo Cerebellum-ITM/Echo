@@ -23,6 +23,122 @@ _(siguiente: Unit 14 — meta-commands. Fix i18n19 Odoo 19 (rama `fix/i18n19-con
 
 ## Completed
 
+- [x] Unit 71 — log-db-name-truncate. El nombre de la DB en las líneas de
+  log se trunca (solo display) cuando supera `log_db_max` (config global,
+  default 20) con elipsis en medio, para no causar wrap del resto de la
+  línea. Helper puro `theme.MiddleTruncate(s, max)` (rune-aware, conserva
+  head+tail). Aplicado en las dos rutas de render de `repl`
+  (`renderOdooLog` en logemit.go para `echo.<cmd>`, `formatOdooLine` en
+  logrender.go para las líneas de Odoo streameadas; var de paquete
+  `logDBMax` seteada en `newSession` desde `cfg.LogDBMax`) y en el connect
+  projectless (`cmd.renderOdooLogLine`/`directConnectLogger` reciben
+  `dbMax` desde `cfg.LogDBMax` de `LoadGlobal`). Las versiones plain
+  (`plainOdooLog`/tee del run-log) y el texto crudo streameado conservan el
+  nombre completo → `copy-last` y `--log` quedan fieles. Config
+  `LogDBMax`/`log_db_max` cableada en Config/globalFile/Load×2/SaveGlobal/
+  Defaults/applyDefaults. Tests `TestMiddleTruncate`. build/vet/test
+  verdes; verificación visual en TTY pendiente del usuario. Spec
+  `71-log-db-name-truncate.md`.
+- [x] Unit 70 — update-installed-picker. `update --installed` llena el
+  picker desde los módulos instalados en la DB (`ir_module_module`, vía
+  `docker.ModuleStates(..., installedOnly=true)`, misma consulta que
+  `modstate`) en vez de solo los addons del repo, para poder descubrir y
+  actualizar módulos core como `base`. `update base` explícito ya
+  funcionaba (los args saltan el picker); el flag solo cambia la fuente del
+  picker, el resto del flujo (`-u`, `--last`, start line, `--i18n`/
+  `--level`) intacto; inerte si se combina con módulos explícitos/`--all`/
+  `--last`. Nuevos `installedModules` (guard DBContainer/DBName) y
+  `installedModuleNames` (puro) en `internal/cmd/modules.go`;
+  `pickModulesForUpdate` gana el parámetro `installed` y titula "Installed
+  modules to update". Flag en `commandFlags["update"]` + help. Test
+  `TestInstalledModuleNames`. build/vet/test verdes; verificación EN VIVO
+  pendiente del usuario. GIF/README en commit DOC aparte. Spec
+  `70-update-installed-picker.md`.
+- [x] Unit 69 — deploy-dirty-modules. `deploy` ofrece los addons con
+  cambios sin commitear (dirty) como entradas seleccionables en el mismo
+  picker, arriba de los commits. `gitDirtyModules` (best-effort) corre
+  `git status --porcelain` → `parsePorcelainPaths` (maneja renames `->` y
+  paths citados) → `dirtyModulesFromPaths` (agrupa por addon top-level vía
+  `isAddonDir`, ordenado, conserva paths por módulo). `pickDeployItems`
+  (reemplaza `pickDeployCommits`) lista dirty primero con label
+  `~ <module>  ·  uncommitted (N files)` —distinto del label de commit
+  `<sha7>  <subject>`— y separa la selección en commits + dirty. En
+  `RunDeploy` los dirty seleccionados resuelven directo (`via=dirty`),
+  alimentan `pathsTouchI18n`, se unen (dedup vía `seen`) al set de módulos
+  antes del loop de commits, y disparan un `WARNING` único (el código
+  dirty no está en el server; deploy actualiza pero no lo sube). La línea
+  de selección ahora es `items selected commits=.. dirty=..`. Help de
+  `deploy` actualizado. Tests `TestParsePorcelainPaths` +
+  `TestDirtyModulesFromPaths` (reusa `addonsRepo`). build/vet/test verdes;
+  verificación EN VIVO contra el servidor pendiente del usuario. Spec
+  `69-deploy-dirty-modules.md`.
+- [x] Unit 68 — db-restore-rename. `db-restore` deja renombrar la base
+  antes de restaurarla. Tras el picker, si no se pasó `--as`, sale un
+  `huh.Input` "Restore as" pre-llenado con `dbNameFromBackup(...)` (el
+  nombre derivado): editable para acortar nombres kilométricos (dump de
+  odoo.sh) que si no ensucian todos los logs, Enter acepta el default.
+  `--as <name>` salta el prompt; en no-TTY (`stdinIsTTY()` false) cae al
+  derivado como antes. `promptRestoreName(palette, suggested)` +
+  `validateDBName` (no vacío, sin espacios) en `internal/cmd/db.go`;
+  Esc/Ctrl+C → `huh.ErrUserAborted` que `runDB` ya mapea a cancelado (sin
+  crear DB). El guard de DB existente (`ErrDBExists` sin `--force`) intacto.
+  Help de `db-restore` actualizado. Test `TestValidateDBName`.
+  build/vet/test verdes; verificación EN VIVO pendiente del usuario. Spec
+  `68-db-restore-rename.md`.
+- [x] Unit 67 — db-restore-progress. `db-restore` ya no trabaja en
+  silencio: narra cada fase como línea INFO estilo Odoo
+  (`echo.db-restore.restore`: dropping existing database / creating
+  database / restoring data con `file=`/`format=` / extracting archive /
+  copying filestore / neutralizing) y además streamea en vivo el paso
+  largo. `docker.Restore`/`RestoreSQL` ganan un callback `onLine` (último
+  arg); con él, `pg_restore` corre con `--verbose` y su stderr se escanea
+  línea a línea (helper `streamStderr`, buffer 1 MB) reenviando cada una a
+  `onLine` y reservando las líneas `error`/`fatal` para el mensaje de
+  fallo (`joinErrDetail`) — sin volcar todo el verbose al error. En `cmd`:
+  nuevo tipo `DBLogger` + campo `DBOpts.Log` (nil-safe vía `opts.log`) y
+  `restoreLineLogger(opts, target)` que strip-ea el prefijo `pg_restore:`,
+  descarta líneas vacías y emite cada una como `DEBUG` bajo el mismo
+  logger. El REPL cablea `opts.Log` en `runDB` igual que el logger de
+  `connect` (`echo.<name>.<step>`, db→`sess.cfg.DBName` por defecto).
+  `db-backup`/`Dump` quedan igual (fuera de alcance). Tests
+  `TestRestoreLineLogger` (+ nil-log no-panic) en `db_test.go`.
+  build/vet/test verdes; verificación EN VIVO contra un contenedor
+  pendiente del usuario. Spec `67-db-restore-progress.md`.
+- [x] Unit 66 — db-use. Nuevo comando `db-use [name]` que cambia la base
+  activa (`cfg.DBName`) del proyecto — la que `db-list` marca con `●` y el
+  destino implícito de `update`/`shell`/`psql`/`modstate`/`db-admin`/etc.
+  Sin arg abre picker sobre `docker.ListDatabases` (como `db-drop`); con
+  nombre cambia directo tras verificar que exista (`no database named
+  "<x>"`). Persiste `db_name` con `config.SaveProject(opts.Cfg)`; como
+  `sess.cfg` y `DBOpts.Cfg` son el mismo `*config.Config`, el prompt toma
+  la nueva DB en el siguiente render sin reiniciar. No-op reportado al
+  cambiar a la ya activa (`→ <db> (already active)`). `RunDBUse` en
+  `internal/cmd/db.go`; wiring en `commands.go` (Registry, sin flags) y
+  `repl.go` (dispatchNames, case del dispatch, switch de `runDB`, help);
+  `TestMatchPrefix` actualizado. build/vet/test verdes. Spec
+  `66-db-admin-reset.md` (extendida con db-use).
+- [x] Unit 66 — db-admin. Nuevo comando `db-admin [name]` en la categoría
+  Database que resetea login+password del usuario `id=2` (admin de Odoo) a
+  `admin`/`admin` para recuperar acceso al back office. DB destino:
+  `cfg.DBName` → arg posicional → picker (igual que `db-drop`/
+  `db-neutralize`). Operación pura PostgreSQL vía la maquinaria `psql`
+  existente: nuevo `docker.ResetUserCredentials` corre
+  `UPDATE res_users SET login='admin', password='admin' WHERE id=2
+  RETURNING id` (login/password escapados con `escapeIdent`; `found` =
+  output no vacío). La contraseña se guarda en texto plano a propósito —
+  el crypt context por defecto de Odoo mantiene el esquema `plaintext`
+  deprecado, lo verifica en el siguiente login y lo re-hashea a
+  `pbkdf2_sha512` (Odoo 16–19). `RunDBAdmin`+`confirmAdminReset` en
+  `internal/cmd/db.go` (constantes `adminUserID=2`/`adminLogin`/
+  `adminPassword`): guarda un confirm rojo solo si `stage=prod`
+  (`--force` lo saltea); la DB activa no se protege porque es el destino
+  normal; si falta la fila `id=2` falla con `no user with id 2 in "<db>"`.
+  Wiring en `commands.go` (Registry primero en el cluster db, `commandFlags
+  ["db-admin"]={"--force"}`) y `repl.go` (dispatchNames, case del
+  dispatch, switch de `runDB`, help). Test `registry_test.go`
+  `TestMatchPrefix` actualizado con `db-admin`. build/vet/test verdes;
+  verificación EN VIVO contra un contenedor pendiente del usuario. Spec
+  `66-db-admin-reset.md`.
 - [x] Unit 15 — banner-stage-colored. Reemplaza el box `ECHO` hardcodeado de
   `buildLeft` (`internal/banner/header.go`) por el wordmark `echo` renderizado
   en uno de dos estilos figlet: **B (soundwave)** Calvin S doble trazo (`╔═╗`)

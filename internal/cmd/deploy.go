@@ -109,6 +109,14 @@ type deployCommit struct {
 	subject string
 }
 
+// dirtyModule is one addon with uncommitted working-tree changes, offered
+// in the picker alongside the commits. paths are its changed/untracked
+// paths (repo-relative), kept for the i18n/ detection.
+type dirtyModule struct {
+	name  string
+	paths []string
+}
+
 func (c deployCommit) short() string {
 	if len(c.sha) > 7 {
 		return c.sha[:7]
@@ -155,12 +163,20 @@ func RunDeploy(ctx context.Context, opts DeployOpts) error {
 	if len(commits) == 0 {
 		return fmt.Errorf("no commits found in %s", opts.Root)
 	}
-	selected, err := pickDeployCommits(commits, deployedSet, opts.Palette)
+	// Working-tree dirty modules, offered in the picker alongside the
+	// commits. Best-effort: a status failure just means commits-only.
+	dirty, err := gitDirtyModules(ctx, opts.Root)
+	if err != nil {
+		opts.log("WARNING", "", "dirty detection skipped", "",
+			[2]string{"reason", err.Error()})
+	}
+	selected, selectedDirty, err := pickDeployItems(commits, dirty, deployedSet, opts.Palette)
 	if err != nil {
 		return err
 	}
-	opts.log("INFO", "", "commits selected", "",
-		[2]string{"n", strconv.Itoa(len(selected))})
+	opts.log("INFO", "", "items selected", "",
+		[2]string{"commits", strconv.Itoa(len(selected))},
+		[2]string{"dirty", strconv.Itoa(len(selectedDirty))})
 
 	// Commit → module resolution. Unresolved commits are excluded and
 	// reported, never fatal — unless nothing at all resolves. Each resolved
@@ -171,6 +187,31 @@ func RunDeploy(ctx context.Context, opts DeployOpts) error {
 	var modules []string
 	var deployedShas []string // selected commits that resolved → recorded on success
 	var skipped int
+
+	// Selected dirty modules resolve straight to their name (via=dirty) and
+	// feed i18n detection from their working-tree paths. Their code is not
+	// committed/pushed, so warn once: deploy updates them on the server but
+	// doesn't put the code there — that's the user's other tool's job.
+	if len(selectedDirty) > 0 {
+		var names []string
+		for _, dm := range selectedDirty {
+			names = append(names, dm.name)
+			opts.log("INFO", "", "resolved", "",
+				[2]string{"module", dm.name}, [2]string{"via", "dirty"})
+			if !seen[dm.name] {
+				seen[dm.name] = true
+				modules = append(modules, dm.name)
+			}
+			if !i18nTouched[dm.name] && pathsTouchI18n(dm.name, dm.paths) {
+				i18nTouched[dm.name] = true
+				opts.log("INFO", "i18n", "i18n changes detected", "",
+					[2]string{"module", dm.name})
+			}
+		}
+		opts.log("WARNING", "", "selected modules have uncommitted changes — deploy updates them on the server but does not push the code", "",
+			[2]string{"modules", strings.Join(names, ",")})
+	}
+
 	for _, c := range selected {
 		mod, via, reason, paths := resolveCommitModule(ctx, opts.Root, c)
 		if mod == "" {
@@ -357,37 +398,59 @@ func resolveRemoteTarget(cfg *config.Config, palette theme.Palette, from string,
 	return sshHost, remotePath, from, err
 }
 
-// pickDeployCommits opens the multi-select picker over the commit list and
-// maps the chosen labels back to commits, preserving list order. Commits
-// whose full SHA is in deployedSet are passed as "deployed" labels so the
-// picker mutes them (already shipped to this target). An empty selection or
-// a cancel maps to ErrCancelled, matching the rest of deploy.
-func pickDeployCommits(commits []deployCommit, deployedSet map[string]bool, palette theme.Palette) ([]deployCommit, error) {
-	labels := make([]string, len(commits))
-	byLabel := make(map[string]deployCommit, len(commits))
+// dirtyLabel is the picker label for a dirty module — distinct from a
+// commit label (`<sha7>  <subject>`) so the two never collide and read
+// differently on screen.
+func dirtyLabel(dm dirtyModule) string {
+	return "~ " + dm.name + "  ·  uncommitted (" + strconv.Itoa(len(dm.paths)) + " files)"
+}
+
+// pickDeployItems opens the multi-select picker over the dirty modules
+// (listed first — your current uncommitted work) and the recent commits,
+// then splits the chosen labels back into commits and dirty modules.
+// Commits whose full SHA is in deployedSet are passed as "deployed" labels
+// so the picker mutes them. An empty selection or a cancel maps to
+// ErrCancelled, matching the rest of deploy.
+func pickDeployItems(commits []deployCommit, dirty []dirtyModule, deployedSet map[string]bool, palette theme.Palette) ([]deployCommit, []dirtyModule, error) {
+	var labels []string
+	byCommit := make(map[string]deployCommit, len(commits))
+	byDirty := make(map[string]dirtyModule, len(dirty))
 	var deployedLabels []string
-	for i, c := range commits {
-		labels[i] = c.short() + "  " + c.subject
-		byLabel[labels[i]] = c
+
+	for _, dm := range dirty {
+		lbl := dirtyLabel(dm)
+		labels = append(labels, lbl)
+		byDirty[lbl] = dm
+	}
+	for _, c := range commits {
+		lbl := c.short() + "  " + c.subject
+		labels = append(labels, lbl)
+		byCommit[lbl] = c
 		if deployedSet[c.sha] {
-			deployedLabels = append(deployedLabels, labels[i])
+			deployedLabels = append(deployedLabels, lbl)
 		}
 	}
+
 	picked, canceled, err := runFuzzyPickerCore(
-		"Select commits to deploy", labels, nil, deployedLabels, palette, "")
+		"Select commits / dirty modules to deploy", labels, nil, deployedLabels, palette, "")
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if canceled || len(picked) == 0 {
-		return nil, ErrCancelled
+		return nil, nil, ErrCancelled
 	}
-	out := make([]deployCommit, 0, len(picked))
+	var pickedCommits []deployCommit
+	var pickedDirty []dirtyModule
 	for _, lbl := range picked {
-		if c, ok := byLabel[lbl]; ok {
-			out = append(out, c)
+		if c, ok := byCommit[lbl]; ok {
+			pickedCommits = append(pickedCommits, c)
+			continue
+		}
+		if dm, ok := byDirty[lbl]; ok {
+			pickedDirty = append(pickedDirty, dm)
 		}
 	}
-	return out, nil
+	return pickedCommits, pickedDirty, nil
 }
 
 // resolveCommitModule maps one commit to its module: the subject scheme
@@ -539,6 +602,65 @@ func gitRecentCommits(ctx context.Context, root string, n int) ([]deployCommit, 
 		commits = append(commits, deployCommit{sha: sha, subject: subject})
 	}
 	return commits, nil
+}
+
+// gitDirtyModules returns the addon modules with uncommitted working-tree
+// changes (modified, staged, or untracked), each with its changed paths.
+// Best-effort: a clean tree yields nil; the caller treats an error as "no
+// dirty modules" so the picker still shows commits.
+func gitDirtyModules(ctx context.Context, root string) ([]dirtyModule, error) {
+	out, err := gitOutput(ctx, root, "status", "--porcelain")
+	if err != nil {
+		return nil, err
+	}
+	return dirtyModulesFromPaths(root, parsePorcelainPaths(string(out))), nil
+}
+
+// parsePorcelainPaths extracts the changed paths from `git status
+// --porcelain` output: each line is `XY <path>` (two status chars + space),
+// renames are `XY old -> new` (the new path wins), and paths with odd
+// characters are quoted (the quotes are stripped).
+func parsePorcelainPaths(out string) []string {
+	var paths []string
+	for _, line := range strings.Split(out, "\n") {
+		if len(line) < 4 {
+			continue
+		}
+		p := line[3:]
+		if i := strings.Index(p, " -> "); i >= 0 {
+			p = p[i+4:]
+		}
+		p = strings.TrimSpace(p)
+		p = strings.Trim(p, `"`)
+		if p != "" {
+			paths = append(paths, p)
+		}
+	}
+	return paths
+}
+
+// dirtyModulesFromPaths groups changed paths by their top-level addon dir
+// (skipping non-addon paths), sorted by module name, preserving each
+// module's paths. Pure — the testable core of gitDirtyModules.
+func dirtyModulesFromPaths(root string, paths []string) []dirtyModule {
+	byMod := map[string][]string{}
+	var order []string
+	for _, p := range paths {
+		top := strings.SplitN(filepath.ToSlash(p), "/", 2)[0]
+		if top == "" || !isAddonDir(root, top) {
+			continue
+		}
+		if _, ok := byMod[top]; !ok {
+			order = append(order, top)
+		}
+		byMod[top] = append(byMod[top], p)
+	}
+	sort.Strings(order)
+	out := make([]dirtyModule, 0, len(order))
+	for _, m := range order {
+		out = append(out, dirtyModule{name: m, paths: byMod[m]})
+	}
+	return out
 }
 
 // gitCommitPaths lists the paths changed by one commit (repo-relative).

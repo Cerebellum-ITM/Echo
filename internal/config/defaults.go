@@ -16,6 +16,7 @@ var Defaults = Config{
 	PromptSegments: []string{"name", "version_db", "stage", "health"},
 	PromptNameMax:  18,
 	HealthTTL:      5 * time.Second,
+	LogDBMax:       20,
 }
 
 func applyDefaults(cfg *Config) {
@@ -57,5 +58,8 @@ func applyDefaults(cfg *Config) {
 	}
 	if cfg.HealthTTL <= 0 {
 		cfg.HealthTTL = Defaults.HealthTTL
+	}
+	if cfg.LogDBMax <= 0 {
+		cfg.LogDBMax = Defaults.LogDBMax
 	}
 }

@@ -7,7 +7,25 @@ import (
 	"testing"
 
 	"github.com/pascualchavez/echo/internal/config"
+	"github.com/pascualchavez/echo/internal/docker"
 )
+
+func TestInstalledModuleNames(t *testing.T) {
+	rows := []docker.ModuleStateRow{
+		{Name: "base", State: "installed"},
+		{Name: "", State: "installed"}, // blank → dropped
+		{Name: "web", State: "installed"},
+		{Name: "sale", State: "installed"},
+	}
+	got := installedModuleNames(rows)
+	want := []string{"base", "web", "sale"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("installedModuleNames = %v, want %v", got, want)
+	}
+	if got := installedModuleNames(nil); len(got) != 0 {
+		t.Errorf("installedModuleNames(nil) = %v, want empty", got)
+	}
+}
 
 func TestEmitResolved(t *testing.T) {
 	var got []string
