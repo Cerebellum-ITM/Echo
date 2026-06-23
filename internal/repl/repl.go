@@ -323,6 +323,7 @@ func helpSections() []helpSection {
 			{"  --all", "Update every installed module"},
 			{"  --last", "Repeat the last update for this database"},
 			{"  --i18n", "Overwrite the modules' translations from their .po (all langs)"},
+			{"  --installed", "Pick from all installed modules (e.g. base), not just the repo"},
 			{"  --level <lvl>", "Odoo --log-level (debug…critical; default info)"},
 			{"uninstall <mod...>", "Uninstall modules"},
 			{"  --level <lvl>", "Odoo --log-level (debug…critical; default info)"},

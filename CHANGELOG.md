@@ -8,6 +8,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **`update --installed` ofrece todos los módulos instalados en el picker,
+  no solo los del repo** (Unit 70). Sin el flag, el picker de `update` solo
+  lista los addons del proyecto, así que no había forma de *descubrir* y
+  actualizar módulos core como `base`/`web`/`account` desde el picker (sí
+  escribiendo `update base` a mano). Con `--installed` el picker se llena
+  desde `ir_module_module` (los marcados como instalados en la DB activa,
+  misma consulta que `modstate`), así cualquier módulo instalado —core o de
+  terceros— es seleccionable. Solo cambia la fuente del picker: el resto
+  (`-u`, `--last`, start line, `--i18n`/`--level`) queda igual; el flag es
+  inerte si se combina con módulos explícitos/`--all`/`--last` (que saltan
+  el picker). Nuevos `installedModules`/`installedModuleNames` en
+  `internal/cmd/modules.go`; `pickModulesForUpdate` gana el parámetro
+  `installed`. Spec `70-update-installed-picker.md`.
 - **`deploy` ahora ofrece los módulos con cambios sin commitear (dirty) en
   el mismo picker** (Unit 69). Antes solo ofrecía commits; ahora detecta
   los addons con cambios en el working tree (`git status --porcelain`,

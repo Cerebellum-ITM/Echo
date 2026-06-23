@@ -23,6 +23,21 @@ _(siguiente: Unit 14 — meta-commands. Fix i18n19 Odoo 19 (rama `fix/i18n19-con
 
 ## Completed
 
+- [x] Unit 70 — update-installed-picker. `update --installed` llena el
+  picker desde los módulos instalados en la DB (`ir_module_module`, vía
+  `docker.ModuleStates(..., installedOnly=true)`, misma consulta que
+  `modstate`) en vez de solo los addons del repo, para poder descubrir y
+  actualizar módulos core como `base`. `update base` explícito ya
+  funcionaba (los args saltan el picker); el flag solo cambia la fuente del
+  picker, el resto del flujo (`-u`, `--last`, start line, `--i18n`/
+  `--level`) intacto; inerte si se combina con módulos explícitos/`--all`/
+  `--last`. Nuevos `installedModules` (guard DBContainer/DBName) y
+  `installedModuleNames` (puro) en `internal/cmd/modules.go`;
+  `pickModulesForUpdate` gana el parámetro `installed` y titula "Installed
+  modules to update". Flag en `commandFlags["update"]` + help. Test
+  `TestInstalledModuleNames`. build/vet/test verdes; verificación EN VIVO
+  pendiente del usuario. GIF/README en commit DOC aparte. Spec
+  `70-update-installed-picker.md`.
 - [x] Unit 69 — deploy-dirty-modules. `deploy` ofrece los addons con
   cambios sin commitear (dirty) como entradas seleccionables en el mismo
   picker, arriba de los commits. `gitDirtyModules` (best-effort) corre
