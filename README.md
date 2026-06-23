@@ -25,11 +25,11 @@ Echo is a work in progress; below is what currently ships in `main`.
 | Project   | `init`, `reset`, `alias` (`-C <name>` registry), `help`, `clear`        | `version`, `stage`, `theme`, `logo` |
 | Docker    | `up`, `down`, `stop`, `restart`, `ps`, `logs` (`--copy`/`--all`/`-t`)    | —                               |
 | Modules   | `install`, `update` (`--i18n`), `uninstall`, `test`, `modules` (`--config`), `modinfo`, `view` | —             |
-| Database  | `db-backup` (`--with-filestore`), `db-restore`, `db-drop`, `db-neutralize`, `db-list` | —                 |
+| Database  | `db-admin`, `db-backup` (`--with-filestore`), `db-restore` (rename + live progress), `db-drop`, `db-neutralize`, `db-list`, `db-use` | — |
 | Shell     | `shell`, `bash`, `psql`                                                  | —                               |
 | i18n      | `i18n-export`, `i18n-update`, `i18n-pull` (from a remote)                | —                               |
 | Connect   | `connect` — open Chrome logged in as any user, no password              | —                               |
-| Deploy    | `link` — bind a local repo to a remote target; `deploy` — commit-driven remote update/install over SSH | — |
+| Deploy    | `link` — bind a local repo to a remote target; `deploy` — commit- and dirty-module-driven remote update/install over SSH | — |
 | Build     | `<cmd> --build` / `-b` — compose any command interactively, then run/copy | —                             |
 | Scripting | `echo <cmd>` one-shot, `echo run <file>` recipes, `report`              | —                               |
 | REPL UX   | ↑↓ history, fzf picker, level-colored logs, ✓/✗ result, Tab + flag autocomplete, live command/flag highlighting | Full ASCII banners |
@@ -140,6 +140,7 @@ Odoo log style (`docker.container: started name=…`).
 | `  --all`                | Update every installed module                        |
 | `  --last`               | Repeat the last update for this project + DB         |
 | `  --i18n`               | Overwrite the modules' translations from their shipped `.po` (all langs) |
+| `  --installed`          | Source the picker from every installed module (e.g. `base`), not just the repo |
 | `uninstall <mod>...`     | Uninstall modules                                    |
 | `  --level <lvl>`        | Odoo `--log-level` (`debug`…`critical`) — on install/update/uninstall |
 | `test <mod>...`          | Run the modules' Odoo test suite (filters `--test-tags`) |
@@ -167,6 +168,14 @@ overwrites the shipped translations along the way:
 
 <p align="center"><img src="demo/gifs/update.gif" alt="echo update sale --i18n" width="860"></p>
 
+By default that picker is scoped to the project's addons. `update --installed`
+sources it from **every module installed in the database** (`ir_module_module`)
+instead — so you can pick a core module like `base` (or any third-party addon)
+without typing its name. Explicit names still work too (`update base`); the flag
+only changes what the picker offers:
+
+<p align="center"><img src="demo/gifs/update-installed.gif" alt="echo update --installed — picker listing core modules like base" width="860"></p>
+
 `modinfo` compares the version Odoo recorded as installed against the manifest —
 `up to date` stays INFO, a pending upgrade is flagged WARN:
 
@@ -176,15 +185,32 @@ overwrites the shipped translations along the way:
 
 | Command                          | Description                                                       |
 |----------------------------------|-------------------------------------------------------------------|
+| `db-admin [name]`                | Reset the admin user (uid 2) login **and** password to `admin`/`admin`; red confirm only on `prod` (`--force` skips) |
 | `db-backup [name]`               | `pg_dump -Fc` into `./backups/<db>_<ts>.dump`                     |
 | `  --with-filestore`             | Package dump + container filestore into a `.zip` (Odoo-compatible) |
-| `db-restore [--as N] [--force] [--neutralize]` | Pick a backup (Echo `.dump` or native Odoo `.zip`), create the target DB, restore the filestore into the container |
+| `db-restore [--as N] [--force] [--neutralize]` | Pick a backup (Echo `.dump` or native Odoo `.zip`), name the target DB, create it, and restore the filestore — narrating each step live |
+| `  --as <name>`                  | Set the target name up front (skips the rename prompt)            |
 | `db-drop [name] [--force]`       | Drop a database; red confirm unless `--force` (terminates active connections) |
 | `db-neutralize [name] [--force]` | Run Odoo's native `neutralize`; red confirm only on the active DB or `prod` |
 | `db-list`                        | Table of DBs with size and creation date; `●` marks the active one |
+| `db-use [name]`                  | Switch the active database (picker when no name); persists to the project config so the prompt and every command follow it |
 
 On the first successful backup, Echo appends `backups/` to your `.gitignore`
 when one exists at the project root.
+
+`db-restore` is interactive end to end: pick a backup, then **rename the
+target** in a prompt pre-filled with the name derived from the file (handy
+when an odoo.sh dump carries a long name that would bloat every log line —
+just shorten it, or press Enter to keep it; `--as <name>` skips the prompt).
+The restore then **narrates each phase live** — creating the database,
+streaming `pg_restore`, copying the filestore — instead of sitting silent:
+
+<p align="center"><img src="demo/gifs/db-restore.gif" alt="echo db-restore — rename prompt and live restore progress" width="860"></p>
+
+`db-use` switches which database is active (the one `db-list` marks `●` and
+the implicit target of `update`/`shell`/`psql`/`db-admin`/…); `db-admin`
+resets the admin user to `admin`/`admin` to get back into the back office
+when you don't have the password.
 
 <p align="center"><img src="demo/gifs/db-list.gif" alt="echo db-list" width="860"></p>
 
@@ -258,11 +284,19 @@ asking the remote database, recreates the containers, and runs one combined
 assumes the code is **already pulled on the server**; `deploy` only handles
 the container and module state.
 
-<p align="center"><img src="demo/gifs/deploy.gif" alt="echo deploy — commit picker, install/update split, live log" width="860"></p>
+The picker also offers your **uncommitted (dirty) modules** — addons with
+working-tree changes — as selectable entries above the commits
+(`~ <module> · uncommitted (N files)`). Pick them to fold those modules into
+the same `-i`/`-u` run; the final module set is the union of commit-resolved
+and dirty modules. Since dirty code isn't committed (let alone pushed), a
+`WARNING` reminds you that `deploy` updates them on the server but doesn't put
+the code there — that's for the tool you use to sync the working tree.
+
+<p align="center"><img src="demo/gifs/deploy.gif" alt="echo deploy — commits + dirty modules picker, install/update split, live log" width="860"></p>
 
 | Command            | Description                                              |
 |--------------------|----------------------------------------------------------|
-| `deploy`           | Multi-select picker over recent commits, then remote `stop` → `up -d` → `odoo -i/-u` |
+| `deploy`           | Multi-select picker over recent commits **and** dirty modules, then remote `stop` → `up -d` → `odoo -i/-u` |
 | `  --from <target>`| Use a named connect target (default: this directory's `link`) |
 | `  --limit <N>`    | Commits offered in the picker (default `20`)             |
 | `  --dry-run`      | Resolve modules and show the plan; execute nothing       |
@@ -273,7 +307,8 @@ Commit → module resolution follows the project's commit scheme
 when the subject doesn't match, Echo inspects the commit's changed files and
 uses the module if exactly one addon was touched. Commits that resolve to no
 module are skipped with a warning and reported in the final summary — they
-never abort the run.
+never abort the run. A selected dirty module resolves straight to its name
+(`via=dirty`).
 
 #### Example: link a repo and deploy (dummy data)
 
@@ -305,25 +340,29 @@ echo deploy                       # the real thing (red confirm if the remote st
 ```
   ❯ echo deploy
   … INFO my-shop echo.deploy.remote: target resolved host=erp-prod path=/srv/odoo/my-shop
-  [multi picker: commits]
-    ❯ a1b2c3d  [FIX] sale_extra: correct tax rounding
-      e4f5a6b  [ADD] website_promo: launch banner
-      0c1d2e3  [IMP] docs: update install notes
+  [multi picker: dirty modules + commits]
+    ❯ ☑ ~ stock_extra  ·  uncommitted (3 files)
+      ☑ a1b2c3d  [FIX] sale_extra: correct tax rounding
+      ☑ e4f5a6b  [ADD] website_promo: launch banner
+      ☐ 0c1d2e3  [IMP] docs: update install notes
+  … INFO my-shop echo.deploy: items selected commits=2 dirty=1
+  … INFO my-shop echo.deploy: resolved module=stock_extra via=dirty
+  … WARNING my-shop echo.deploy: selected modules have uncommitted changes — deploy updates them on the server but does not push the code modules=stock_extra
   … INFO my-shop echo.deploy: resolved commit=a1b2c3d module=sale_extra via=subject
   … INFO my-shop echo.deploy: resolved commit=e4f5a6b module=website_promo via=diff
-  … WARNING my-shop echo.deploy: skipped commit=0c1d2e3 reason=no addon module touched
-  … INFO my-shop echo.deploy: plan update=sale_extra install=website_promo skipped=1
+  … INFO my-shop echo.deploy: plan update=sale_extra,stock_extra install=website_promo skipped=1
   … INFO my-shop echo.deploy.compose: stop
   … INFO my-shop echo.deploy.compose: up -d
   … INFO my-shop echo.deploy.odoo: running module install/update
   2026-06-12 … INFO my-shop odoo.modules.loading: Modules loaded.
-  … INFO my-shop echo.deploy: deploy complete update=1 install=1 skipped=1
+  … INFO my-shop echo.deploy: deploy complete update=2 install=1 skipped=1
   ✓ deploy completed
 ```
 
 `sale_extra` is already installed on the remote, so it lands in `-u`;
 `website_promo` isn't, so it gets `-i` — that split comes from the remote's
-`ir_module_module`, not from the commit tags.
+`ir_module_module`, not from the commit tags. `stock_extra` was picked from
+the working tree (`via=dirty`) and joins the update set.
 
 ### Output & reporting
 
