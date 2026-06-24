@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.17.0] — 2026-06-24
+
 ### Added
 - **`restart` y `logs` ahora pueden actuar sobre un host remoto** (Unit 72).
   Igual que `shell`/`deploy`, ambos aceptan `--from <target>` (un connect
