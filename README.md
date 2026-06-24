@@ -23,7 +23,7 @@ Echo is a work in progress; below is what currently ships in `main`.
 | Area      | Working                                                                 | Pending                         |
 |-----------|-------------------------------------------------------------------------|---------------------------------|
 | Project   | `init`, `reset`, `alias` (`-C <name>` registry), `help`, `clear`        | `version`, `stage`, `theme`, `logo` |
-| Docker    | `up`, `down`, `stop`, `restart`, `ps`, `logs` (`--copy`/`--all`/`-t`)    | —                               |
+| Docker    | `up`, `down`, `stop`, `restart`, `ps`, `logs` (`--copy`/`--all`/`-t`; `restart`/`logs` also `--from`/`--remote` over SSH) | — |
 | Modules   | `install`, `update` (`--i18n`), `uninstall`, `test`, `modules` (`--config`), `modinfo`, `view` | —             |
 | Database  | `db-admin`, `db-backup` (`--with-filestore`), `db-restore` (rename + live progress), `db-drop`, `db-neutralize`, `db-list`, `db-use` | — |
 | Shell     | `shell`, `bash`, `psql`                                                  | —                               |
@@ -120,15 +120,36 @@ points at a local directory.
 | `down [service]`   | `docker compose down` (red confirm on `prod` unless `--force`) |
 | `stop [service]`   | `docker compose stop`                                |
 | `restart [service]`| `docker compose restart`                             |
+| `  --from <target>`| Restart on a **remote** instance (named connect target) |
+| `  --remote`       | Restart on this directory's linked remote (see `link`) |
+| `  --force`        | Skip the remote `prod`-stage confirmation            |
 | `ps`               | Show compose container status                        |
 | `logs [service]`   | Follow Odoo logs (or `[service]`); `Ctrl+C` exits    |
 | `  -t N`           | Tail the last `N` lines (default `100`)              |
 | `  --no-follow`    | Disable follow mode, bounded output                  |
 | `  -c, --copy`     | Bounded output **and** copy to system clipboard      |
 | `  --all`          | All compose services instead of just Odoo            |
+| `  --from <target>`| Follow logs on a **remote** instance (named connect target) |
+| `  --remote`       | Follow logs on this directory's linked remote (see `link`) |
 
 Compose lifecycle lines (`Container … Started`) are reformatted into Echo's
 Odoo log style (`docker.container: started name=…`).
+
+`restart` and `logs` can act on a **remote** host the same way `deploy` and
+`shell` do: pass `--from <target>` to name a connect target, or `--remote` to
+use this directory's `link` binding (so you don't retype the name). Both ride
+the shared SSH transport. Remote `restart` with no service restarts the remote
+profile's Odoo container and asks for a red confirmation when the remote stage
+is `prod` (`--force` skips it); remote `logs` keeps follow-by-default, streaming
+over SSH, with `-t`/`--no-follow`/`--copy` honored. Without a remote flag both
+behave exactly as before (local).
+
+```sh
+echo link prod                 # bind once (see Deploy below)
+echo restart --remote          # restart the linked remote's Odoo container
+echo logs --remote -t 200      # tail 200 lines, then follow, over SSH
+echo restart --from staging    # ad-hoc: a different named target
+```
 
 ### Modules
 
