@@ -392,12 +392,17 @@ func helpSections() []helpSection {
 			{"  --force", "Skip the prod-stage confirmation prompt"},
 			{"stop [service]", "Stop containers without removing them"},
 			{"restart [service]", "Restart services"},
+			{"  --from <target>", "Restart on a remote instance (named connect target)"},
+			{"  --remote", "Restart on this directory's linked remote"},
+			{"  --force", "Skip the remote prod-stage confirmation prompt"},
 			{"ps", "Show container status"},
 			{"logs [service]", "Follow logs of Odoo (or [service]) — Ctrl+C to exit"},
 			{"  -t N", "Tail last N lines (default 100)"},
 			{"  --no-follow", "Disable follow; print bounded output"},
 			{"  -c, --copy", "Bounded output and copy to clipboard"},
 			{"  --all", "All compose services (instead of just Odoo)"},
+			{"  --from <target>", "Follow logs on a remote instance (named connect target)"},
+			{"  --remote", "Follow logs on this directory's linked remote"},
 			{"deploy", "Deploy picked commits + dirty modules to a remote (stop, up, -i/-u)"},
 			{"  --from <target>", "Use a named connect target (default: this dir's link)"},
 			{"  --limit <N>", "Commits offered in the picker (default 20)"},
@@ -657,6 +662,7 @@ func (sess *session) runDocker(ctx context.Context, name string, args []string) 
 		Root:    sess.projectDir,
 		Args:    args,
 		Palette: sess.palette,
+		Log:     sess.cmdOdooLogger(name),
 		StreamOut: stats.wrap(func(line string) {
 			sess.emitStreamLine(lc, line)
 		}),
@@ -675,7 +681,11 @@ func (sess *session) runDocker(ctx context.Context, name string, args []string) 
 		sess.prompt.health.Invalidate()
 	case "restart":
 		err = cmd.RunRestart(ctx, opts)
-		sess.prompt.health.Invalidate()
+		// A remote restart leaves the local stack untouched, so the local
+		// prompt health stays valid — only invalidate for a local restart.
+		if from, remote := remoteRunFlags(args); from == "" && !remote {
+			sess.prompt.health.Invalidate()
+		}
 	case "ps":
 		sess.runPSTable(ctx, opts)
 		return

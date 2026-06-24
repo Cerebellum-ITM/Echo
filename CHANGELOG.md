@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **`restart` y `logs` ahora pueden actuar sobre un host remoto** (Unit 72).
+  Igual que `shell`/`deploy`, ambos aceptan `--from <target>` (un connect
+  target nombrado) o `--remote` (el binding de `link` del directorio) y
+  corren el verbo de compose sobre SSH reutilizando el transporte ya
+  existente (`resolveRemoteTarget` + `remoteComposeCmd` + `runSSHStream`),
+  con la salida streameada y coloreada estilo Odoo como en local. `restart
+  --from prod` reinicia el contenedor Odoo del perfil remoto (pasar
+  servicios acota) y, cuando el stage remoto es `prod`, pide confirmación
+  roja (`--force` la salta) — más estricto que el `restart` local, que no
+  confirma. `logs --from prod` sigue los logs en vivo sobre SSH (follow por
+  defecto); `-t/--tail`, `--no-follow` y `--copy` (que copia al portapapeles
+  local) se respetan. Sin flag remoto, ambos comandos se comportan
+  exactamente como hoy (local). Ambos pasan a ser `projectlessOneShot` solo
+  cuando hay un flag remoto, así corren desde un repo de addons sin
+  `docker-compose.yml`. Spec `72-remote-restart-logs.md`.
+
 ## [0.16.0] — 2026-06-23
 
 ### Added

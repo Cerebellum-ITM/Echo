@@ -18,6 +18,11 @@ type DockerOpts struct {
 	Args      []string
 	Palette   theme.Palette
 	StreamOut func(string)
+	// Log emits one Odoo-style progress line (rendered by the REPL under
+	// `echo.<cmd>[.sub]`), used by the remote `restart`/`logs` branches to
+	// surface `target resolved` / `system` lines. nil-safe: the local path
+	// leaves it unset and stays silent.
+	Log func(level, sub, msg, db string, fields ...[2]string)
 }
 
 func RunUp(ctx context.Context, opts DockerOpts) error {
@@ -62,7 +67,15 @@ func maybeConfirmDockerProd(opts DockerOpts, action string) error {
 	return confirmProd(opts.Palette, action, opts.Cfg.DBName)
 }
 
+// RunRestart restarts compose services. With `--from <target>` / `--remote`
+// it restarts on a remote host over SSH (reusing the deploy/shell
+// transport); otherwise it restarts the local stack. A remote run with no
+// service argument targets the remote profile's Odoo container and gates
+// on the remote stage when it is `prod` (`--force` bypass).
 func RunRestart(ctx context.Context, opts DockerOpts) error {
+	if from, remote := remoteFlagsIn(opts.Args); from != "" || remote {
+		return runRemoteRestart(ctx, opts, from)
+	}
 	return docker.Restart(ctx, opts.Cfg.ComposeCmd, opts.Root, opts.Args, opts.StreamOut)
 }
 
@@ -91,32 +104,10 @@ func RunPS(ctx context.Context, opts DockerOpts) error {
 //	-c, --copy        bounded + copy output to clipboard
 //	--all             include every compose service (overrides default)
 func RunLogs(ctx context.Context, opts DockerOpts) error {
-	follow := true
-	copyMode := false
-	all := false
-	tail := "100" // default; -t/--tail overrides
-	services := make([]string, 0, len(opts.Args))
+	follow, copyMode, all, tail, services := parseLogsArgs(opts.Args)
 
-	for i := 0; i < len(opts.Args); i++ {
-		a := opts.Args[i]
-		switch a {
-		case "-f", "--follow":
-			follow = true
-		case "--no-follow":
-			follow = false
-		case "-c", "--copy":
-			copyMode = true
-			follow = false
-		case "--all":
-			all = true
-		case "-t", "--tail":
-			if i+1 < len(opts.Args) {
-				tail = opts.Args[i+1]
-				i++
-			}
-		default:
-			services = append(services, a)
-		}
+	if from, remote := remoteFlagsIn(opts.Args); from != "" || remote {
+		return runRemoteLogs(ctx, opts, from, follow, copyMode, all, tail, services)
 	}
 
 	if !all && len(services) == 0 && opts.Cfg.OdooContainer != "" {
@@ -130,6 +121,45 @@ func RunLogs(ctx context.Context, opts DockerOpts) error {
 		return docker.LogsFollow(ctx, opts.Cfg.ComposeCmd, opts.Root, tail, services, opts.StreamOut)
 	}
 	return docker.Logs(ctx, opts.Cfg.ComposeCmd, opts.Root, tail, services, opts.StreamOut)
+}
+
+// parseLogsArgs extracts the `logs` flags shared by the local and remote
+// paths. follow defaults to true; `--no-follow` and `-c/--copy` clear it
+// (copy forces bounded output). The remote-mode switches (`--from <v>` /
+// `--from=v` / `--remote`) are consumed so they never land in services.
+func parseLogsArgs(args []string) (follow, copyMode, all bool, tail string, services []string) {
+	follow = true
+	tail = "100" // default; -t/--tail overrides
+	services = make([]string, 0, len(args))
+
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		switch {
+		case a == "-f" || a == "--follow":
+			follow = true
+		case a == "--no-follow":
+			follow = false
+		case a == "-c" || a == "--copy":
+			copyMode = true
+			follow = false
+		case a == "--all":
+			all = true
+		case a == "-t" || a == "--tail":
+			if i+1 < len(args) {
+				tail = args[i+1]
+				i++
+			}
+		case a == "--remote":
+			// remote-mode switch, not a service
+		case a == "--from":
+			i++ // skip the target name
+		case strings.HasPrefix(a, "--from="):
+			// remote-mode switch, not a service
+		default:
+			services = append(services, a)
+		}
+	}
+	return follow, copyMode, all, tail, services
 }
 
 // runLogsAndCopy captures bounded log output, prints each line via the

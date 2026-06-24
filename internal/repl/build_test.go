@@ -41,7 +41,7 @@ func TestBuildFlagsDropsAliases(t *testing.T) {
 		}
 	}
 	// Order is preserved and --copy survives.
-	if !reflect.DeepEqual(got, []string{"-t", "--no-follow", "--copy", "--all"}) {
+	if !reflect.DeepEqual(got, []string{"-t", "--no-follow", "--copy", "--all", "--from", "--remote"}) {
 		t.Errorf("buildFlags(logs) = %#v", got)
 	}
 	// A command without aliases is returned verbatim.
