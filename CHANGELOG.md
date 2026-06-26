@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.18.0] — 2026-06-26
+
 ### Changed
 - **La lista de comandos de `sequence` se podó** (Unit 73). Se quitaron de la
   selección los inspectores de sesión que no hacen trabajo en un batch
