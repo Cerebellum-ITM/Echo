@@ -181,13 +181,13 @@ func isDir(path string) bool {
 // compose project (using cwd as the working directory). These commands
 // reach a remote instance and only read/write local files — they never
 // drive a local docker stack, so a missing docker-compose.yml is fine.
-// `shell`/`shell-run` qualify only in their remote mode (`--from` /
-// `--remote`); locally they need the compose project as always.
+// `shell`/`shell-run`/`sequence` qualify only in their remote mode
+// (`--from` / `--remote`); locally they need the compose project as always.
 func projectlessOneShot(name string, args []string) bool {
 	switch name {
 	case "i18n-pull", "link", "deploy":
 		return true
-	case "shell", "shell-run", "restart", "logs":
+	case "shell", "shell-run", "restart", "logs", "sequence":
 		return hasRemoteFlag(args)
 	}
 	return false

@@ -23,9 +23,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   remoto: `sequence --remote` / `sequence --from <target>` corre toda la
   secuencia contra un target (la lista se filtra a comandos remote-capables
   —`restart`, `logs`, `i18n-pull`, `deploy`— y el flag se hornea en cada
-  paso). `sequence --last` repite la última secuencia ejecutada del proyecto
-  (headless, sin picker). `Save as recipe` deja un `.echo` que `echo run`
-  vuelve a correr. Spec `73-sequence-builder.md`.
+  paso). En modo remoto `sequence` es **projectless** (como
+  `deploy`/`restart`/`logs`): corre desde un directorio sin
+  `docker-compose.yml`; y si un paso marcado para el builder no puede listar
+  sus candidatos locales en ese contexto, se degrada a correr el comando
+  tal cual en vez de abortar la secuencia. `sequence --last` repite la
+  última secuencia ejecutada del proyecto (headless, sin picker). `Save as
+  recipe` deja un `.echo` que `echo run` vuelve a correr. Spec
+  `73-sequence-builder.md`.
 
 ## [0.17.0] — 2026-06-24
 
