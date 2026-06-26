@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Nuevo comando `sequence`: arma y corre varios comandos en orden** (Unit
+  73). Un builder de recetas interactivo: un picker tri-estado lista los
+  comandos y un solo `Tab` cicla cada uno `off → run → build`, donde el
+  número `⟦n⟧` es el orden de ejecución (= orden de selección) y el glyph
+  `` (Nerd Font `cod-tools`, misma familia que el `` de `modules`) marca
+  los que pasan por el builder de flags (reusa `--build` en modo
+  return-only). Tras una pantalla de revisión (Run / Save `.echo` / Copy /
+  Cancel), los pasos corren con el motor de recetas y el estilo de logs
+  Odoo de Echo (`echo.sequence` / `echo.sequence.step`), fail-fast por
+  defecto (`--continue-on-error` lo desactiva). Un paso `logs` en follow se
+  fuerza al final y la línea de cierre `sequence complete` se emite **antes**
+  de entrar al follow, para que el `^c` no parezca un fallo. Funciona local y
+  remoto: `sequence --remote` / `sequence --from <target>` corre toda la
+  secuencia contra un target (la lista se filtra a comandos remote-capables
+  —`restart`, `logs`, `i18n-pull`, `deploy`— y el flag se hornea en cada
+  paso). `sequence --last` repite la última secuencia ejecutada del proyecto
+  (headless, sin picker). `Save as recipe` deja un `.echo` que `echo run`
+  vuelve a correr. Spec `73-sequence-builder.md`.
+
 ## [0.17.0] — 2026-06-24
 
 ### Added

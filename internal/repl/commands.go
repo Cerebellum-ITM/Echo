@@ -12,7 +12,7 @@ var Registry = []string{
 	"db-admin", "db-backup", "db-restore", "db-drop", "db-neutralize", "db-list", "db-use",
 	"bash", "psql", "shell", "shell-run", "connect",
 	"up", "down", "stop", "restart", "ps", "logs", "deploy",
-	"copy-last", "report",
+	"copy-last", "report", "sequence",
 	"clear", "help", "exit", "quit",
 }
 
@@ -48,6 +48,7 @@ var commandFlags = map[string][]string{
 	"deploy":        {"--from", "--limit", "--dry-run", "--force", "--i18n", "--no-i18n"},
 	"copy-last":     {"--errors"},
 	"report":        {"--step", "--level", "--min-level", "--copy"},
+	"sequence":      {"--remote", "--from", "--last", "--continue-on-error"},
 }
 
 func init() {
