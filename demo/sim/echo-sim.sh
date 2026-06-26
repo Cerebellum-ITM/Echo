@@ -58,6 +58,10 @@ _logcolor() {
     echo.db-restore)                    printf '155;246;255';;  # cyan
     echo.db-restore.restore)            printf '240;166;202';;  # rose
     echo.modinfo)                       printf '202;255;191';;  # mint
+    echo.sequence)                      printf '189;178;255';;  # lavender
+    echo.sequence.step)                 printf '155;246;255';;  # cyan
+    echo.sequence.build)                printf '202;255;191';;  # mint
+    werkzeug)                           printf '160;196;255';;  # sky
     *)                                  printf '202;255;191';;
   esac
 }
@@ -316,4 +320,72 @@ modinfo() {
       _log INFO "$EPID" echo.modinfo "module inspected" \
         "module=sale" "db=18.0.1.3" "state=installed" "manifest=18.0.1.3" "status=up to date";;
   esac
+}
+
+# sequence: build several commands in order and run them (Unit 73). Shows the
+# tri-state picker in its final selected state (⟦n⟧ = run order, tools glyph =
+# builder mode), then the log-framed review (layout A), then execution through
+# the recipe engine — closing the summary BEFORE the terminal `logs` follow.
+sequence() {
+  # 1) tri-state picker (final state). Build rows carry the cod-tools glyph.
+  printf '\n  %s\n' "$(_cb "$WARNING" 'sequence — pick commands · order = pick order')"
+  _seqpick "$(_c "$ACCENT" '❯')" "$(_c "$SUCCESS" '⟦1⟧')" "$(_c "$ACCENT" "$G_TOOLS")" update   'build flags'
+  _seqpick '  '                   "$(_c "$SUCCESS" '⟦2⟧')" "$(_c "$ACCENT" "$G_TOOLS")" test     'build flags'
+  _seqpick '  '                   "$(_c "$SUCCESS" '⟦3⟧')" ' '                          restart  'run as-is'
+  _seqpick '  '                   "$(_c "$SUCCESS" '⟦4⟧')" ' '                          logs     'follow · forced last'
+  _seqpick '  '                   "$(_c "$FAINT" '⟦ ⟧')"   ' '                          db-backup ''
+  printf '\n'; sleep 1.0
+
+  # 2) builders for the marked steps (return-only) — one line each.
+  _log INFO "$EPID" echo.sequence.build "building step" "step=1/2" "command=update"; sleep 0.25
+  _log INFO "$EPID" echo.sequence.build "building step" "step=2/2" "command=test";   sleep 0.30
+  printf '\n'
+
+  # 3) log-framed review (layout A). Bar = stage color (dev → green).
+  local bar; bar="$(_c "$SUCCESS" '│ ')"
+  printf '%s%s%s%s%s%s%s\n' "$bar" "$(_c "$DIM" 'sequence · ')" "$(_c "$FG" '4 steps')" \
+    "$(_c "$DIM" ' · ')" "$(_c "$SUCCESS" 'dev/18.0')" "$(_c "$DIM" ' · ')" "$(_c "$SUCCESS" 'local')"
+  printf '%s\n' "$(_c "$SUCCESS" '│')"
+  _seqstep "$bar" 1 update  "$(_c "$INFO" '--all') $(_c "$INFO" '--level')$(_c "$DIM" '=warn')" ''
+  _seqstep "$bar" 2 test    "$(_c "$INFO" 'sale') $(_c "$INFO" '--tags')$(_c "$DIM" '=/sale')" ''
+  _seqstep "$bar" 3 restart "" ''
+  _seqstep "$bar" 4 logs    "" "$(_c "$WARNING" 'follow · ends the run')"
+  printf '\n'; sleep 0.6
+
+  # 4) action select — "Run it now" highlighted, then chosen.
+  printf '  %s\n'   "$(_cb "$FG" 'Apply this sequence?')"
+  printf '  %s %s\n' "$(_c "$ACCENT" '❯')" "$(_cb "$FG" 'Run it now')"
+  printf '    %s\n'  "$(_c "$DIM" 'Save as recipe (.echo)')"
+  printf '    %s\n'  "$(_c "$DIM" 'Copy to clipboard')"
+  printf '    %s\n'  "$(_c "$DIM" 'Cancel')"
+  printf '\n'; sleep 0.9
+
+  # 5) execution through the recipe engine.
+  _log INFO "$EPID" echo.sequence      "running" "steps=4" "mode=local"; sleep 0.25
+  _log INFO "$EPID" echo.sequence.step "step 1/4 → update --all --level=warn"; sleep 0.20
+  _log INFO "$OPID" odoo.modules.loading "Modules loaded.";                    sleep 0.25
+  _log INFO "$EPID" echo.sequence.step "" "step=1/4" "status=ok" "warnings=2" "took=18.6s"; sleep 0.20
+  _log INFO "$EPID" echo.sequence.step "step 2/4 → test sale --tags=/sale";    sleep 0.20
+  _log INFO "$OPID" odoo.modules.loading "0 failed, 0 error(s) of 42 tests";   sleep 0.25
+  _log INFO "$EPID" echo.sequence.step "" "step=2/4" "status=ok" "took=1m15s"; sleep 0.20
+  _log INFO "$EPID" echo.sequence.step "step 3/4 → restart";                   sleep 0.22
+  _log INFO "$EPID" echo.sequence.step "" "step=3/4" "status=ok" "took=3.1s";  sleep 0.20
+  _log INFO "$EPID" echo.sequence "sequence complete" "steps=4" "ok=3" "errors=0" "warnings=2" "took=1m37s"; sleep 0.30
+  _log WARNING "$EPID" echo.sequence.step "step 4/4 → logs (follow, ^c to stop)"; sleep 0.30
+  _log INFO "$OPID" werkzeug "127.0.0.1 - - GET /web HTTP/1.1 200 -"
+}
+
+# _seqpick CURSOR BADGE GLYPH NAME HINT — one tri-state picker row, name padded.
+_seqpick() {
+  printf '  %s %s %s %s' "$1" "$2" "$3" "$(_c "$FG" "$(printf '%-10s' "$4")")"
+  [ -n "$5" ] && printf '  %s' "$(_c "$DIM" "$5")"
+  printf '\n'
+}
+
+# _seqstep BAR N CMD ARGS NOTE — one review step (command accent, args styled).
+_seqstep() {
+  printf '%s%s%s' "$1" "$(_c "$DIM" "$2  ")" "$(_cb "$ACCENT" "$3")"
+  [ -n "$4" ] && printf ' %s' "$4"
+  [ -n "$5" ] && printf '   %s' "$5"
+  printf '\n'
 }
