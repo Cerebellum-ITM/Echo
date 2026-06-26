@@ -62,6 +62,12 @@ func runI18nPullBuild(ctx context.Context, opts BuildOpts) (BuildResult, error) 
 // `--from`); it falls back to the project's own `[connect]` config (no name
 // to bake). Returns ErrNoPullRemote when neither is configured.
 func resolvePullBuildTarget(opts BuildOpts) (fromName, sshHost, remotePath string, err error) {
+	// A sequence (or any caller) can pre-select the target via opts.From,
+	// skipping the picker so every step targets the same remote.
+	if opts.From != "" {
+		sshHost, remotePath, err = resolvePullRemote(opts.Cfg, opts.From)
+		return opts.From, sshHost, remotePath, err
+	}
 	name, perr := pickPullTarget(i18nPullBuildOpts(opts))
 	switch {
 	case perr == nil:

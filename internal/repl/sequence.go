@@ -33,7 +33,7 @@ var sequenceCommands = []string{
 // remoteSequenceCommands is the subset valid when the sequence targets a
 // remote — only commands that accept --from/--remote, minus the interactive
 // shells. Cross-checked against commandFlags in the test.
-var remoteSequenceCommands = []string{"restart", "logs", "i18n-pull", "deploy"}
+var remoteSequenceCommands = []string{"up", "stop", "restart", "logs", "i18n-pull", "deploy"}
 
 // runSequence builds a sequence of commands interactively (tri-state picker
 // → per-command builder → review) and runs them through the recipe step
@@ -115,7 +115,13 @@ func (sess *session) runSequence(ctx context.Context, args []string) {
 // sequence; its builder turns that into baked `--commits`/`--modules` flags
 // so the choice is shown in the review and replayable by `--last`.
 func mustBuildInSequence(command string) bool {
-	return command == "deploy"
+	switch command {
+	case "deploy", "i18n-pull":
+		// deploy: commit/dirty picker. i18n-pull: remote target + module
+		// picker. Both must be resolved up front so nothing blocks mid-run.
+		return true
+	}
+	return false
 }
 
 // buildSequenceSteps turns the picker's selections into composed recipe
@@ -151,6 +157,7 @@ func (sess *session) buildSequenceSteps(ctx context.Context, picks []cmd.SeqPick
 				Flags:      buildFlags(pk.Command),
 				Palette:    sess.palette,
 				SkipDecide: true,
+				From:       from,
 				Warnf: func(msg string) {
 					emitOdooLog("WARNING", "echo.sequence.build", msg, nil, sess.styles, sess.palette, sess.cfg.DBName)
 				},

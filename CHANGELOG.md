@@ -8,17 +8,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
-- **`sequence` integra `deploy` correctamente** (Unit 73). Antes `deploy`
-  dentro de una secuencia abría su picker interactivo a mitad de la
-  ejecución (rompiendo el "revisar antes de aplicar" y el replay con
-  `--last`). Ahora la selección de `deploy` se captura **en la fase de
-  build** vía su builder, se muestra en la pantalla de revisión y se guarda
-  para `--last`; la ejecución es no-interactiva. `bakeRemote` además es
-  consciente del comando: `deploy`/`i18n-pull` no aceptan `--remote` (usan
-  `--from` o el `[connect]` del directorio), así que en modo `--remote` no
-  se les añade un flag inválido.
+- **`sequence` integra `deploy` e `i18n-pull` correctamente** (Unit 73).
+  Antes ambos abrían su picker interactivo a mitad de la ejecución
+  (rompiendo el "revisar antes de aplicar" y el replay con `--last`). Ahora
+  son **must-build**: su selección (commits/dirty para `deploy`; target +
+  módulo para `i18n-pull`) se captura **en la fase de build**, se muestra en
+  la revisión y se guarda para `--last`; la ejecución es no-interactiva. El
+  builder de `i18n-pull` además reusa el target de la secuencia (`--from`),
+  sin volver a preguntar. `bakeRemote` es consciente del comando:
+  `deploy`/`i18n-pull` no aceptan `--remote` (usan `--from` o el `[connect]`
+  del directorio), así que en modo `--remote` no se les añade un flag
+  inválido.
 
 ### Added
+- **`up` y `stop` pueden actuar sobre un host remoto** (Unit 73). Igual que
+  `restart`/`logs`, aceptan `--from <target>` (un connect target nombrado) o
+  `--remote` (el binding de `link` del directorio) y corren el verbo de
+  compose sobre SSH (`up -d` / `stop`) reutilizando el transporte existente,
+  con la salida streameada estilo Odoo. `stop --remote` pide confirmación
+  roja cuando el stage remoto es `prod` (`--force` la salta); `up` no
+  confirma (arrancar no es destructivo). Ambos son **projectless** en modo
+  remoto (corren desde un repo sin `docker-compose.yml`) y entran a la lista
+  de comandos remote-capables de `sequence`, así una secuencia remota puede
+  reiniciar un stack (`stop` → `up` → …).
 - **`deploy` acepta selección no-interactiva `--commits`/`--modules`** (Unit
   73). `deploy --commits=<sha,sha> --modules=<addon,addon>` salta el picker
   de commits/dirty y despliega justo esos objetivos; los SHAs se resuelven

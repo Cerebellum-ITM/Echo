@@ -32,6 +32,16 @@
 >   **command-aware**: `--from=<name>` a cualquiera, pero `--remote` solo a
 >   los que lo declaran (`commandAcceptsFlag`); `deploy`/`i18n-pull` no
 >   aceptan `--remote` y sin `--from` caen al `[connect]` del directorio.
+> - **`i18n-pull` must-build + `up`/`stop` remotos** (fix post-merge):
+>   `i18n-pull` también es interactivo al ejecutar (target + módulo), así que
+>   se sumó a `mustBuildInSequence`; su builder reusa el target de la
+>   secuencia vía el nuevo `BuildOpts.From` (`resolvePullBuildTarget` lo
+>   respeta y salta el picker). Y se añadió modo remoto a `up`/`stop`
+>   (`RunUp`/`RunStop` → `runRemoteUp`/`runRemoteStop` en `docker_remote.go`,
+>   mismo patrón que `restart`; `stop` gatea prod, `up` no), con sus
+>   `commandFlags` (`--from`/`--remote`[/`--force`]), entrada en
+>   `remoteSequenceCommands` y en `projectlessOneShot`. Una secuencia remota
+>   puede así reiniciar un stack (`stop` → `up` → …).
 > - **Projectless en modo remoto** (fix post-merge): `sequence` se añadió a
 >   `projectlessOneShot` en `main.go` (grupo `--from`/`--remote`, como
 >   `restart`/`logs`/`shell`), así `ec sequence --remote` corre desde un
