@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/charmbracelet/huh"
+	"github.com/charmbracelet/lipgloss"
 
 	"github.com/pascualchavez/echo/internal/clipboard"
 	"github.com/pascualchavez/echo/internal/cmd"
@@ -82,7 +83,7 @@ func (sess *session) runSequence(ctx context.Context, args []string) {
 		return
 	}
 
-	action, err := sess.sequenceReview(steps)
+	action, err := sess.sequenceReview(steps, from, remote)
 	if err != nil {
 		sess.finalize("sequence", 0, 0, err)
 		return
@@ -354,17 +355,15 @@ const (
 	seqActionCancel
 )
 
-// sequenceReview shows the assembled steps and asks what to do with them.
-func (sess *session) sequenceReview(steps []string) (seqAction, error) {
-	var b strings.Builder
-	b.WriteString("Run this sequence?\n")
-	for i, s := range steps {
-		b.WriteString(fmt.Sprintf("  %d. %s\n", i+1, s))
-	}
+// sequenceReview prints the log-framed review block (context line + numbered,
+// flag-highlighted steps, in execution order) and asks what to do with them.
+func (sess *session) sequenceReview(steps []string, from string, remote bool) (seqAction, error) {
+	sess.renderSequenceReview(steps, from, remote)
+
 	var choice string
 	form := huh.NewForm(huh.NewGroup(
 		huh.NewSelect[string]().
-			Title(b.String()).
+			Title("Apply this sequence?").
 			Options(
 				huh.NewOption("Run it now", "run"),
 				huh.NewOption("Save as recipe (.echo)", "save"),
@@ -386,6 +385,105 @@ func (sess *session) sequenceReview(steps []string) (seqAction, error) {
 	default:
 		return seqActionCancel, nil
 	}
+}
+
+// renderSequenceReview prints the "log-framed" review block: a left bar
+// colored by environment (stage for local, amber for remote — the remote
+// stage isn't known without an SSH round-trip), a context line (step count ·
+// stage/version · local-or-target), then the numbered steps in execution
+// order with command + flags highlighted like the REPL. A trailing follow
+// `logs` step is annotated as the one that ends the run.
+func (sess *session) renderSequenceReview(steps []string, from string, remote bool) {
+	p := sess.palette
+	remoteMode := remote || from != ""
+
+	barColor := p.PromptColor(sess.stage)
+	if remoteMode {
+		barColor = p.Warning // remote: caution; the remote stage is unknown here
+	}
+	bar := lipgloss.NewStyle().Foreground(barColor).Render("│ ")
+	dim := lipgloss.NewStyle().Foreground(p.Dim)
+	envStyle := lipgloss.NewStyle().Foreground(barColor)
+
+	display, _ := reorderLogsLast(steps) // show the actual execution order
+
+	ctx := bar + dim.Render("sequence · ") +
+		lipgloss.NewStyle().Foreground(p.Fg).Render(fmt.Sprintf("%d step%s", len(display), plural(len(display))))
+	if remoteMode {
+		dest := "→ " + from
+		if from == "" {
+			dest = "→ remote (link)"
+		}
+		ctx += dim.Render(" · ") + lipgloss.NewStyle().Foreground(barColor).Bold(true).Render(dest)
+	} else {
+		if env := sess.cfg.Stage; env != "" {
+			label := env
+			if ver := sess.cfg.OdooVersion; ver != "" {
+				label = env + "/" + ver + ".0"
+			}
+			ctx += dim.Render(" · ") + envStyle.Render(label)
+		}
+		ctx += dim.Render(" · ") + envStyle.Render("local")
+	}
+
+	fmt.Println(ctx)
+	fmt.Println(strings.TrimRight(bar, " "))
+	for i, step := range display {
+		line := bar + dim.Render(fmt.Sprintf("%d  ", i+1)) + sess.styleSequenceStep(step)
+		if isFollowLogs(step) {
+			line += "   " + lipgloss.NewStyle().Foreground(p.Warning).Render("follow · ends the run")
+		}
+		fmt.Println(line)
+	}
+	fmt.Println()
+}
+
+// styleSequenceStep highlights one step line the way the REPL does: the
+// command in accent, flag names in info (faint when not a known flag of the
+// command), any `=value` dimmed, and positionals in info.
+func (sess *session) styleSequenceStep(line string) string {
+	p := sess.palette
+	fields := strings.Fields(line)
+	if len(fields) == 0 {
+		return line
+	}
+	cmdName := fields[0]
+	cmdStyle := lipgloss.NewStyle().Foreground(p.Accent).Bold(true)
+	flagStyle := lipgloss.NewStyle().Foreground(p.Info)
+	faint := lipgloss.NewStyle().Faint(true)
+	dim := lipgloss.NewStyle().Foreground(p.Dim)
+	posStyle := lipgloss.NewStyle().Foreground(p.Info)
+
+	var b strings.Builder
+	b.WriteString(cmdStyle.Render(cmdName))
+	for _, tok := range fields[1:] {
+		b.WriteString(" ")
+		if strings.HasPrefix(tok, "-") {
+			name, val := tok, ""
+			if i := strings.IndexByte(tok, '='); i >= 0 {
+				name, val = tok[:i], tok[i:]
+			}
+			ns := flagStyle
+			if classifyFlag(cmdName, name) == flagUnknown {
+				ns = faint
+			}
+			b.WriteString(ns.Render(name))
+			if val != "" {
+				b.WriteString(dim.Render(val))
+			}
+		} else {
+			b.WriteString(posStyle.Render(tok))
+		}
+	}
+	return b.String()
+}
+
+// plural returns "s" for any count other than 1.
+func plural(n int) string {
+	if n == 1 {
+		return ""
+	}
+	return "s"
 }
 
 // saveSequenceRecipe writes the steps to a <name>.echo file in the project

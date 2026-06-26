@@ -46,8 +46,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   número `⟦n⟧` es el orden de ejecución (= orden de selección) y el glyph
   `` (Nerd Font `cod-tools`, misma familia que el `` de `modules`) marca
   los que pasan por el builder de flags (reusa `--build` en modo
-  return-only). Tras una pantalla de revisión (Run / Save `.echo` / Copy /
-  Cancel), los pasos corren con el motor de recetas y el estilo de logs
+  return-only). Tras una pantalla de revisión **log-framed** (barra `│`
+  coloreada por entorno + línea de contexto `N steps · stage/versión ·
+  local`/`→ target`, y los pasos numerados en orden de ejecución con el
+  comando en accent, los flags resaltados y los valores atenuados como en el
+  REPL) con acciones Run / Save `.echo` / Copy / Cancel, los pasos corren
+  con el motor de recetas y el estilo de logs
   Odoo de Echo (`echo.sequence` / `echo.sequence.step`), fail-fast por
   defecto (`--continue-on-error` lo desactiva). Un paso `logs` en follow se
   fuerza al final y la línea de cierre `sequence complete` se emite **antes**
