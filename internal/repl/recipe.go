@@ -93,40 +93,7 @@ func RunRecipe(s theme.Styles, p theme.Palette, project, id string, stage theme.
 	stepNum := 0
 
 	runStep := func(name string, sargs []string, suppress int) stepOutcome {
-		stepNum++
-		start := time.Now()
-		suppressLevel = suppress
-		sess.dispatchParsed(ctx, name, sargs)
-		suppressLevel = -1
-		out := stepOutcome{
-			code:     sess.exitCode,
-			errors:   sess.lastErrors,
-			warnings: sess.lastWarnings,
-			duration: time.Since(start),
-		}
-		lines := sess.lastOutput.Filtered(nil)
-		rls := make([]config.ReportLine, 0, len(lines))
-		for _, l := range lines {
-			// Prefer the exact level token from the text (keeps ERROR vs
-			// CRITICAL distinct); fall back to the line's classified Kind so
-			// Echo's own leveled lines and inherited traceback frames still
-			// carry a level.
-			lvl := lineLevel(l.Text)
-			if lvl == "" {
-				lvl = levelFromKind(l.Kind)
-			}
-			rls = append(rls, config.ReportLine{Level: lvl, Text: l.Text})
-		}
-		// Isolate steps: meta commands (help/clear) don't reset the buffer,
-		// so clear it here to keep each step's capture to its own lines.
-		sess.lastOutput.Reset()
-		report.Steps = append(report.Steps, config.StepReport{
-			Index:  stepNum,
-			Cmd:    strings.TrimSpace(name + " " + strings.Join(sargs, " ")),
-			Status: stepStatus(out.code),
-			Lines:  rls,
-		})
-		return out
+		return sess.runStepCaptured(ctx, name, sargs, suppress, &report, &stepNum)
 	}
 	code := runRecipeSteps(steps, continueOnError, runStep, sess.runLog)
 	_ = config.SaveRunReport(report) // best-effort; never fails the run
@@ -234,6 +201,48 @@ func (sess *session) runStatusLog(cfg *config.Config) {
 	emitOdooLog("INFO", "echo.system.status", "system",
 		[]logField{{"cli", cli}, {"odoo", odoo}, {"env", env}, {"project", project}, {"db", db}},
 		sess.styles, sess.palette, sess.cfg.DBName)
+}
+
+// runStepCaptured dispatches one step under the given output suppression,
+// captures its outcome (exit code, error/warning counts, duration) and its
+// output lines into the run report, then isolates the buffer for the next
+// step. Shared by the recipe runner (`echo run`) and the sequence runner so
+// both record steps identically. stepNum is advanced in place.
+func (sess *session) runStepCaptured(ctx context.Context, name string, sargs []string, suppress int, report *config.RunReport, stepNum *int) stepOutcome {
+	*stepNum++
+	start := time.Now()
+	suppressLevel = suppress
+	sess.dispatchParsed(ctx, name, sargs)
+	suppressLevel = -1
+	out := stepOutcome{
+		code:     sess.exitCode,
+		errors:   sess.lastErrors,
+		warnings: sess.lastWarnings,
+		duration: time.Since(start),
+	}
+	lines := sess.lastOutput.Filtered(nil)
+	rls := make([]config.ReportLine, 0, len(lines))
+	for _, l := range lines {
+		// Prefer the exact level token from the text (keeps ERROR vs
+		// CRITICAL distinct); fall back to the line's classified Kind so
+		// Echo's own leveled lines and inherited traceback frames still
+		// carry a level.
+		lvl := lineLevel(l.Text)
+		if lvl == "" {
+			lvl = levelFromKind(l.Kind)
+		}
+		rls = append(rls, config.ReportLine{Level: lvl, Text: l.Text})
+	}
+	// Isolate steps: meta commands (help/clear) don't reset the buffer,
+	// so clear it here to keep each step's capture to its own lines.
+	sess.lastOutput.Reset()
+	report.Steps = append(report.Steps, config.StepReport{
+		Index:  *stepNum,
+		Cmd:    strings.TrimSpace(name + " " + strings.Join(sargs, " ")),
+		Status: stepStatus(out.code),
+		Lines:  rls,
+	})
+	return out
 }
 
 // stepOutcome is one recipe step's result, captured by the runStep

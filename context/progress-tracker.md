@@ -23,6 +23,38 @@ _(siguiente: Unit 14 — meta-commands. Fix i18n19 Odoo 19 (rama `fix/i18n19-con
 
 ## Completed
 
+- [x] Unit 73 — sequence-builder. Nuevo comando `sequence`: builder de
+  recetas interactivo. Picker tri-estado nuevo
+  (`internal/cmd/sequence_picker.go`, `RunSequencePicker`/`SeqItem`/`SeqPick`)
+  que reusa el chrome del `fuzzyPicker` sin tocarlo: un `Tab` cicla cada
+  ítem `off → run → build`, badge `⟦n⟧` = orden de selección = orden de
+  ejecución, glyph builder `` (Nerd Font `cod-tools` U+EB6D, familia
+  Codicons como el `` de modules) en acento. Los marcados build pasan por
+  `cmd.RunBuild` en modo return-only nuevo (`BuildOpts.SkipDecide`), el
+  resto corren as-is. Revisión con `huh.Select`: Run / Save `.echo` / Copy /
+  Cancel. Ejecución vía un loop propio en `internal/repl/sequence.go`
+  (`executeSequence`) que reusa `sess.runStepCaptured` (extraído de
+  `recipe.go`, compartido con `echo run`), `stepStatus`/`recapLevel`/
+  `stepFields`/`fmtDur`/`stripSilent`; logger `echo.sequence` /
+  `echo.sequence.step`, fail-fast por defecto (`--continue-on-error` lo
+  desactiva), guarda `RunReport` (para `report`). Un paso `logs` follow se
+  fuerza al final (`reorderLogsLast`/`isFollowLogs`) y el summary `sequence
+  complete` se emite ANTES de entrar al follow (el `^c` no marca fallo).
+  Local y remoto: `--remote`/`--from <target>` (parseo `remoteRunFlags`)
+  filtran la lista a remote-capables (`restart`/`logs`/`i18n-pull`/`deploy`)
+  y hornean el flag remoto en cada paso (`bakeRemote`); cada comando usa su
+  propio code-path remoto (cero SSH propio del sequence). `sequence --last`
+  repite la última secuencia EJECUTADA del proyecto, persistida en
+  `~/.config/echo/last-sequences/<key>.toml`
+  (`config.LastSequence`/`Load`/`Save`); headless, sin TTY (como `run
+  --last`); solo la acción Run persiste. Wiring: `Registry` +
+  `dispatchNames` + `commandFlags["sequence"]={--remote,--from,--last,
+  --continue-on-error}` + case en `dispatchParsed` + entradas de help.
+  Tests: `sequence_picker_test.go` (cycle/renumber/picks),
+  `sequence_test.go` (`isFollowLogs`/`reorderLogsLast`/`bakeRemote`/guard
+  allowlist↔commandFlags/`helpDescByName`). build/vet/test/gofmt verdes;
+  cross-checks Registry/help/dispatch verdes; verificación EN VIVO (TTY +
+  contenedor/remoto) pendiente del usuario. Spec `73-sequence-builder.md`.
 - [x] Unit 71 — log-db-name-truncate. El nombre de la DB en las líneas de
   log se trunca (solo display) cuando supera `log_db_max` (config global,
   default 20) con elipsis en medio, para no causar wrap del resto de la

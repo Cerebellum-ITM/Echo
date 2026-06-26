@@ -202,7 +202,7 @@ func (sess *session) renderPrompt() string {
 // registry_test.go; `exit` and `quit` are handled in Start (above) and
 // are therefore not part of this slice.
 var dispatchNames = []string{
-	"help", "clear", "copy-last", "report",
+	"help", "clear", "copy-last", "report", "sequence",
 	"init", "reset", "alias", "link",
 	"up", "down", "stop", "restart", "ps", "logs", "deploy",
 	"install", "update", "uninstall", "test", "modules", "modinfo", "modstate", "view",
@@ -259,6 +259,8 @@ func (sess *session) dispatchParsed(ctx context.Context, cmd string, args []stri
 		sess.runCopyLast(args)
 	case "report":
 		sess.runReport(args)
+	case "sequence":
+		sess.runSequence(ctx, args)
 	case "init":
 		sess.runInit()
 	case "reset":
@@ -419,6 +421,11 @@ func helpSections() []helpSection {
 			{"  --level=<lvl>", "Only lines of that level (debug…critical)"},
 			{"  --min-level=<lvl>", "That level and more severe"},
 			{"  --copy", "Copy the matched lines (default: print)"},
+			{"sequence", "Pick several commands in order and run them (tri-state Tab)"},
+			{"  --remote", "Run the whole sequence on this directory's linked remote"},
+			{"  --from <target>", "Run the whole sequence on a named connect target"},
+			{"  --last", "Repeat the last sequence run for this project"},
+			{"  --continue-on-error", "Run every step instead of stopping at the first failure"},
 			{"clear", "Clear screen and reprint header"},
 			{"help", "Show this help"},
 			{"exit, quit, Ctrl+D, Ctrl+X", "Quit Echo"},

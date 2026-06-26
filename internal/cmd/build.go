@@ -42,6 +42,11 @@ type BuildOpts struct {
 	// the remote round-trips i18n-pull makes while listing modules). The
 	// repl renders it as an INFO echo.build line.
 	Infof func(msg string)
+	// SkipDecide skips the final Run/Copy/Cancel select and returns the
+	// composed argv directly (Action = BuildRun). Used by `sequence`, which
+	// collects each step's flags through the builder but decides what to do
+	// with the whole assembled sequence afterwards, not per step.
+	SkipDecide bool
 }
 
 // BuildResult is the outcome of RunBuild: the composed argv (positionals
@@ -255,6 +260,9 @@ func RunBuild(ctx context.Context, opts BuildOpts) (BuildResult, error) {
 
 	// Step 4 — compose, show, decide.
 	args := composeArgs(positionals, flags)
+	if opts.SkipDecide {
+		return BuildResult{Args: args, Action: BuildRun}, nil
+	}
 	action, err := decideAction(opts, args)
 	if err != nil {
 		return BuildResult{}, err
