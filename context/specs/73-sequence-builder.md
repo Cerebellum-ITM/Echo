@@ -19,6 +19,19 @@
 >   lo comparten `echo run` y `sequence`; la secuencia tiene su propio loop
 >   (summary `echo.sequence: sequence complete` antes del follow) en vez de
 >   reusar `runRecipeSteps`, para controlar el wording y el paso terminal.
+> - **`deploy` en secuencias** (fix post-merge): `deploy` es interactivo al
+>   ejecutar (picker de commits/dirty), lo que rompía el "revisar antes de
+>   aplicar". Se le dieron flags no-interactivas `--commits=<shas>` /
+>   `--modules=<addons>` (parse en `parseDeployArgs`, rama
+>   `deploySelectionFromFlags` que salta `pickDeployItems`) y un builder
+>   dedicado `runDeployBuild` (ruta en `RunBuild`, como i18n-pull) que corre
+>   el picker en build-time y hornea esas flags. En el sequence, `deploy` es
+>   **must-build** (`mustBuildInSequence`): su selección se captura siempre
+>   en build, se muestra en la revisión y se guarda para `--last`; un fallo
+>   de su builder aborta (no degrada a run-as-is). `bakeRemote` se volvió
+>   **command-aware**: `--from=<name>` a cualquiera, pero `--remote` solo a
+>   los que lo declaran (`commandAcceptsFlag`); `deploy`/`i18n-pull` no
+>   aceptan `--remote` y sin `--from` caen al `[connect]` del directorio.
 > - **Projectless en modo remoto** (fix post-merge): `sequence` se añadió a
 >   `projectlessOneShot` en `main.go` (grupo `--from`/`--remote`, como
 >   `restart`/`logs`/`shell`), así `ec sequence --remote` corre desde un

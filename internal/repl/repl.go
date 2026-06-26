@@ -412,6 +412,8 @@ func helpSections() []helpSection {
 			{"  --force", "Skip the prod-stage confirmation prompt"},
 			{"  --i18n", "Force --i18n-overwrite on the update run (default: auto when i18n/ changed)"},
 			{"  --no-i18n", "Suppress --i18n-overwrite even when i18n/ changes are detected"},
+			{"  --commits <shas>", "Deploy these commits non-interactively (skips the picker)"},
+			{"  --modules <names>", "Deploy these dirty modules non-interactively (skips the picker)"},
 		}},
 		{"Session", []helpEntry{
 			{"copy-last", "Copy the last command's output to clipboard"},

@@ -108,14 +108,25 @@ func (sess *session) runSequence(ctx context.Context, args []string) {
 	}
 }
 
+// mustBuildInSequence reports commands that are interactive at execution
+// time and therefore MUST have their selection captured during the build
+// phase, even if the user didn't mark them for the builder. `deploy` opens
+// its own commit/dirty-module picker when run, which would block mid-
+// sequence; its builder turns that into baked `--commits`/`--modules` flags
+// so the choice is shown in the review and replayable by `--last`.
+func mustBuildInSequence(command string) bool {
+	return command == "deploy"
+}
+
 // buildSequenceSteps turns the picker's selections into composed recipe
-// lines. Each pick marked Build runs through the builder (return-only); the
-// rest run as-is. When remoteMode is set, the remote flag is baked into
-// every step so each command uses its own remote code path.
+// lines. A pick marked Build — or a command that is interactive at run time
+// (mustBuildInSequence) — runs through the builder (return-only); the rest
+// run as-is. When remoteMode is set, the remote flag is baked into each step
+// so the command uses its own remote code path.
 func (sess *session) buildSequenceSteps(ctx context.Context, picks []cmd.SeqPick, from string, remote, remoteMode bool) ([]string, error) {
 	buildTotal := 0
 	for _, pk := range picks {
-		if pk.Build {
+		if pk.Build || mustBuildInSequence(pk.Command) {
 			buildTotal++
 		}
 	}
@@ -123,9 +134,14 @@ func (sess *session) buildSequenceSteps(ctx context.Context, picks []cmd.SeqPick
 	steps := make([]string, 0, len(picks))
 	for _, pk := range picks {
 		line := pk.Command
-		if pk.Build {
+		forced := mustBuildInSequence(pk.Command)
+		if pk.Build || forced {
 			buildIdx++
-			sess.seqLog("INFO", "building step",
+			msg := "building step"
+			if forced && !pk.Build {
+				msg = "building step (interactive command, resolved up front)"
+			}
+			sess.seqLog("INFO", msg,
 				logField{"step", fmt.Sprintf("%d/%d", buildIdx, buildTotal)},
 				logField{"command", pk.Command})
 			res, berr := cmd.RunBuild(ctx, cmd.BuildOpts{
@@ -155,6 +171,10 @@ func (sess *session) buildSequenceSteps(ctx context.Context, picks []cmd.SeqPick
 				// User intent / environment — abort the whole (not-yet-run)
 				// sequence.
 				return nil, berr
+			case forced:
+				// A forced (interactive) command can't safely run as-is — its
+				// picker would block mid-sequence. Abort instead of degrading.
+				return nil, fmt.Errorf("could not resolve %q for the sequence: %w", pk.Command, berr)
 			default:
 				// Operational failure building this step — e.g. its candidate
 				// list needs a local docker stack but this is a projectless /
@@ -165,7 +185,7 @@ func (sess *session) buildSequenceSteps(ctx context.Context, picks []cmd.SeqPick
 			}
 		}
 		if remoteMode {
-			line = bakeRemote(line, from, remote)
+			line = bakeRemote(pk.Command, line, from, remote)
 		}
 		steps = append(steps, line)
 	}
@@ -433,19 +453,33 @@ func reorderLogsLast(steps []string) (out []string, followLogs bool) {
 	return out, len(follow) > 0
 }
 
-// bakeRemote appends the remote flag (--from=<name> or --remote) to a step
-// line, unless it already carries one.
-func bakeRemote(line, from string, remote bool) string {
+// bakeRemote appends the remote selector to a step line for command, unless
+// it already carries one. A named target (`--from=<name>`) is accepted by
+// every remote-capable command. The bare `--remote` (this dir's link) only
+// goes on commands that declare it; `deploy`/`i18n-pull` don't take
+// `--remote` — with no `--from` they default to the project's [connect]
+// binding, so they get no flag.
+func bakeRemote(command, line, from string, remote bool) string {
 	if strings.Contains(line, "--from") || strings.Contains(line, "--remote") {
 		return line
 	}
 	switch {
 	case from != "":
 		return line + " --from=" + from
-	case remote:
+	case remote && commandAcceptsFlag(command, "--remote"):
 		return line + " --remote"
 	}
 	return line
+}
+
+// commandAcceptsFlag reports whether command's flag set includes flag.
+func commandAcceptsFlag(command, flag string) bool {
+	for _, f := range commandFlags[command] {
+		if f == flag {
+			return true
+		}
+	}
+	return false
 }
 
 // seqHasFlag reports whether flag appears verbatim in args.

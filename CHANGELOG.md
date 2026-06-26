@@ -7,7 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **`sequence` integra `deploy` correctamente** (Unit 73). Antes `deploy`
+  dentro de una secuencia abría su picker interactivo a mitad de la
+  ejecución (rompiendo el "revisar antes de aplicar" y el replay con
+  `--last`). Ahora la selección de `deploy` se captura **en la fase de
+  build** vía su builder, se muestra en la pantalla de revisión y se guarda
+  para `--last`; la ejecución es no-interactiva. `bakeRemote` además es
+  consciente del comando: `deploy`/`i18n-pull` no aceptan `--remote` (usan
+  `--from` o el `[connect]` del directorio), así que en modo `--remote` no
+  se les añade un flag inválido.
+
 ### Added
+- **`deploy` acepta selección no-interactiva `--commits`/`--modules`** (Unit
+  73). `deploy --commits=<sha,sha> --modules=<addon,addon>` salta el picker
+  de commits/dirty y despliega justo esos objetivos; los SHAs se resuelven
+  por hash corto o largo (recuperando subject para el mapeo a módulo) y los
+  módulos nombrados que ya no estén dirty (p. ej. un replay tras commitear)
+  se incluyen igual por nombre. Sin estas flags, `deploy` abre su picker
+  como siempre. Esto habilita un **builder de `deploy`** (`deploy --build`):
+  el picker de commits/dirty corre en build-time y hornea esas flags, así la
+  selección se puede revisar, copiar y reejecutar.
 - **Nuevo comando `sequence`: arma y corre varios comandos en orden** (Unit
   73). Un builder de recetas interactivo: un picker tri-estado lista los
   comandos y un solo `Tab` cicla cada uno `off → run → build`, donde el

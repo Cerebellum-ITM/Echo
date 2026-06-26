@@ -45,7 +45,7 @@ var commandFlags = map[string][]string{
 	"shell":         {"--from", "--remote", "--force"},
 	"shell-run":     {"--no-copy", "--force", "--from", "--remote"},
 	"connect":       {"--all", "--force", "--fresh", "--new-window"},
-	"deploy":        {"--from", "--limit", "--dry-run", "--force", "--i18n", "--no-i18n"},
+	"deploy":        {"--from", "--limit", "--dry-run", "--force", "--i18n", "--no-i18n", "--commits", "--modules"},
 	"copy-last":     {"--errors"},
 	"report":        {"--step", "--level", "--min-level", "--copy"},
 	"sequence":      {"--remote", "--from", "--last", "--continue-on-error"},

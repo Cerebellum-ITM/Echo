@@ -74,20 +74,27 @@ func TestReorderLogsLast(t *testing.T) {
 
 func TestBakeRemote(t *testing.T) {
 	cases := []struct {
-		line   string
-		from   string
-		remote bool
-		want   string
+		command string
+		line    string
+		from    string
+		remote  bool
+		want    string
 	}{
-		{"logs", "prod", false, "logs --from=prod"},
-		{"restart odoo", "", true, "restart odoo --remote"},
-		{"logs --from=prod", "prod", false, "logs --from=prod"},
-		{"deploy --remote", "", true, "deploy --remote"},
-		{"logs", "", false, "logs"},
+		{"logs", "logs", "prod", false, "logs --from=prod"},
+		{"restart", "restart odoo", "", true, "restart odoo --remote"},
+		{"logs", "logs --from=prod", "prod", false, "logs --from=prod"},
+		// deploy doesn't accept --remote: in link mode it gets no flag and
+		// defaults to the project's [connect] binding.
+		{"deploy", "deploy --commits=a1b2", "", true, "deploy --commits=a1b2"},
+		// deploy with a named target still gets --from.
+		{"deploy", "deploy --commits=a1b2", "prod", false, "deploy --commits=a1b2 --from=prod"},
+		// i18n-pull likewise has no --remote.
+		{"i18n-pull", "i18n-pull sale", "", true, "i18n-pull sale"},
+		{"logs", "logs", "", false, "logs"},
 	}
 	for _, c := range cases {
-		if got := bakeRemote(c.line, c.from, c.remote); got != c.want {
-			t.Errorf("bakeRemote(%q,%q,%v) = %q, want %q", c.line, c.from, c.remote, got, c.want)
+		if got := bakeRemote(c.command, c.line, c.from, c.remote); got != c.want {
+			t.Errorf("bakeRemote(%q,%q,%q,%v) = %q, want %q", c.command, c.line, c.from, c.remote, got, c.want)
 		}
 	}
 }
