@@ -26,6 +26,11 @@ func TestParseDeployArgs(t *testing.T) {
 		{[]string{"--i18n"}, deployArgs{limit: 20, i18n: true}, false},
 		{[]string{"--no-i18n"}, deployArgs{limit: 20, noI18n: true}, false},
 		{[]string{"--i18n", "--no-i18n"}, deployArgs{}, true}, // mutually exclusive
+		{[]string{"--commits=a1b2,c3d4"}, deployArgs{limit: 20, commits: []string{"a1b2", "c3d4"}}, false},
+		{[]string{"--commits", "a1b2, c3d4"}, deployArgs{limit: 20, commits: []string{"a1b2", "c3d4"}}, false},
+		{[]string{"--modules=sale,account"}, deployArgs{limit: 20, modules: []string{"sale", "account"}}, false},
+		{[]string{"--commits"}, deployArgs{}, true},
+		{[]string{"--modules"}, deployArgs{}, true},
 	}
 	for _, tc := range cases {
 		got, err := parseDeployArgs(tc.in)
@@ -39,7 +44,7 @@ func TestParseDeployArgs(t *testing.T) {
 			t.Errorf("parseDeployArgs(%v): %v", tc.in, err)
 			continue
 		}
-		if got != tc.want {
+		if !reflect.DeepEqual(got, tc.want) {
 			t.Errorf("parseDeployArgs(%v) = %+v, want %+v", tc.in, got, tc.want)
 		}
 	}
@@ -129,10 +134,10 @@ func TestDirtyModulesFromPaths(t *testing.T) {
 	root := addonsRepo(t, "sale_extra", "stock_extra")
 	paths := []string{
 		"sale_extra/models/sale.py",
-		"docs/readme.md",            // non-addon → dropped
+		"docs/readme.md", // non-addon → dropped
 		"stock_extra/views/s.xml",
-		"sale_extra/i18n/es.po",     // groups under sale_extra
-		"README.md",                 // top-level non-addon → dropped
+		"sale_extra/i18n/es.po", // groups under sale_extra
+		"README.md",             // top-level non-addon → dropped
 	}
 	got := dirtyModulesFromPaths(root, paths)
 	want := []dirtyModule{

@@ -194,6 +194,11 @@ func RunBuild(ctx context.Context, opts BuildOpts) (BuildResult, error) {
 	if opts.Command == "i18n-pull" {
 		return runI18nPullBuild(ctx, opts)
 	}
+	// deploy has a bespoke builder: its commit / dirty-module picker IS the
+	// selection, captured up front into --commits/--modules.
+	if opts.Command == "deploy" {
+		return runDeployBuild(ctx, opts)
+	}
 
 	spec, hasPos := buildPositionals[opts.Command]
 	if !hasPos && len(opts.Flags) == 0 {

@@ -49,10 +49,18 @@ type deployArgs struct {
 	// the flag is decided by auto-detection.
 	i18n   bool
 	noI18n bool
+	// commits / modules pre-select the deploy targets non-interactively
+	// (skipping the picker): commits are short/full SHAs, modules are addon
+	// names (the dirty-module equivalent). Set by the deploy builder so a
+	// sequence can show & replay the selection. When both are empty deploy
+	// opens its interactive picker as before.
+	commits []string
+	modules []string
 }
 
-// parseDeployArgs extracts --from/--limit/--dry-run/--force/--i18n/--no-i18n.
-// Deploy takes no positionals — the commits come from the interactive picker.
+// parseDeployArgs extracts --from/--limit/--dry-run/--force/--i18n/--no-i18n
+// plus the non-interactive --commits/--modules selection. Deploy takes no
+// positionals — the commits come from the picker or those flags.
 func parseDeployArgs(args []string) (deployArgs, error) {
 	out := deployArgs{limit: 20}
 	for i := 0; i < len(args); i++ {
@@ -62,6 +70,22 @@ func parseDeployArgs(args []string) (deployArgs, error) {
 			out.i18n = true
 		case a == "--no-i18n":
 			out.noI18n = true
+		case a == "--commits":
+			if i+1 >= len(args) {
+				return out, fmt.Errorf("--commits requires a comma-separated list")
+			}
+			out.commits = splitCSV(args[i+1])
+			i++
+		case strings.HasPrefix(a, "--commits="):
+			out.commits = splitCSV(strings.TrimPrefix(a, "--commits="))
+		case a == "--modules":
+			if i+1 >= len(args) {
+				return out, fmt.Errorf("--modules requires a comma-separated list")
+			}
+			out.modules = splitCSV(args[i+1])
+			i++
+		case strings.HasPrefix(a, "--modules="):
+			out.modules = splitCSV(strings.TrimPrefix(a, "--modules="))
 		case a == "--from":
 			if i+1 >= len(args) {
 				return out, fmt.Errorf("--from requires a target name")
@@ -154,25 +178,38 @@ func RunDeploy(ctx context.Context, opts DeployOpts) error {
 	targetKey := config.DeployTargetKey(sshHost, remotePath)
 	deployedSet := config.LoadDeployedSHAs(projectKey, targetKey)
 
-	// Commit selection — interactive by design; a headless run fails closed
-	// inside the picker (ErrNonInteractive).
-	commits, err := gitRecentCommits(ctx, opts.Root, p.limit)
-	if err != nil {
-		return err
-	}
-	if len(commits) == 0 {
-		return fmt.Errorf("no commits found in %s", opts.Root)
-	}
 	// Working-tree dirty modules, offered in the picker alongside the
-	// commits. Best-effort: a status failure just means commits-only.
+	// commits (and used to recover paths for a --modules selection).
+	// Best-effort: a status failure just means commits-only.
 	dirty, err := gitDirtyModules(ctx, opts.Root)
 	if err != nil {
 		opts.log("WARNING", "", "dirty detection skipped", "",
 			[2]string{"reason", err.Error()})
 	}
-	selected, selectedDirty, err := pickDeployItems(commits, dirty, deployedSet, opts.Palette)
-	if err != nil {
-		return err
+
+	var selected []deployCommit
+	var selectedDirty []dirtyModule
+	if len(p.commits) > 0 || len(p.modules) > 0 {
+		// Non-interactive selection (deploy builder / sequence / --last):
+		// resolve the SHAs and module names straight from the flags, no picker.
+		selected, selectedDirty = deploySelectionFromFlags(ctx, opts, p, dirty)
+		if len(selected) == 0 && len(selectedDirty) == 0 {
+			return fmt.Errorf("no deployable items: --commits/--modules resolved to nothing")
+		}
+	} else {
+		// Commit selection — interactive by design; a headless run fails
+		// closed inside the picker (ErrNonInteractive).
+		commits, cerr := gitRecentCommits(ctx, opts.Root, p.limit)
+		if cerr != nil {
+			return cerr
+		}
+		if len(commits) == 0 {
+			return fmt.Errorf("no commits found in %s", opts.Root)
+		}
+		selected, selectedDirty, err = pickDeployItems(commits, dirty, deployedSet, opts.Palette)
+		if err != nil {
+			return err
+		}
 	}
 	opts.log("INFO", "", "items selected", "",
 		[2]string{"commits", strconv.Itoa(len(selected))},
@@ -370,6 +407,64 @@ func RunDeploy(ctx context.Context, opts DeployOpts) error {
 		[2]string{"install", strconv.Itoa(len(install))},
 		[2]string{"skipped", strconv.Itoa(skipped)})
 	return nil
+}
+
+// splitCSV splits a comma-separated flag value into trimmed, non-empty
+// tokens.
+func splitCSV(s string) []string {
+	var out []string
+	for _, part := range strings.Split(s, ",") {
+		if t := strings.TrimSpace(part); t != "" {
+			out = append(out, t)
+		}
+	}
+	return out
+}
+
+// deploySelectionFromFlags resolves the non-interactive --commits/--modules
+// selection. Commits are resolved by SHA (short or full) to recover their
+// full hash and subject; an unresolvable SHA is warned and skipped. Module
+// names map to their current dirty entry (for i18n path detection) when
+// still dirty, else to a bare entry by name — so a `--last` replay survives
+// the module having since been committed.
+func deploySelectionFromFlags(ctx context.Context, opts DeployOpts, p deployArgs, dirty []dirtyModule) ([]deployCommit, []dirtyModule) {
+	var selected []deployCommit
+	for _, sha := range p.commits {
+		c, err := resolveDeployCommit(ctx, opts.Root, sha)
+		if err != nil {
+			opts.log("WARNING", "", "commit not found, skipped", "",
+				[2]string{"commit", sha}, [2]string{"reason", err.Error()})
+			continue
+		}
+		selected = append(selected, c)
+	}
+	byName := make(map[string]dirtyModule, len(dirty))
+	for _, dm := range dirty {
+		byName[dm.name] = dm
+	}
+	var selectedDirty []dirtyModule
+	for _, name := range p.modules {
+		if dm, ok := byName[name]; ok {
+			selectedDirty = append(selectedDirty, dm)
+		} else {
+			selectedDirty = append(selectedDirty, dirtyModule{name: name})
+		}
+	}
+	return selected, selectedDirty
+}
+
+// resolveDeployCommit resolves a short or full SHA to a deployCommit with
+// its full hash and subject, so commit→module resolution still works.
+func resolveDeployCommit(ctx context.Context, root, sha string) (deployCommit, error) {
+	out, err := gitOutput(ctx, root, "show", "-s", "--format=%H%x1f%s", sha)
+	if err != nil {
+		return deployCommit{}, err
+	}
+	full, subject, ok := strings.Cut(strings.TrimSpace(string(out)), "\x1f")
+	if !ok || full == "" {
+		return deployCommit{}, fmt.Errorf("could not resolve commit %q", sha)
+	}
+	return deployCommit{sha: full, subject: subject}, nil
 }
 
 // resolveDeployRemote mirrors i18n-pull's target resolution: --from →
