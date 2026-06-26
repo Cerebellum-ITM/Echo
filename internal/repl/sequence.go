@@ -19,16 +19,19 @@ import (
 )
 
 // sequenceCommands lists the commands offerable in a local sequence, in
-// help order. Excludes interactive/PTY and meta commands that make no sense
-// batched: shell, bash, psql, shell-run, connect, init, reset, clear, help,
-// exit, quit, and sequence itself (no recursion in v1).
+// help order. Excludes:
+//   - interactive/PTY: shell, bash, psql, shell-run, connect
+//   - meta / config: init, reset, alias, link, clear, help, exit, quit,
+//     and sequence itself (no recursion in v1)
+//   - session inspectors that don't do work in a batch: copy-last, report,
+//     db-list (ps is kept — a quick status check mid-flow is useful)
 var sequenceCommands = []string{
 	"up", "down", "stop", "restart", "ps", "logs",
 	"install", "update", "uninstall", "test",
 	"modules", "modinfo", "modstate", "view",
 	"i18n-export", "i18n-update", "i18n-pull",
-	"db-backup", "db-restore", "db-drop", "db-neutralize", "db-list", "db-use", "db-admin",
-	"deploy", "report", "copy-last", "alias", "link",
+	"db-backup", "db-restore", "db-drop", "db-neutralize", "db-use", "db-admin",
+	"deploy",
 }
 
 // remoteSequenceCommands is the subset valid when the sequence targets a

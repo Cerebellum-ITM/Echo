@@ -8,6 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- **La lista de comandos de `sequence` se podó** (Unit 73). Se quitaron de la
+  selección los inspectores de sesión que no hacen trabajo en un batch
+  (`copy-last`, `report`, `db-list`) y los de meta/config (`alias`, `link`);
+  quedan solo comandos que ejecutan acciones (más `ps` como chequeo rápido
+  de estado).
 - **`sequence` integra `deploy` e `i18n-pull` correctamente** (Unit 73).
   Antes ambos abrían su picker interactivo a mitad de la ejecución
   (rompiendo el "revisar antes de aplicar" y el replay con `--last`). Ahora
