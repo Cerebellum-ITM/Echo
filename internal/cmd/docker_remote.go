@@ -29,6 +29,37 @@ func remoteServiceArgs(args []string) []string {
 	return out
 }
 
+// runRemoteUp starts compose services on a remote host over SSH (`up -d`).
+// Starting is non-destructive, so there is no prod gate. With no service it
+// brings up the whole remote stack, matching the local default. Output
+// streams live through opts.StreamOut.
+func runRemoteUp(ctx context.Context, opts DockerOpts, from string) error {
+	rsc, err := resolveRemoteShell(ctx, opts.Cfg, opts.Palette, opts.Root, from, opts.Log)
+	if err != nil {
+		return err
+	}
+	args := append([]string{"up", "-d"}, remoteServiceArgs(opts.Args)...)
+	remoteCmd := remoteComposeCmd(rsc.remotePath, rsc.target.composeCmd, args...)
+	return runSSHStream(ctx, rsc.sshHost, remoteCmd, nil, opts.StreamOut)
+}
+
+// runRemoteStop stops compose services on a remote host over SSH. A `prod`
+// remote stage gates on confirmRemoteProd (`--force` bypass) since stopping a
+// production stack is disruptive. With no service it stops the whole remote
+// stack. Output streams live through opts.StreamOut.
+func runRemoteStop(ctx context.Context, opts DockerOpts, from string) error {
+	rsc, err := resolveRemoteShell(ctx, opts.Cfg, opts.Palette, opts.Root, from, opts.Log)
+	if err != nil {
+		return err
+	}
+	if err := confirmRemoteProd(opts.Palette, "stop", rsc, opts.Args); err != nil {
+		return err
+	}
+	args := append([]string{"stop"}, remoteServiceArgs(opts.Args)...)
+	remoteCmd := remoteComposeCmd(rsc.remotePath, rsc.target.composeCmd, args...)
+	return runSSHStream(ctx, rsc.sshHost, remoteCmd, nil, opts.StreamOut)
+}
+
 // runRemoteRestart restarts compose services on a remote host over SSH. With
 // no service it targets the remote profile's Odoo container, symmetric with
 // the local `logs` default. A `prod` remote stage gates on confirmRemoteProd

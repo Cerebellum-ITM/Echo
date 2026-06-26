@@ -25,7 +25,13 @@ type DockerOpts struct {
 	Log func(level, sub, msg, db string, fields ...[2]string)
 }
 
+// RunUp starts compose services. With `--from <target>` / `--remote` it
+// starts them on a remote host over SSH (reusing the deploy/shell
+// transport); otherwise it starts the local stack.
 func RunUp(ctx context.Context, opts DockerOpts) error {
+	if from, remote := remoteFlagsIn(opts.Args); from != "" || remote {
+		return runRemoteUp(ctx, opts, from)
+	}
 	return docker.Up(ctx, opts.Cfg.ComposeCmd, opts.Root, opts.Args, opts.StreamOut)
 }
 
@@ -79,7 +85,13 @@ func RunRestart(ctx context.Context, opts DockerOpts) error {
 	return docker.Restart(ctx, opts.Cfg.ComposeCmd, opts.Root, opts.Args, opts.StreamOut)
 }
 
+// RunStop stops compose services. With `--from <target>` / `--remote` it
+// stops them on a remote host over SSH (a `prod` remote stage gates with a
+// red confirm, `--force` bypass); otherwise it stops the local stack.
 func RunStop(ctx context.Context, opts DockerOpts) error {
+	if from, remote := remoteFlagsIn(opts.Args); from != "" || remote {
+		return runRemoteStop(ctx, opts, from)
+	}
 	return docker.Stop(ctx, opts.Cfg.ComposeCmd, opts.Root, opts.Args, opts.StreamOut)
 }
 

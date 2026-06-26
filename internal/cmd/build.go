@@ -47,6 +47,10 @@ type BuildOpts struct {
 	// collects each step's flags through the builder but decides what to do
 	// with the whole assembled sequence afterwards, not per step.
 	SkipDecide bool
+	// From, when set, pre-selects the remote target (a named connect target)
+	// so a remote-aware builder (i18n-pull) skips its own target picker and
+	// uses it — keeping a sequence's `--from` consistent across steps.
+	From string
 }
 
 // BuildResult is the outcome of RunBuild: the composed argv (positionals

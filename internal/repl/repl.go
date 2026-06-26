@@ -390,9 +390,14 @@ func helpSections() []helpSection {
 		}},
 		{"Docker", []helpEntry{
 			{"up [service]", "Start containers (compose up -d)"},
+			{"  --from <target>", "Start on a remote instance (named connect target)"},
+			{"  --remote", "Start on this directory's linked remote"},
 			{"down [service]", "Stop and remove containers (prod confirm)"},
 			{"  --force", "Skip the prod-stage confirmation prompt"},
 			{"stop [service]", "Stop containers without removing them"},
+			{"  --from <target>", "Stop on a remote instance (named connect target)"},
+			{"  --remote", "Stop on this directory's linked remote"},
+			{"  --force", "Skip the remote prod-stage confirmation prompt"},
 			{"restart [service]", "Restart services"},
 			{"  --from <target>", "Restart on a remote instance (named connect target)"},
 			{"  --remote", "Restart on this directory's linked remote"},
@@ -677,22 +682,27 @@ func (sess *session) runDocker(ctx context.Context, name string, args []string) 
 		}),
 	}
 
+	// A remote up/stop/restart leaves the local stack untouched, so the local
+	// prompt health stays valid — only invalidate for a local run.
+	local := func() bool { from, remote := remoteRunFlags(args); return from == "" && !remote }
 	var err error
 	switch name {
 	case "up":
 		err = cmd.RunUp(ctx, opts)
-		sess.prompt.health.Invalidate()
+		if local() {
+			sess.prompt.health.Invalidate()
+		}
 	case "down":
 		err = cmd.RunDown(ctx, opts)
 		sess.prompt.health.Invalidate()
 	case "stop":
 		err = cmd.RunStop(ctx, opts)
-		sess.prompt.health.Invalidate()
+		if local() {
+			sess.prompt.health.Invalidate()
+		}
 	case "restart":
 		err = cmd.RunRestart(ctx, opts)
-		// A remote restart leaves the local stack untouched, so the local
-		// prompt health stays valid — only invalidate for a local restart.
-		if from, remote := remoteRunFlags(args); from == "" && !remote {
+		if local() {
 			sess.prompt.health.Invalidate()
 		}
 	case "ps":
