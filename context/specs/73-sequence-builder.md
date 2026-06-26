@@ -19,6 +19,13 @@
 >   lo comparten `echo run` y `sequence`; la secuencia tiene su propio loop
 >   (summary `echo.sequence: sequence complete` antes del follow) en vez de
 >   reusar `runRecipeSteps`, para controlar el wording y el paso terminal.
+> - **Projectless en modo remoto** (fix post-merge): `sequence` se añadió a
+>   `projectlessOneShot` en `main.go` (grupo `--from`/`--remote`, como
+>   `restart`/`logs`/`shell`), así `ec sequence --remote` corre desde un
+>   repo de addons sin `docker-compose.yml`. Además, en `buildSequenceSteps`
+>   un error operativo del builder (p. ej. listar servicios locales sin
+>   stack) ya no aborta: degrada ese paso a run-as-is con WARNING; solo
+>   cancel/quit/non-interactive/abort propagan.
 
 ## Goal
 

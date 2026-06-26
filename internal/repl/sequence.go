@@ -150,9 +150,18 @@ func (sess *session) buildSequenceSteps(ctx context.Context, picks []cmd.SeqPick
 				emitOdooLog("DEBUG", "echo.sequence.build",
 					fmt.Sprintf("nothing to build for %q, running as-is", pk.Command),
 					nil, sess.styles, sess.palette, sess.cfg.DBName)
-			default:
-				// A cancelled builder aborts the whole (not-yet-run) sequence.
+			case errors.Is(berr, cmd.ErrCancelled), errors.Is(berr, cmd.ErrQuit),
+				errors.Is(berr, cmd.ErrNonInteractive), errors.Is(berr, huh.ErrUserAborted):
+				// User intent / environment — abort the whole (not-yet-run)
+				// sequence.
 				return nil, berr
+			default:
+				// Operational failure building this step — e.g. its candidate
+				// list needs a local docker stack but this is a projectless /
+				// remote run. Warn and run it as-is rather than abort.
+				emitOdooLog("WARNING", "echo.sequence.build",
+					fmt.Sprintf("could not build %q (%v), running as-is", pk.Command, berr),
+					nil, sess.styles, sess.palette, sess.cfg.DBName)
 			}
 		}
 		if remoteMode {
