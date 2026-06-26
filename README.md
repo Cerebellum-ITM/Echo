@@ -7,7 +7,8 @@ run `echo`, and you get a styled prompt that wraps `docker compose`,
 `pg_dump`/`pg_restore`, and the `odoo` CLI behind short memorable commands.
 Output streams in real time, colored by log level, and every long-running
 command ends with a clear ✓/✗ result line. The same commands also run
-non-interactively (`echo <cmd>`) and as multi-step recipes (`echo run`).
+non-interactively (`echo <cmd>`), as multi-step recipes (`echo run`), or
+assembled interactively in order (`sequence`).
 
 <p align="center">
   <img src="demo/gifs/hero.gif" alt="Echo: launch the REPL and bring the stack up" width="860">
@@ -23,7 +24,7 @@ Echo is a work in progress; below is what currently ships in `main`.
 | Area      | Working                                                                 | Pending                         |
 |-----------|-------------------------------------------------------------------------|---------------------------------|
 | Project   | `init`, `reset`, `alias` (`-C <name>` registry), `help`, `clear`        | `version`, `stage`, `theme`, `logo` |
-| Docker    | `up`, `down`, `stop`, `restart`, `ps`, `logs` (`--copy`/`--all`/`-t`; `restart`/`logs` also `--from`/`--remote` over SSH) | — |
+| Docker    | `up`, `down`, `stop`, `restart`, `ps`, `logs` (`--copy`/`--all`/`-t`; `up`/`stop`/`restart`/`logs` also `--from`/`--remote` over SSH) | — |
 | Modules   | `install`, `update` (`--i18n`), `uninstall`, `test`, `modules` (`--config`), `modinfo`, `view` | —             |
 | Database  | `db-admin`, `db-backup` (`--with-filestore`), `db-restore` (rename + live progress), `db-drop`, `db-neutralize`, `db-list`, `db-use` | — |
 | Shell     | `shell`, `bash`, `psql`                                                  | —                               |
@@ -31,7 +32,7 @@ Echo is a work in progress; below is what currently ships in `main`.
 | Connect   | `connect` — open Chrome logged in as any user, no password              | —                               |
 | Deploy    | `link` — bind a local repo to a remote target; `deploy` — commit- and dirty-module-driven remote update/install over SSH | — |
 | Build     | `<cmd> --build` / `-b` — compose any command interactively, then run/copy | —                             |
-| Scripting | `echo <cmd>` one-shot, `echo run <file>` recipes, `report`              | —                               |
+| Scripting | `echo <cmd>` one-shot, `echo run <file>` recipes, `sequence` (interactive multi-command), `report` | —              |
 | REPL UX   | ↑↓ history, fzf picker, level-colored logs, ✓/✗ result, Tab + flag autocomplete, live command/flag highlighting | Full ASCII banners |
 | Themes    | charm, hacker, odoo, tokyo                                              | —                               |
 
@@ -117,8 +118,10 @@ points at a local directory.
 | Command            | Description                                          |
 |--------------------|------------------------------------------------------|
 | `up [service]`     | `docker compose up -d`                               |
+| `  --from <target>` / `--remote` | Start on a **remote** instance (named target, or this directory's linked remote) |
 | `down [service]`   | `docker compose down` (red confirm on `prod` unless `--force`) |
 | `stop [service]`   | `docker compose stop`                                |
+| `  --from <target>` / `--remote` | Stop on a **remote** instance (red confirm on remote `prod` unless `--force`) |
 | `restart [service]`| `docker compose restart`                             |
 | `  --from <target>`| Restart on a **remote** instance (named connect target) |
 | `  --remote`       | Restart on this directory's linked remote (see `link`) |
@@ -135,14 +138,16 @@ points at a local directory.
 Compose lifecycle lines (`Container … Started`) are reformatted into Echo's
 Odoo log style (`docker.container: started name=…`).
 
-`restart` and `logs` can act on a **remote** host the same way `deploy` and
-`shell` do: pass `--from <target>` to name a connect target, or `--remote` to
-use this directory's `link` binding (so you don't retype the name). Both ride
-the shared SSH transport. Remote `restart` with no service restarts the remote
-profile's Odoo container and asks for a red confirmation when the remote stage
-is `prod` (`--force` skips it); remote `logs` keeps follow-by-default, streaming
-over SSH, with `-t`/`--no-follow`/`--copy` honored. Without a remote flag both
-behave exactly as before (local).
+`up`, `stop`, `restart`, and `logs` can act on a **remote** host the same way
+`deploy` and `shell` do: pass `--from <target>` to name a connect target, or
+`--remote` to use this directory's `link` binding (so you don't retype the
+name). All ride the shared SSH transport. Remote `restart`/`stop` with no
+service target the remote profile's Odoo container and ask for a red
+confirmation when the remote stage is `prod` (`--force` skips it); remote `up`
+is non-destructive so it doesn't confirm. Remote `logs` keeps follow-by-default,
+streaming over SSH, with `-t`/`--no-follow`/`--copy` honored. Without a remote
+flag they all behave exactly as before (local). In remote mode these run from a
+pure addons repo with no local `docker-compose.yml`.
 
 ```sh
 echo link prod                 # bind once (see Deploy below)
@@ -322,6 +327,12 @@ the code there — that's for the tool you use to sync the working tree.
 | `  --limit <N>`    | Commits offered in the picker (default `20`)             |
 | `  --dry-run`      | Resolve modules and show the plan; execute nothing       |
 | `  --force`        | Skip the prod-stage confirmation                         |
+| `  --commits <shas>` | Deploy these commits non-interactively (skips the picker) |
+| `  --modules <names>` | Deploy these (dirty) modules non-interactively (skips the picker) |
+
+`deploy --build` opens the commit/dirty picker up front and bakes the choice
+into `--commits`/`--modules`, so the selection can be reviewed, copied, or
+replayed (this is how `sequence` runs `deploy` without a mid-run picker).
 
 Commit → module resolution follows the project's commit scheme
 `[Tag] module_name: title` (valid only when the module exists in the repo);
@@ -466,6 +477,41 @@ restart
 
 The run ends with a per-step summary (status, warnings, duration) and a totals
 line, all in Echo's Odoo log style and captured by `--log`.
+
+## Sequences
+
+`sequence` builds and runs several commands in one go without retyping each
+one. Pick commands from a tri-state list — one `Tab` cycles each entry
+`off → run → builder`: the order you pick them is the run order (a `⟦n⟧`
+badge), and the `` marker sends a command through its flag builder first.
+Commands flagged for the builder — and the inherently interactive ones,
+`deploy` and `i18n-pull` — resolve their pickers **up front**, so the full
+plan is shown for review before anything runs, and saved for replay.
+
+<p align="center"><img src="demo/gifs/sequence.gif" alt="echo sequence — tri-state picker, log-framed review, run" width="860"></p>
+
+After the picker, a log-framed review lists the assembled steps with their
+flags highlighted like the REPL; choose **Run**, **Save as `.echo`** (a recipe
+`echo run` can replay), **Copy**, or **Cancel**. Execution streams through the
+same engine as `echo run` with `echo.sequence` log lines, fail-fast by default
+(`--continue-on-error` runs every step). A trailing `logs` step is forced last
+and the run summary prints *before* the follow starts, so the `Ctrl+C` that
+ends it never reads as a failure.
+
+| Command                 | Description                                            |
+|-------------------------|--------------------------------------------------------|
+| `sequence`              | Pick commands in order (tri-state `Tab`), review, then run |
+| `  --remote`            | Run the whole sequence on this directory's linked remote |
+| `  --from <target>`     | Run the whole sequence on a named connect target        |
+| `  --last`              | Repeat the last sequence run for this project (no picker) |
+| `  --continue-on-error` | Run every step instead of stopping at the first failure  |
+
+Local sequences offer every action command; remote sequences (`--remote` /
+`--from`) narrow the list to the ones that can act over SSH — `up`, `stop`,
+`restart`, `logs`, `i18n-pull`, `deploy` — and bake the remote selector into
+each step. `sequence --remote` runs from a pure addons repo (no local
+`docker-compose.yml`), like `deploy`. The assembled plan is saved per project,
+so `sequence --last` replays it headlessly.
 
 ## Output features
 

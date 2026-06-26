@@ -6,3 +6,4 @@
 G_LOGO=''   # U+EA85
 G_DOCKER=''   # U+F308
 G_PG=''   # U+F703
+G_TOOLS=''   # U+EB6D (cod-tools) sequence builder marker
