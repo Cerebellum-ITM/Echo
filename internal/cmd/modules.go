@@ -392,7 +392,7 @@ func pickModulesInteractive(ctx context.Context, opts ModulesOpts, title string,
 	if len(available) == 0 {
 		return nil, ErrNoModulesAvailable
 	}
-	picked, canceled, err := runFuzzyPickerCore(title, available, recent, nil, opts.Palette, opts.Cfg.Stage)
+	picked, _, canceled, err := runFuzzyPickerCore(title, available, recent, nil, nil, opts.Palette, opts.Cfg.Stage)
 	if err != nil {
 		return nil, err
 	}
@@ -423,7 +423,8 @@ func pickModulesForUpdate(ctx context.Context, opts ModulesOpts, recent []string
 	if len(available) == 0 {
 		return nil, false, ErrNoModulesAvailable
 	}
-	return runFuzzyPickerCore(title, available, recent, nil, opts.Palette, opts.Cfg.Stage)
+	picked, _, canceled, err = runFuzzyPickerCore(title, available, recent, nil, nil, opts.Palette, opts.Cfg.Stage)
+	return picked, canceled, err
 }
 
 // installedModules lists every module marked installed in the active

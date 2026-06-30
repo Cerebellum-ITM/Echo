@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Marcado manual de commits como "desplegado" en el picker de `deploy`**
+  (Unit 74). El historial de deploy se indexa por **SHA exacto**, así que
+  una rama nueva que nunca corrió en Echo, un commit rebaseado/enmendado, o
+  el primer deploy desde otra máquina aparecían todos como "por desplegar"
+  aunque el código ya estuviera en el server. Ahora, dentro del selector,
+  **`ctrl+d`** togglea la marca de "desplegado" del commit bajo el cursor
+  (lo mutea/desmutea en vivo) y **`ctrl+a`** marca **todas** las filas
+  visibles de golpe (o las desmarca si ya estaban todas marcadas),
+  respetando el filtro activo — ideal para vaciar de un tiro la lista de
+  pendientes de una rama que ya está arriba. Solo aplica a commits (los
+  módulos dirty no tienen SHA). La edición se persiste al historial del
+  target **al confirmar con `enter`** (antes del prod-gate, así sobrevive
+  aunque luego canceles el deploy); `esc` la descarta. El modo build queda
+  excluido (no resuelve target). Nuevos `config.UpdateDeployedMarks` /
+  `config.UnmarkDeployed`.
+
 ## [0.18.0] — 2026-06-26
 
 ### Changed

@@ -232,9 +232,9 @@ func RunBuild(ctx context.Context, opts BuildOpts) (BuildResult, error) {
 	// Step 2 — flag multi-select, then Step 3 — value per selected flag.
 	var flags []chosenFlag
 	if len(opts.Flags) > 0 {
-		picked, canceled, err := runFuzzyPickerCore(
+		picked, _, canceled, err := runFuzzyPickerCore(
 			"Flags for "+opts.Command+" (Tab to toggle, Enter to confirm)",
-			opts.Flags, nil, nil, opts.Palette, opts.Cfg.Stage)
+			opts.Flags, nil, nil, nil, opts.Palette, opts.Cfg.Stage)
 		if err != nil {
 			return BuildResult{}, err
 		}
