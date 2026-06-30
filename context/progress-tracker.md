@@ -23,6 +23,24 @@ _(siguiente: Unit 14 — meta-commands. Fix i18n19 Odoo 19 (rama `fix/i18n19-con
 
 ## Completed
 
+- [x] Unit 74 — deploy-manual-mark. El picker de `deploy` gana marcado
+  manual de "desplegado": **`ctrl+d`** togglea la marca del commit bajo el
+  cursor y **`ctrl+a`** marca/desmarca en masa todas las filas visibles
+  (respeta el filtro). Cierra el gap de la Unit 65 (historial indexado por
+  SHA exacto): rama nueva, commit rebaseado, o primer deploy desde otra
+  máquina ya no aparecen falsamente como "por desplegar". Solo commits (los
+  dirty no tienen SHA). Se persiste al historial del target **al confirmar
+  con enter**, antes del prod-gate (sobrevive aunque se cancele el deploy);
+  `esc` descarta. Build mode excluido (no resuelve target). Implementación:
+  `pickerItem.markable` + casos `ctrl+d`/`ctrl+a` en `fuzzyPicker.Update`,
+  `deployedNames()`/`hasMarkable()`, `runFuzzyPickerCore` ahora devuelve el
+  set final de marcados; `pickDeployItems` calcula el delta (add/remove,
+  removals acotadas a los SHAs mostrados) y `RunDeploy` lo persiste vía el
+  nuevo `config.UpdateDeployedMarks`/`UnmarkDeployed`. Spec
+  `74-deploy-manual-mark.md` + fila en build plan + tests (picker toggle/bulk,
+  historial add/remove/mixed/absent) + CHANGELOG, todo en la rama de trabajo.
+  Build/vet/test verdes; pendiente verificación EN VIVO en TTY por el usuario.
+
 - [x] Unit 73 — sequence-builder. Nuevo comando `sequence`: builder de
   recetas interactivo. Picker tri-estado nuevo
   (`internal/cmd/sequence_picker.go`, `RunSequencePicker`/`SeqItem`/`SeqPick`)

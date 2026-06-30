@@ -206,9 +206,21 @@ func RunDeploy(ctx context.Context, opts DeployOpts) error {
 		if len(commits) == 0 {
 			return fmt.Errorf("no commits found in %s", opts.Root)
 		}
-		selected, selectedDirty, err = pickDeployItems(commits, dirty, deployedSet, opts.Palette)
+		var markDelta deployMarkDelta
+		selected, selectedDirty, markDelta, err = pickDeployItems(commits, dirty, deployedSet, true, opts.Palette)
 		if err != nil {
 			return err
+		}
+		// Persist the operator's manual ctrl+d / ctrl+a marks the moment
+		// the picker is confirmed — before any remote work or prod gate, so
+		// the edit survives even if the deploy is later declined or fails.
+		// Best-effort, mirroring the end-of-run auto-mark.
+		if !markDelta.isEmpty() {
+			if err := config.UpdateDeployedMarks(projectKey, targetKey, markDelta.added, markDelta.removed); err == nil {
+				opts.log("INFO", "history", "updated deploy marks", "",
+					[2]string{"marked", strconv.Itoa(len(markDelta.added))},
+					[2]string{"unmarked", strconv.Itoa(len(markDelta.removed))})
+			}
 		}
 	}
 	opts.log("INFO", "", "items selected", "",
@@ -500,17 +512,30 @@ func dirtyLabel(dm dirtyModule) string {
 	return "~ " + dm.name + "  ·  uncommitted (" + strconv.Itoa(len(dm.paths)) + " files)"
 }
 
+// deployMarkDelta is the net change to a target's deployed-SHA history made
+// by the operator's manual ctrl+d / ctrl+a toggles in the picker: SHAs to
+// add (newly marked) and SHAs to remove (a previously-deployed row un-muted).
+type deployMarkDelta struct {
+	added   []string
+	removed []string
+}
+
+func (d deployMarkDelta) isEmpty() bool { return len(d.added) == 0 && len(d.removed) == 0 }
+
 // pickDeployItems opens the multi-select picker over the dirty modules
 // (listed first — your current uncommitted work) and the recent commits,
 // then splits the chosen labels back into commits and dirty modules.
 // Commits whose full SHA is in deployedSet are passed as "deployed" labels
-// so the picker mutes them. An empty selection or a cancel maps to
-// ErrCancelled, matching the rest of deploy.
-func pickDeployItems(commits []deployCommit, dirty []dirtyModule, deployedSet map[string]bool, palette theme.Palette) ([]deployCommit, []dirtyModule, error) {
+// so the picker mutes them. When allowMark is true the commit rows become
+// markable (ctrl+d / ctrl+a toggle their deployed mark), and the returned
+// deployMarkDelta carries the net change against deployedSet for the caller
+// to persist; build mode passes false (no target to write to). An empty
+// selection or a cancel maps to ErrCancelled, matching the rest of deploy.
+func pickDeployItems(commits []deployCommit, dirty []dirtyModule, deployedSet map[string]bool, allowMark bool, palette theme.Palette) ([]deployCommit, []dirtyModule, deployMarkDelta, error) {
 	var labels []string
 	byCommit := make(map[string]deployCommit, len(commits))
 	byDirty := make(map[string]dirtyModule, len(dirty))
-	var deployedLabels []string
+	var deployedLabels, markableLabels []string
 
 	for _, dm := range dirty {
 		lbl := dirtyLabel(dm)
@@ -524,15 +549,18 @@ func pickDeployItems(commits []deployCommit, dirty []dirtyModule, deployedSet ma
 		if deployedSet[c.sha] {
 			deployedLabels = append(deployedLabels, lbl)
 		}
+		if allowMark {
+			markableLabels = append(markableLabels, lbl)
+		}
 	}
 
-	picked, canceled, err := runFuzzyPickerCore(
-		"Select commits / dirty modules to deploy", labels, nil, deployedLabels, palette, "")
+	picked, deployedFinal, canceled, err := runFuzzyPickerCore(
+		"Select commits / dirty modules to deploy", labels, nil, deployedLabels, markableLabels, palette, "")
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, deployMarkDelta{}, err
 	}
 	if canceled || len(picked) == 0 {
-		return nil, nil, ErrCancelled
+		return nil, nil, deployMarkDelta{}, ErrCancelled
 	}
 	var pickedCommits []deployCommit
 	var pickedDirty []dirtyModule
@@ -545,7 +573,29 @@ func pickDeployItems(commits []deployCommit, dirty []dirtyModule, deployedSet ma
 			pickedDirty = append(pickedDirty, dm)
 		}
 	}
-	return pickedCommits, pickedDirty, nil
+
+	// Diff the picker's final deployed marks against the incoming set to
+	// recover the manual edit. Removals are scoped to the SHAs actually
+	// shown (byCommit): a deployed SHA outside this commit window isn't
+	// represented in the picker and must not be treated as un-marked.
+	var delta deployMarkDelta
+	if allowMark {
+		finalSHAs := make(map[string]bool, len(deployedFinal))
+		for _, lbl := range deployedFinal {
+			if c, ok := byCommit[lbl]; ok {
+				finalSHAs[c.sha] = true
+				if !deployedSet[c.sha] {
+					delta.added = append(delta.added, c.sha)
+				}
+			}
+		}
+		for _, c := range commits {
+			if deployedSet[c.sha] && !finalSHAs[c.sha] {
+				delta.removed = append(delta.removed, c.sha)
+			}
+		}
+	}
+	return pickedCommits, pickedDirty, delta, nil
 }
 
 // resolveCommitModule maps one commit to its module: the subject scheme

@@ -56,6 +56,7 @@ type pickerItem struct {
 	selected bool
 	recent   bool // part of the previous run (e.g. last `update`); tinted
 	deployed bool // already deployed to this target (deploy picker); muted
+	markable bool // can toggle its deployed mark with ctrl+d / ctrl+a
 }
 
 // filterWidth gives the filter input a non-zero Width. bubbles' textinput
@@ -65,7 +66,7 @@ type pickerItem struct {
 // in full; the trailing padding is invisible spaces.
 const filterWidth = 48
 
-func newFuzzyPicker(title string, available, recent, deployed []string, palette theme.Palette) fuzzyPicker {
+func newFuzzyPicker(title string, available, recent, deployed, markable []string, palette theme.Palette) fuzzyPicker {
 	ti := textinput.New()
 	ti.Placeholder = "type to filter…"
 	ti.PlaceholderStyle = lipgloss.NewStyle().Foreground(palette.Faint)
@@ -80,9 +81,13 @@ func newFuzzyPicker(title string, available, recent, deployed []string, palette 
 	for _, d := range deployed {
 		deployedSet[d] = true
 	}
+	markableSet := make(map[string]bool, len(markable))
+	for _, mk := range markable {
+		markableSet[mk] = true
+	}
 	items := make([]pickerItem, len(available))
 	for i, n := range available {
-		items[i] = pickerItem{name: n, recent: recentSet[n], deployed: deployedSet[n]}
+		items[i] = pickerItem{name: n, recent: recentSet[n], deployed: deployedSet[n], markable: markableSet[n]}
 	}
 
 	m := fuzzyPicker{
@@ -174,6 +179,34 @@ func (m fuzzyPicker) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.items[idx].selected = !m.items[idx].selected
 			}
 			return m, nil
+		case "ctrl+d":
+			// Toggle the deployed mark on the highlighted row (deploy
+			// picker). Only commit rows are markable; a no-op otherwise.
+			if len(m.visible) > 0 {
+				idx := m.visible[m.cursor]
+				if m.items[idx].markable {
+					m.items[idx].deployed = !m.items[idx].deployed
+				}
+			}
+			return m, nil
+		case "ctrl+a":
+			// Bulk: mark every VISIBLE markable row deployed in one
+			// keystroke (clears the whole pending set, e.g. a new branch
+			// already on the server). Symmetric — if they're all already
+			// deployed, un-mark them. Respects the active filter.
+			anyPending := false
+			for _, vi := range m.visible {
+				if m.items[vi].markable && !m.items[vi].deployed {
+					anyPending = true
+					break
+				}
+			}
+			for _, vi := range m.visible {
+				if m.items[vi].markable {
+					m.items[vi].deployed = anyPending
+				}
+			}
+			return m, nil
 		case "up", "ctrl+p":
 			if m.cursor > 0 {
 				m.cursor--
@@ -242,6 +275,9 @@ func (m fuzzyPicker) View() string {
 	}
 	if m.hasDeployed() {
 		helpText += " · muted = already deployed"
+	}
+	if m.hasMarkable() {
+		helpText += " · ctrl+d mark · ctrl+a all"
 	}
 
 	bar := lipgloss.NewStyle().Foreground(m.accent).Render("│ ")
@@ -328,6 +364,17 @@ func (m fuzzyPicker) hasDeployed() bool {
 	return false
 }
 
+// hasMarkable reports whether any row can have its deployed mark toggled,
+// so the picker only advertises ctrl+d/ctrl+a when they do something.
+func (m fuzzyPicker) hasMarkable() bool {
+	for _, it := range m.items {
+		if it.markable {
+			return true
+		}
+	}
+	return false
+}
+
 func (m fuzzyPicker) selectedNames() []string {
 	var out []string
 	for _, it := range m.items {
@@ -338,37 +385,52 @@ func (m fuzzyPicker) selectedNames() []string {
 	return out
 }
 
+// deployedNames returns the labels of markable rows currently flagged
+// deployed — the final state after any ctrl+d / ctrl+a toggles, which the
+// deploy caller diffs against the initial set to persist the delta.
+func (m fuzzyPicker) deployedNames() []string {
+	var out []string
+	for _, it := range m.items {
+		if it.markable && it.deployed {
+			out = append(out, it.name)
+		}
+	}
+	return out
+}
+
 // runFuzzyPickerCore shows the multi-select and returns the selected
-// names, whether the user canceled (Esc / ctrl+c), and any run error. An
+// names, the final set of deployed-marked names (after any ctrl+d/ctrl+a
+// toggles), whether the user canceled (Esc / ctrl+c), and any run error. An
 // empty `picked` with `canceled == false` means Enter on an empty
 // selection — the caller decides what that means. `recent` tints the
-// previous run's items; `deployed` mutes the ones already deployed.
-func runFuzzyPickerCore(title string, available, recent, deployed []string, palette theme.Palette, stage string) (picked []string, canceled bool, err error) {
+// previous run's items; `deployed` mutes the ones already deployed;
+// `markable` are the rows whose deployed mark can be toggled in-picker.
+func runFuzzyPickerCore(title string, available, recent, deployed, markable []string, palette theme.Palette, stage string) (picked, deployedFinal []string, canceled bool, err error) {
 	if err := requireTTY("pass the selection as command arguments"); err != nil {
-		return nil, false, err
+		return nil, nil, false, err
 	}
-	m := newFuzzyPicker(title, available, recent, deployed, palette)
+	m := newFuzzyPicker(title, available, recent, deployed, markable, palette)
 	if stage != "" {
 		m.setAccent(palette.PromptColor(theme.StageFromString(stage)))
 	}
 	final, err := tea.NewProgram(m).Run()
 	if err != nil {
-		return nil, false, err
+		return nil, nil, false, err
 	}
 	fm := final.(fuzzyPicker)
 	if fm.quit {
-		return nil, false, ErrQuit
+		return nil, nil, false, ErrQuit
 	}
 	if fm.canceled {
-		return nil, true, nil
+		return nil, nil, true, nil
 	}
-	return fm.selectedNames(), false, nil
+	return fm.selectedNames(), fm.deployedNames(), false, nil
 }
 
 // runFuzzyPicker shows the picker and returns the selected items. Empty
 // selection or user cancel returns ErrCancelled.
 func runFuzzyPicker(title string, available []string, palette theme.Palette) ([]string, error) {
-	picked, canceled, err := runFuzzyPickerCore(title, available, nil, nil, palette, "")
+	picked, _, canceled, err := runFuzzyPickerCore(title, available, nil, nil, nil, palette, "")
 	if err != nil {
 		return nil, err
 	}
@@ -392,7 +454,7 @@ func runSingleFuzzyPickerStaged(title string, available []string, palette theme.
 	if err := requireTTY("pass the selection as a command argument"); err != nil {
 		return "", err
 	}
-	m := newFuzzyPicker(title, available, nil, nil, palette)
+	m := newFuzzyPicker(title, available, nil, nil, nil, palette)
 	m.single = true
 	if stage != "" {
 		m.setAccent(palette.PromptColor(theme.StageFromString(stage)))

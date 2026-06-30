@@ -68,3 +68,56 @@ func TestMarkDeployedEmptyNoop(t *testing.T) {
 		t.Errorf("empty mark should be a no-op, got %v", err)
 	}
 }
+
+func TestUpdateDeployedMarksAddAndRemove(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	pk, tk := "k", DeployTargetKey("prod", "/p")
+
+	// Add-only seeds the set (manual ctrl+d / ctrl+a on never-deployed commits).
+	if err := UpdateDeployedMarks(pk, tk, []string{"a", "b"}, nil); err != nil {
+		t.Fatalf("add: %v", err)
+	}
+	got := LoadDeployedSHAs(pk, tk)
+	if len(got) != 2 || !got["a"] || !got["b"] {
+		t.Fatalf("after add: %v", got)
+	}
+
+	// Mixed delta in one write: add c, remove a.
+	if err := UpdateDeployedMarks(pk, tk, []string{"c"}, []string{"a"}); err != nil {
+		t.Fatalf("mixed: %v", err)
+	}
+	got = LoadDeployedSHAs(pk, tk)
+	if got["a"] || !got["b"] || !got["c"] {
+		t.Errorf("mixed delta failed: %v", got)
+	}
+}
+
+func TestUnmarkDeployedAbsentNoop(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	pk, tk := "k", DeployTargetKey("prod", "/p")
+	_ = MarkDeployed(pk, tk, []string{"keep"})
+
+	// Removing an absent SHA leaves the set intact.
+	if err := UnmarkDeployed(pk, tk, []string{"ghost"}); err != nil {
+		t.Fatalf("unmark absent: %v", err)
+	}
+	got := LoadDeployedSHAs(pk, tk)
+	if !got["keep"] || got["ghost"] || len(got) != 1 {
+		t.Errorf("absent removal must be a no-op on the set: %v", got)
+	}
+
+	// Removing a present SHA drops exactly it.
+	if err := UnmarkDeployed(pk, tk, []string{"keep"}); err != nil {
+		t.Fatalf("unmark present: %v", err)
+	}
+	if len(LoadDeployedSHAs(pk, tk)) != 0 {
+		t.Error("removing the only SHA should empty the set")
+	}
+}
+
+func TestUpdateDeployedMarksEmptyNoop(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	if err := UpdateDeployedMarks("k", "t", nil, nil); err != nil {
+		t.Errorf("empty add+remove should be a no-op, got %v", err)
+	}
+}

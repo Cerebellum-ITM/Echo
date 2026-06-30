@@ -116,6 +116,73 @@ func MarkDeployed(projectKey, targetKey string, shas []string) error {
 	return writeAtomic(path, buf.Bytes())
 }
 
+// UpdateDeployedMarks applies a manual edit to the deployed set of
+// (projectKey, targetKey): it appends each SHA in add (deduped, prior
+// preserved) and strips each SHA in remove, in a single load-merge-write.
+// It is the persistence behind the deploy picker's manual ctrl+d / ctrl+a
+// marks. Empty add AND empty remove is a no-op. The result is capped at the
+// most-recent deployHistoryCap SHAs. Best-effort, mirroring MarkDeployed:
+// the error is returned but callers treat persistence as non-fatal.
+func UpdateDeployedMarks(projectKey, targetKey string, add, remove []string) error {
+	if len(add) == 0 && len(remove) == 0 {
+		return nil
+	}
+	path, err := deployHistoryPath(projectKey)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+
+	f := loadDeployHistory(projectKey)
+	if f.Targets == nil {
+		f.Targets = map[string]DeployTarget{}
+	}
+	t := f.Targets[targetKey]
+
+	removeSet := make(map[string]bool, len(remove))
+	for _, s := range remove {
+		removeSet[s] = true
+	}
+
+	seen := make(map[string]bool, len(t.SHAs)+len(add))
+	merged := make([]string, 0, len(t.SHAs)+len(add))
+	keep := func(s string) {
+		if removeSet[s] || seen[s] {
+			return
+		}
+		seen[s] = true
+		merged = append(merged, s)
+	}
+	for _, s := range t.SHAs {
+		keep(s)
+	}
+	for _, s := range add {
+		keep(s)
+	}
+	if len(merged) > deployHistoryCap {
+		merged = merged[len(merged)-deployHistoryCap:]
+	}
+
+	t.SHAs = merged
+	t.SavedAt = time.Now()
+	f.Targets[targetKey] = t
+
+	var buf bytes.Buffer
+	if err := toml.NewEncoder(&buf).Encode(f); err != nil {
+		return err
+	}
+	return writeAtomic(path, buf.Bytes())
+}
+
+// UnmarkDeployed removes shas from the deployed set of (projectKey,
+// targetKey) — a thin wrapper over UpdateDeployedMarks. A missing
+// file/target or absent SHAs is a no-op.
+func UnmarkDeployed(projectKey, targetKey string, shas []string) error {
+	return UpdateDeployedMarks(projectKey, targetKey, nil, shas)
+}
+
 // loadDeployHistory reads the full targetKey → DeployTarget table for a
 // project, returning a non-nil (possibly empty) struct so callers can
 // upsert safely.

@@ -28,7 +28,10 @@ func runDeployBuild(ctx context.Context, opts BuildOpts) (BuildResult, error) {
 			ErrNothingToBuild, opts.Command)
 	}
 
-	selected, selectedDirty, err := pickDeployItems(commits, dirty, nil, opts.Palette)
+	// Build mode resolves no remote target (the real deploy is deferred to
+	// flags), so there's nowhere to persist deploy marks — marking is
+	// disabled (allowMark=false) and the returned delta is empty.
+	selected, selectedDirty, _, err := pickDeployItems(commits, dirty, nil, false, opts.Palette)
 	if err != nil {
 		return BuildResult{}, err
 	}
@@ -51,10 +54,10 @@ func runDeployBuild(ctx context.Context, opts BuildOpts) (BuildResult, error) {
 
 	// Optional boolean flags for the run, mirroring the generic builder's
 	// flag step. --from/--limit/--commits/--modules are handled elsewhere.
-	picked, canceled, err := runFuzzyPickerCore(
+	picked, _, canceled, err := runFuzzyPickerCore(
 		"Deploy flags (Tab to toggle, Enter to confirm)",
 		[]string{"--dry-run", "--force", "--i18n", "--no-i18n"},
-		nil, nil, opts.Palette, opts.Cfg.Stage)
+		nil, nil, nil, opts.Palette, opts.Cfg.Stage)
 	if err != nil {
 		return BuildResult{}, err
 	}
