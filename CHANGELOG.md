@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.19.0] — 2026-06-29
+
 ### Added
 - **Marcado manual de commits como "desplegado" en el picker de `deploy`**
   (Unit 74). El historial de deploy se indexa por **SHA exacto**, así que
