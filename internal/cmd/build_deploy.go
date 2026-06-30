@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"strings"
+
+	"github.com/pascualchavez/echo/internal/config"
 )
 
 // runDeployBuild is the build-mode flow for `deploy`. Deploy's interactive
@@ -11,9 +13,11 @@ import (
 // run time — bad inside a sequence. This captures that selection up front and
 // bakes it into non-interactive `--commits`/`--modules` flags (plus an
 // optional flag pass), so the composed line is shown in review, saved by
-// `--last`, and runs unattended. The remote target is NOT resolved here: a
-// sequence bakes it (`--from`), and a standalone `deploy --build` lets deploy
-// resolve it at run time as usual.
+// `--last`, and runs unattended. The remote target is not resolved for
+// EXECUTION here — a sequence bakes it (`--from`) and a standalone
+// `deploy --build` lets deploy resolve it at run time — but it IS resolved
+// read-only (non-interactively) to load the deployed-SHA history, so the
+// picker mutes already-deployed commits exactly like the standalone deploy.
 func runDeployBuild(ctx context.Context, opts BuildOpts) (BuildResult, error) {
 	commits, err := gitRecentCommits(ctx, opts.Root, 20)
 	if err != nil {
@@ -28,10 +32,21 @@ func runDeployBuild(ctx context.Context, opts BuildOpts) (BuildResult, error) {
 			ErrNothingToBuild, opts.Command)
 	}
 
-	// Build mode resolves no remote target (the real deploy is deferred to
-	// flags), so there's nowhere to persist deploy marks — marking is
-	// disabled (allowMark=false) and the returned delta is empty.
-	selected, selectedDirty, _, err := pickDeployItems(commits, dirty, nil, false, opts.Palette)
+	// Build mode does no remote work, so manual ctrl+d / ctrl+a marks must NOT
+	// persist here (allowMark=false): the sequence's commit-point is its
+	// post-build review, not this picker, and persisting now would mark
+	// commits for a sequence the operator may still cancel. Muting, however,
+	// only READS the history — and the target IS known up front in a sequence
+	// (--from or the project [connect] binding). Resolve it non-interactively
+	// (no target picker at build time) so already-deployed commits render
+	// muted just like the standalone deploy picker; an unresolved target
+	// (no --from, no [connect]) degrades to an empty set — no muting.
+	var deployedSet map[string]bool
+	if sshHost, remotePath, rerr := resolvePullRemote(opts.Cfg, opts.From); rerr == nil {
+		deployedSet = config.LoadDeployedSHAs(config.ProjectKey(opts.Root),
+			config.DeployTargetKey(sshHost, remotePath))
+	}
+	selected, selectedDirty, _, err := pickDeployItems(commits, dirty, deployedSet, false, opts.Palette)
 	if err != nil {
 		return BuildResult{}, err
 	}

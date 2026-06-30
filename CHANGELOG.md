@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **El builder de `deploy` (dentro de `sequence --remote` / `--from`) ahora
+  atenúa los commits ya desplegados.** Al armar una secuencia, el picker de
+  commits de `deploy` mostraba **todos** los commits como pendientes —
+  ignorando el historial de "desplegado" que el `deploy` directo sí respeta.
+  La causa: `runDeployBuild` pasaba `deployedSet = nil` al picker,
+  confundiendo dos cosas distintas — poder **persistir** marcas manuales
+  (correcto deshabilitarlo en build: el commit-point de la secuencia es su
+  review, no este picker) con solo **mostrar atenuados** los ya enviados
+  (que únicamente lee el historial). En una secuencia el target se conoce de
+  antemano (`--from` o el binding `[connect]`), así que ahora se resuelve en
+  modo solo-lectura y se carga `deployedSet` para el muting; si no hay target
+  resoluble, degrada a sin-muting como antes. `allowMark` sigue en `false`.
+
 ## [0.19.0] — 2026-06-29
 
 ### Added
