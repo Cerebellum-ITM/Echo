@@ -8,6 +8,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **El builder de `i18n-pull` en `sequence` / `--build` elige varios módulos
+  a la vez** (Unit 77). `runI18nPullBuild` pasó de un picker de un módulo a
+  **multi-selección** (`runFuzzyPickerCore`, coloreado por el stage del
+  perfil remoto) y compone `i18n-pull <mod...> --lang=<lang> [--from=<name>]`
+  — el idioma va como flag explícito `--lang=` (Unit 76), así todos los
+  positionales son módulos sin ambigüedad y la línea vuelve a parsearse igual.
+  Con esto, una secuencia remota `deploy → i18n-pull` jala el `.po` de **todos**
+  los módulos desplegados en un solo paso, elegidos por adelantado en la
+  revisión (replicable con `sequence --last`). `--all`/`--installed` siguen sin
+  ofrecerse en el builder (para el flujo masivo usa el comando directo).
 - **`i18n-pull` puede traer varios módulos en una sola corrida** (Unit 76).
   Antes solo aceptaba un módulo o el todo-o-nada `--all`; ahora
   `i18n-pull sale account es_MX` trae el `es_MX.po` de ambos de un tiro. La

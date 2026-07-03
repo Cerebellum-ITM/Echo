@@ -10,12 +10,15 @@ import (
 // module candidates live on the remote, so the target must be resolved
 // first — unlike the local commands whose positional list is cheap. It
 // resolves a connect target (baking `--from=<name>` so the composed line is
-// reproducible), lists that remote's own modules for the picker, prompts
-// for the language, and composes `i18n-pull <module> <lang> [--from=<name>]`.
+// reproducible), lists that remote's own modules for a multi-select picker,
+// prompts for the language, and composes
+// `i18n-pull <mod...> --lang=<lang> [--from=<name>]`. The language is baked as
+// the explicit `--lang=` flag (not a trailing positional) so every positional
+// is unambiguously a module — see Unit 76's parser.
 //
-// `--all` / `--installed` are deliberately not offered here: once a single
-// module is picked they are meaningless (`--all` would ignore it, like
-// `update <mods> --all`). Use them directly if you want the bulk flow.
+// `--all` / `--installed` are deliberately not offered here: once modules are
+// hand-picked they are meaningless (`--all` would ignore them). Use them
+// directly if you want the bulk flow.
 func runI18nPullBuild(ctx context.Context, opts BuildOpts) (BuildResult, error) {
 	fromName, sshHost, remotePath, err := resolvePullBuildTarget(opts)
 	if err != nil {
@@ -23,28 +26,31 @@ func runI18nPullBuild(ctx context.Context, opts BuildOpts) (BuildResult, error) 
 	}
 
 	pullOpts := i18nPullBuildOpts(opts)
-	modules, err := remoteI18nModules(ctx, pullOpts, sshHost, remotePath)
+	modules, stage, err := remoteI18nModules(ctx, pullOpts, sshHost, remotePath)
 	if err != nil {
 		return BuildResult{}, err
 	}
 	if len(modules) == 0 {
 		return BuildResult{}, ErrNoModulesAvailable
 	}
-	module, err := runSingleFuzzyPicker("Module to pull translations for", modules, opts.Palette)
+	picked, _, canceled, err := runFuzzyPickerCore("Modules to pull translations for", modules, nil, nil, nil, opts.Palette, stage)
 	if err != nil {
 		return BuildResult{}, err
+	}
+	if canceled || len(picked) == 0 {
+		return BuildResult{}, ErrCancelled
 	}
 
 	lang, err := i18nLangInput(opts)
 	if err != nil {
 		return BuildResult{}, err
 	}
-	positionals := []string{module}
-	if lang != "" {
-		positionals = append(positionals, lang)
-	}
+	positionals := picked
 
 	var flags []chosenFlag
+	if lang != "" {
+		flags = append(flags, chosenFlag{name: "--lang", value: lang, sep: "="})
+	}
 	if fromName != "" {
 		flags = append(flags, chosenFlag{name: "--from", value: fromName, sep: "="})
 	}
@@ -107,7 +113,7 @@ func i18nPullBuildOpts(opts BuildOpts) I18nPullOpts {
 // default i18n-pull source: the modules under the remote addons paths),
 // making the same SSH round-trips RunI18nPull does — surfaced through the
 // adapter's Log so the waits aren't silent.
-func remoteI18nModules(ctx context.Context, pullOpts I18nPullOpts, sshHost, remotePath string) ([]string, error) {
+func remoteI18nModules(ctx context.Context, pullOpts I18nPullOpts, sshHost, remotePath string) ([]string, string, error) {
 	pullOpts.log("INFO", "remote", "target resolved", "",
 		[2]string{"host", sshHost}, [2]string{"path", remotePath})
 
@@ -117,7 +123,7 @@ func remoteI18nModules(ctx context.Context, pullOpts I18nPullOpts, sshHost, remo
 	pullOpts.log("INFO", "remote", "reading remote profile", "", [2]string{"host", sshHost})
 	prof, err := fetchRemoteProfile(ctx, ConnectOpts{Cfg: &cfgRemote, Root: pullOpts.Root})
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	target := connectTarget{
 		remote:        true,
@@ -130,8 +136,8 @@ func remoteI18nModules(ctx context.Context, pullOpts I18nPullOpts, sshHost, remo
 	pullOpts.log("INFO", "remote", "listing modules", prof.DBName, [2]string{"source", "project addons"})
 	mods, err := listRemoteConfModules(ctx, sshHost, remotePath, target, prof.ConfPath, prof.AddonsPaths)
 	if err != nil {
-		return nil, fmt.Errorf("list remote modules: %w", err)
+		return nil, prof.Stage, fmt.Errorf("list remote modules: %w", err)
 	}
 	pullOpts.log("INFO", "remote", fmt.Sprintf("%d module(s) found", len(mods)), prof.DBName)
-	return mods, nil
+	return mods, prof.Stage, nil
 }

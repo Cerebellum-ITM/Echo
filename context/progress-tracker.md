@@ -23,6 +23,23 @@ _(siguiente: Unit 14 — meta-commands. Fix deploy-build-muting: el builder de `
 
 ## Completed
 
+- [x] Unit 77 — i18n-pull-build-multi. El builder de `i18n-pull` que usan
+  `--build` y **cada paso `i18n-pull` en `sequence`** (`runI18nPullBuild`,
+  `internal/cmd/build_i18npull.go`) ahora elige **varios módulos** con
+  multi-selección (`runFuzzyPickerCore`, stage-colored por el perfil remoto)
+  y compone `i18n-pull <mod...> --lang=<lang> [--from=<name>]`. El idioma va
+  como flag `--lang=` (Unit 76) para que todos los positionales sean módulos
+  sin ambigüedad y la línea round-trip por `parseI18nPullArgs`.
+  `remoteI18nModules` ahora devuelve también el stage remoto. Habilita el
+  flujo pedido: secuencia remota `deploy → i18n-pull` que jala el `.po` de
+  todos los módulos desplegados en un paso (elegidos en la revisión,
+  replicable con `sequence --last`). `--all`/`--installed` siguen fuera del
+  builder. `i18n-pull` ya estaba en `sequenceCommands`/`remoteSequenceCommands`
+  y en `mustBuildInSequence`, así que `sequence.go` no cambió. Test de
+  round-trip `build_i18npull_test.go` (composeArgs → parseI18nPullArgs). Spec
+  `77-i18n-pull-build-multi.md` + fila en build plan + CHANGELOG. Build/vet/
+  test verdes; **pendiente verificación EN VIVO** en TTY contra un remoto.
+
 - [x] Unit 76 — i18n-pull-multi-module. `i18n-pull` ahora trae **varios
   módulos en una corrida**: `i18n-pull sale account es_MX`. El campo
   `i18nPullArgs.module` pasó a `modules []string`. La distinción
