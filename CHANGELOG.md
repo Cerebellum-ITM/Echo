@@ -8,6 +8,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **`i18n-pull` puede traer varios módulos en una sola corrida** (Unit 76).
+  Antes solo aceptaba un módulo o el todo-o-nada `--all`; ahora
+  `i18n-pull sale account es_MX` trae el `es_MX.po` de ambos de un tiro. La
+  ambigüedad módulo-vs-idioma se resuelve así: si el **último** positional
+  tiene forma de locale (`es`, `es_MX`, `pt_BR`, `sr@latin`; regex
+  `isLocale`) y hay dos o más positionales, ese es el idioma y el resto son
+  módulos; si no, todos son módulos y el idioma cae al default `es_MX`. Un
+  solo positional sigue siendo un módulo (compatibilidad con Unit 50). El
+  nuevo flag **`--lang <code>`** fija el idioma de forma explícita y hace que
+  **todos** los positionales sean módulos (escape hatch para módulos con
+  nombre parecido a un locale). El picker de `i18n-pull` sin argumentos pasa
+  a ser **multi-selección** (mismo `runFuzzyPickerCore` de
+  `install`/`update`/`test`, coloreado por el stage remoto). Una corrida de
+  varios módulos es un **batch**: un módulo que falla al exportar se salta con
+  `WARNING` y la corrida continúa, cerrando con el resumen `pull complete
+  pulled=N skipped=M` — igual que ya hacía `--all`. Un solo módulo sigue
+  fallando de inmediato. `--all` e `--installed` sin cambios; el build mode
+  de `i18n-pull` sigue siendo de un módulo.
 - **`test <mod...> --from <target>` / `--remote` corre la suite de tests de
   Odoo en una instancia remota** (Unit 75). Hasta ahora `test` solo tocaba
   el contenedor local; ahora acepta los mismos switches remotos que

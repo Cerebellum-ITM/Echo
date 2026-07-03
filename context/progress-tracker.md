@@ -23,6 +23,25 @@ _(siguiente: Unit 14 — meta-commands. Fix deploy-build-muting: el builder de `
 
 ## Completed
 
+- [x] Unit 76 — i18n-pull-multi-module. `i18n-pull` ahora trae **varios
+  módulos en una corrida**: `i18n-pull sale account es_MX`. El campo
+  `i18nPullArgs.module` pasó a `modules []string`. La distinción
+  módulo-vs-idioma: `--lang <code>` explícito (todos los positionales son
+  módulos), o heurística de locale final (si el último positional matchea
+  `isLocale` — regex `^[a-z]{2,3}(_[A-Z]{2})?(@[a-z]+)?$` — y hay ≥2
+  positionales, es el idioma; si no, todos son módulos, idioma default
+  `es_MX`); un solo positional sigue siendo módulo (compat Unit 50). El
+  picker vacío pasó de single a **multi-select** (`runFuzzyPickerCore`,
+  stage-colored). `batch := p.all || len(modules) > 1` reemplaza los checks
+  `p.all` del loop: en batch un módulo que falla se salta+warn y sigue,
+  cierra con `pull complete pulled/skipped`; single-módulo sigue fail-fast.
+  `--all`/`--installed` sin cambios; build mode de `i18n-pull` intacto.
+  Archivos: `internal/cmd/i18n_pull.go` (parser + `isLocale` + selección +
+  batch), help en `repl.go`, `commandFlags["i18n-pull"]` += `--lang`. Spec
+  `76-i18n-pull-multi-module.md` + fila en build plan + tests actualizados
+  (`i18n_pull_test.go`: tabla multi-módulo + `TestIsLocale`) + CHANGELOG.
+  Build/vet/test verdes; **pendiente verificación EN VIVO** contra un remoto.
+
 - [x] Unit 75 — remote-test. `test <mod...> --from <target>` / `--remote`
   corre la suite de tests de Odoo en una instancia **remota**, reusando el
   mismo transporte SSH que `deploy`/`shell-run`/`logs`/`restart`
