@@ -333,6 +333,7 @@ func helpSections() []helpSection {
 			{"test <mod...>", "Run tests for installed modules (filters to /<mod>)"},
 			{"  --update", "Reload modules first (adds -u; needed for XML/schema changes)"},
 			{"  --tags <spec>", "Override --test-tags (e.g. :TestX.test_y, -external)"},
+			{"  --from <t>", "Run the suite on a remote target (or --remote for the link binding)"},
 			{"modules", "List modules from configured addons paths"},
 			{"  --config", "Pick which folders are addons paths (form)"},
 			{"modinfo [<mod>]", "Compare DB-installed version vs manifest version"},

@@ -26,7 +26,7 @@ var commandFlags = map[string][]string{
 	"install":       {"--with-demo", "--level"},
 	"update":        {"--all", "--last", "--level", "--i18n", "--installed"},
 	"uninstall":     {"--level"},
-	"test":          {"--update", "--tags"},
+	"test":          {"--update", "--tags", "--from", "--remote"},
 	"modules":       {"--config"},
 	"modinfo":       {"--copy", "--last"},
 	"modstate":      {"--all", "--json"},

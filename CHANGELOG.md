@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **`test <mod...> --from <target>` / `--remote` corre la suite de tests de
+  Odoo en una instancia remota** (Unit 75). Hasta ahora `test` solo tocaba
+  el contenedor local; ahora acepta los mismos switches remotos que
+  `shell-run` / `deploy` / `logs` / `restart`: `--from <t>` nombra un target
+  global de `connect`, `--remote` usa el binding `[connect]` del directorio.
+  Reusa exactamente el transporte de `deploy`/`shell-run`
+  (`resolveRemoteShell` → `remoteContainerCmd` → `runSSHStream`): la conexión
+  (DB, host, credenciales) sale del **perfil remoto**, no de la config local,
+  y el argv de `odoo.Test` es idéntico al local (mismo `--test-tags`,
+  `--stop-after-init`, `--no-http --http-port=8189`, `--log-level=test`), así
+  que los logs se colorean igual que un test local. Los módulos se resuelven
+  **antes** de ramificar, así que el picker se comparte; `--tags` y
+  `--update` componen con el modo remoto. Como una corrida remota comparte el
+  Postgres del target, el modo remoto **gatea en prod** vía
+  `confirmRemoteProd` (confirmación roja; `--force` la salta; sin TTY falla
+  cerrado), a diferencia del `test` local que nunca gatea. Sin flag remoto,
+  `test` se comporta **exactamente igual que antes** (contenedor local). Los
+  tokens `--from <val>` / `--remote` se despojan antes de leer positionales,
+  así que el valor tras `--from` nunca se confunde con un módulo.
+
 ### Fixed
 - **El builder de `deploy` (dentro de `sequence --remote` / `--from`) ahora
   atenúa los commits ya desplegados.** Al armar una secuencia, el picker de

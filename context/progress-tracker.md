@@ -23,6 +23,29 @@ _(siguiente: Unit 14 — meta-commands. Fix deploy-build-muting: el builder de `
 
 ## Completed
 
+- [x] Unit 75 — remote-test. `test <mod...> --from <target>` / `--remote`
+  corre la suite de tests de Odoo en una instancia **remota**, reusando el
+  mismo transporte SSH que `deploy`/`shell-run`/`logs`/`restart`
+  (`resolveRemoteShell` → `remoteContainerCmd` → `runSSHStream`). La
+  conexión (DB/host/credenciales) sale del **perfil remoto**, no de la
+  config local; el argv de `odoo.Test` es idéntico al local (builder sin
+  cambios), así que los logs se colorean igual. Los módulos se resuelven
+  **antes** de ramificar (picker compartido); `--tags`/`--update` componen.
+  El modo remoto **gatea en prod** vía `confirmRemoteProd` (`--force` la
+  salta, sin TTY falla cerrado) — el `test` local sigue sin gatear. Los
+  tokens `--from <val>`/`--remote` se despojan antes de leer positionales
+  (el valor tras `--from` ya no se confunde con un módulo); nuevo parser
+  puro `parseTestArgs`. `requireOdooConfig` solo se exige en modo local, así
+  que el remoto corre projectless desde el repo de addons linkeado (`test`
+  añadido a `projectlessOneShot` en su modo remoto). Archivos:
+  `internal/cmd/test_remote.go` (`parseTestArgs` + `runTestRemote`),
+  `RunTest` ramificado en `internal/cmd/modules.go`, help en `repl.go`,
+  `commandFlags["test"]` += `--from`/`--remote`, `main.go`
+  `projectlessOneShot`. Spec `75-remote-test.md` + fila en build plan +
+  test `test_remote_test.go` (11 casos del parser) + CHANGELOG. Build/vet/
+  test verdes; **pendiente verificación EN VIVO** contra un target remoto
+  (muutrade→develop) por el usuario.
+
 - [x] Unit 74 — deploy-manual-mark. El picker de `deploy` gana marcado
   manual de "desplegado": **`ctrl+d`** togglea la marca del commit bajo el
   cursor y **`ctrl+a`** marca/desmarca en masa todas las filas visibles
