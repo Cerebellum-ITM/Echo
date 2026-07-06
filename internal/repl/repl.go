@@ -420,7 +420,9 @@ func helpSections() []helpSection {
 			{"  --i18n", "Force --i18n-overwrite on the update run (default: auto when i18n/ changed)"},
 			{"  --no-i18n", "Suppress --i18n-overwrite even when i18n/ changes are detected"},
 			{"  --commits <shas>", "Deploy these commits non-interactively (skips the picker)"},
-			{"  --modules <names>", "Deploy these dirty modules non-interactively (skips the picker)"},
+			{"  --modules <names>", "Deploy these modules non-interactively (skips the picker)"},
+			{"  --auto", "Headless: deploy pending commits (ahead of upstream) + dirty modules, no picker"},
+			{"  --json", "Emit a machine-readable deploy summary to stdout (logs to stderr)"},
 		}},
 		{"Session", []helpEntry{
 			{"copy-last", "Copy the last command's output to clipboard"},

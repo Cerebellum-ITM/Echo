@@ -23,6 +23,35 @@ _(siguiente: Unit 14 — meta-commands. Fix deploy-build-muting: el builder de `
 
 ## Completed
 
+- [x] Unit 78 — deploy-headless. `deploy` corre **sin picker** para
+  scripts/CI reusando el motor de la Unit 61 sin tocarlo — solo cambia de
+  dónde sale la lista de módulos. **`--modules m1,m2`** (ya existía para el
+  build mode) ahora se valida contra el repo local en `RunDeploy` (módulo sin
+  `__manifest__.py` → `ErrUsage`, exit 2, antes de tocar el remoto).
+  **`--auto`** auto-selecciona commits ahead-of-upstream (`gitAheadCommits`,
+  `@{upstream}..HEAD`; sin upstream degrada a nil sin error) menos los ya
+  desplegados (`deployedSet`) + todos los dirty (Unit 69); vacío → log
+  `nothing to deploy` y exit 0. Sin TTY y sin `--auto`/`--modules`, el default
+  interactivo falla cerrado con hint específico vía `requireTTY(...)` →
+  `ErrNonInteractive` (exit 2) antes de abrir el picker. `--auto` y
+  `--commits`/`--modules` mutuamente excluyentes. **`--json`**: `RunDeploy`
+  ahora devuelve `(DeployResult, error)` (`target/db/modules[]{name,action,ok}/
+  skipped/planned`); el wrapper `internal/repl/deploy.go` en modo `--json`
+  rutea logs+stream a **stderr** (nuevo `stderrOdooLogger`) y emite el objeto
+  (con `errors`/`warnings` de `runStats`) a **stdout** — patrón de `modstate
+  --json`. Nuevo sentinel `cmd.ErrUsage` (`interactive.go`) para mapear errores
+  de uso a exit 2 en el wrapper. Archivos: `internal/cmd/deploy.go`
+  (parser+validación+`--auto`+`DeployResult`+`gitAheadCommits`+firma),
+  `internal/cmd/interactive.go` (`ErrUsage`), `internal/repl/deploy.go`
+  (json+exit), `internal/repl/link.go` (`stderrOdooLogger`), help en `repl.go`,
+  `commandFlags["deploy"]` += `--auto`/`--json`. Tests `deploy_test.go`
+  (parser `--auto`/`--json`/exclusión, `ErrUsage` wrap, `gitAheadCommits`
+  no-upstream). Spec `78-deploy-headless.md` (ya existía) + fila en build plan
+  + CHANGELOG. Build/vet/test verdes; smoke-test de exit-2 y stdout-limpio en
+  `--json` OK. **Pendiente verificación EN VIVO** de un `--auto`/`--json`
+  contra un remoto real. Nota: no se tocó `architecture.md` (doc de alto nivel,
+  no enumera comandos; la unidad no cambia la arquitectura).
+
 - [x] Unit 77 — i18n-pull-build-multi. El builder de `i18n-pull` que usan
   `--build` y **cada paso `i18n-pull` en `sequence`** (`runI18nPullBuild`,
   `internal/cmd/build_i18npull.go`) ahora elige **varios módulos** con

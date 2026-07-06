@@ -56,6 +56,14 @@ type deployArgs struct {
 	// opens its interactive picker as before.
 	commits []string
 	modules []string
+	// auto auto-selects the pending work (commits ahead of upstream, minus
+	// already-deployed, plus every dirty module) and skips the picker — the
+	// headless counterpart of the default selection. Mutually exclusive with
+	// commits/modules.
+	auto bool
+	// jsonOut emits a machine-readable deploy summary instead of the decorated
+	// stream (the caller routes it to stdout, logs to stderr).
+	jsonOut bool
 }
 
 // parseDeployArgs extracts --from/--limit/--dry-run/--force/--i18n/--no-i18n
@@ -111,20 +119,52 @@ func parseDeployArgs(args []string) (deployArgs, error) {
 				return out, fmt.Errorf("--limit takes a positive number, got %q", v)
 			}
 			out.limit = n
+		case a == "--auto":
+			out.auto = true
+		case a == "--json":
+			out.jsonOut = true
 		case a == "--dry-run":
 			out.dryRun = true
 		case a == "--force":
 			out.force = true
 		case strings.HasPrefix(a, "-"):
-			return out, fmt.Errorf("unknown flag: %s", a)
+			return out, fmt.Errorf("%w: unknown flag: %s", ErrUsage, a)
 		default:
-			return out, fmt.Errorf("deploy takes no positional arguments (commits are picked interactively)")
+			return out, fmt.Errorf("%w: deploy takes no positional arguments (commits are picked interactively)", ErrUsage)
 		}
 	}
 	if out.i18n && out.noI18n {
-		return out, fmt.Errorf("--i18n and --no-i18n are mutually exclusive")
+		return out, fmt.Errorf("%w: --i18n and --no-i18n are mutually exclusive", ErrUsage)
+	}
+	if out.auto && (len(out.commits) > 0 || len(out.modules) > 0) {
+		return out, fmt.Errorf("%w: --auto cannot be combined with --commits/--modules", ErrUsage)
 	}
 	return out, nil
+}
+
+// DeployModule is one module in a deploy summary: its resolved name, the
+// action taken (`install` / `update`), and whether the remote run for it
+// succeeded (false while planned/dry-run or on failure).
+type DeployModule struct {
+	Name   string `json:"name"`
+	Action string `json:"action"`
+	OK     bool   `json:"ok"`
+}
+
+// DeployResult is the machine-readable summary of a deploy, emitted as JSON
+// by the caller under `--json`. Errors/warnings are added by the REPL layer
+// from its stream counters (runStats), so they aren't fields here.
+type DeployResult struct {
+	Target  string         `json:"target"`
+	DB      string         `json:"db"`
+	Modules []DeployModule `json:"modules"`
+	Skipped int            `json:"skipped"`
+	// Planned is true for a --dry-run: the plan resolved but nothing ran, so
+	// every module's OK stays false.
+	Planned bool `json:"planned,omitempty"`
+	// JSON echoes whether the caller asked for --json, so the REPL wrapper can
+	// route output without re-parsing the args.
+	JSON bool `json:"-"`
 }
 
 // deployCommit is one local commit offered in the picker.
@@ -159,15 +199,24 @@ var deploySubjectRe = regexp.MustCompile(`^\[[^\]]+\]\s*([A-Za-z0-9_]+)\s*:`)
 // remote `ir_module_module` state, then — plan shown, prod gated — a
 // streamed remote `stop` → `up -d` → one combined `-i`/`-u` Odoo run.
 // Pre-condition: the new code is already pulled on the server.
-func RunDeploy(ctx context.Context, opts DeployOpts) error {
+func RunDeploy(ctx context.Context, opts DeployOpts) (DeployResult, error) {
 	p, err := parseDeployArgs(opts.Args)
 	if err != nil {
-		return err
+		return DeployResult{}, err
+	}
+
+	// Validate an explicit --modules list against the local repo before any
+	// remote work: a name that isn't an addon here (no __manifest__.py) is a
+	// usage error, caught early so we never touch the server for a typo.
+	for _, m := range p.modules {
+		if !isAddonDir(opts.Root, m) {
+			return DeployResult{}, fmt.Errorf("%w: module %q is not an addon in %s (no __manifest__.py)", ErrUsage, m, opts.Root)
+		}
 	}
 
 	sshHost, remotePath, fromName, err := resolveDeployRemote(opts, p.from)
 	if err != nil {
-		return err
+		return DeployResult{}, err
 	}
 	opts.log("INFO", "remote", "target resolved", "",
 		[2]string{"host", sshHost}, [2]string{"path", remotePath})
@@ -189,27 +238,50 @@ func RunDeploy(ctx context.Context, opts DeployOpts) error {
 
 	var selected []deployCommit
 	var selectedDirty []dirtyModule
-	if len(p.commits) > 0 || len(p.modules) > 0 {
+	switch {
+	case p.auto:
+		// Headless auto-selection: commits ahead of upstream (minus the ones
+		// already deployed to this target) + every dirty module. An empty set
+		// is a clean no-op, not an error.
+		ahead, aerr := gitAheadCommits(ctx, opts.Root)
+		if aerr != nil {
+			return DeployResult{}, aerr
+		}
+		for _, c := range ahead {
+			if !deployedSet[c.sha] {
+				selected = append(selected, c)
+			}
+		}
+		selectedDirty = dirty
+		if len(selected) == 0 && len(selectedDirty) == 0 {
+			opts.log("INFO", "", "nothing to deploy", "",
+				[2]string{"reason", "no pending commits or dirty modules"})
+			return DeployResult{Target: fromName, JSON: p.jsonOut}, nil
+		}
+	case len(p.commits) > 0 || len(p.modules) > 0:
 		// Non-interactive selection (deploy builder / sequence / --last):
 		// resolve the SHAs and module names straight from the flags, no picker.
 		selected, selectedDirty = deploySelectionFromFlags(ctx, opts, p, dirty)
 		if len(selected) == 0 && len(selectedDirty) == 0 {
-			return fmt.Errorf("no deployable items: --commits/--modules resolved to nothing")
+			return DeployResult{}, fmt.Errorf("%w: no deployable items: --commits/--modules resolved to nothing", ErrUsage)
 		}
-	} else {
-		// Commit selection — interactive by design; a headless run fails
-		// closed inside the picker (ErrNonInteractive).
+	default:
+		// Commit selection — interactive by design. Without a TTY (script/CI)
+		// fail closed with a deploy-specific hint before opening the picker.
+		if terr := requireTTY("deploy needs a selection without a TTY: pass --auto or --modules"); terr != nil {
+			return DeployResult{}, terr
+		}
 		commits, cerr := gitRecentCommits(ctx, opts.Root, p.limit)
 		if cerr != nil {
-			return cerr
+			return DeployResult{}, cerr
 		}
 		if len(commits) == 0 {
-			return fmt.Errorf("no commits found in %s", opts.Root)
+			return DeployResult{}, fmt.Errorf("no commits found in %s", opts.Root)
 		}
 		var markDelta deployMarkDelta
 		selected, selectedDirty, markDelta, err = pickDeployItems(commits, dirty, deployedSet, true, opts.Palette)
 		if err != nil {
-			return err
+			return DeployResult{}, err
 		}
 		// Persist the operator's manual ctrl+d / ctrl+a marks the moment
 		// the picker is confirmed — before any remote work or prod gate, so
@@ -295,7 +367,7 @@ func RunDeploy(ctx context.Context, opts DeployOpts) error {
 		}
 	}
 	if len(modules) == 0 {
-		return fmt.Errorf("no deployable modules: every selected commit was skipped")
+		return DeployResult{}, fmt.Errorf("no deployable modules: every selected commit was skipped")
 	}
 	sort.Strings(modules)
 
@@ -306,7 +378,7 @@ func RunDeploy(ctx context.Context, opts DeployOpts) error {
 	opts.log("INFO", "remote", "reading remote profile", "", [2]string{"host", sshHost})
 	prof, err := fetchRemoteProfile(ctx, ConnectOpts{Cfg: &cfgRemote, Root: opts.Root})
 	if err != nil {
-		return err
+		return DeployResult{}, err
 	}
 	target := connectTarget{
 		remote:        true,
@@ -331,9 +403,25 @@ func RunDeploy(ctx context.Context, opts DeployOpts) error {
 	opts.log("INFO", "remote", "querying installed modules", prof.DBName)
 	states, err := remoteModuleStates(ctx, sshHost, remotePath, target, conn.User, target.dbName)
 	if err != nil {
-		return fmt.Errorf("query remote module states: %w", err)
+		return DeployResult{}, fmt.Errorf("query remote module states: %w", err)
 	}
 	install, update := splitInstallUpdate(modules, states)
+
+	// Machine-readable summary — update-set first, then install-set (mirrors
+	// the run fields). OK flips to true only after a successful remote run.
+	result := DeployResult{
+		Target:  fromName,
+		DB:      prof.DBName,
+		Skipped: skipped,
+		Planned: p.dryRun,
+		JSON:    p.jsonOut,
+	}
+	for _, m := range update {
+		result.Modules = append(result.Modules, DeployModule{Name: m, Action: "update"})
+	}
+	for _, m := range install {
+		result.Modules = append(result.Modules, DeployModule{Name: m, Action: "install"})
+	}
 
 	// --i18n-overwrite decision. Only update-set modules count: a fresh
 	// install loads translations anyway. The flag is global to the one
@@ -365,11 +453,11 @@ func RunDeploy(ctx context.Context, opts DeployOpts) error {
 
 	if p.dryRun {
 		opts.log("INFO", "", "dry-run — nothing executed", prof.DBName)
-		return nil
+		return result, nil
 	}
 	if strings.EqualFold(target.stage, "prod") && !p.force {
 		if err := confirmProd(opts.Palette, "deploy", target.dbName); err != nil {
-			return err
+			return DeployResult{}, err
 		}
 	}
 
@@ -383,10 +471,10 @@ func RunDeploy(ctx context.Context, opts DeployOpts) error {
 		return nil
 	}
 	if err := step("stop", remoteComposeCmd(remotePath, target.composeCmd, "stop")); err != nil {
-		return err
+		return DeployResult{}, err
 	}
 	if err := step("up -d", remoteComposeCmd(remotePath, target.composeCmd, "up", "-d")); err != nil {
-		return err
+		return DeployResult{}, err
 	}
 	// Name the modules and the effective i18n flag right at the Odoo run, so
 	// the execution line mirrors `update`'s start line.
@@ -403,7 +491,11 @@ func RunDeploy(ctx context.Context, opts DeployOpts) error {
 	opts.log("INFO", "odoo", "running module install/update", prof.DBName, runFields...)
 	argv := odoo.WithI18nOverwrite(odoo.InstallUpdate(conn, install, update), overwrite)
 	if err := runSSHStream(ctx, sshHost, remoteContainerCmd(remotePath, target, argv), nil, opts.StreamOut); err != nil {
-		return fmt.Errorf("odoo run failed: %w", err)
+		return DeployResult{}, fmt.Errorf("odoo run failed: %w", err)
+	}
+	// The remote run landed: every resolved module deployed OK.
+	for i := range result.Modules {
+		result.Modules[i].OK = true
 	}
 
 	// The run succeeded: remember the deployed commits for this target so a
@@ -418,7 +510,7 @@ func RunDeploy(ctx context.Context, opts DeployOpts) error {
 		[2]string{"update", strconv.Itoa(len(update))},
 		[2]string{"install", strconv.Itoa(len(install))},
 		[2]string{"skipped", strconv.Itoa(skipped)})
-	return nil
+	return result, nil
 }
 
 // splitCSV splits a comma-separated flag value into trimmed, non-empty
@@ -737,6 +829,34 @@ func gitRecentCommits(ctx context.Context, root string, n int) ([]deployCommit, 
 	out, err := gitOutput(ctx, root, "log", "-n", strconv.Itoa(n), "--pretty=format:%H%x1f%s")
 	if err != nil {
 		return nil, fmt.Errorf("git log: %w", err)
+	}
+	var commits []deployCommit
+	for _, line := range strings.Split(strings.TrimRight(string(out), "\n"), "\n") {
+		sha, subject, ok := strings.Cut(line, "\x1f")
+		if !ok || sha == "" {
+			continue
+		}
+		commits = append(commits, deployCommit{sha: sha, subject: subject})
+	}
+	return commits, nil
+}
+
+// gitAheadCommits lists the commits on the current branch that are ahead of
+// its upstream (`@{upstream}..HEAD`), newest first — the "not yet pushed"
+// set --auto deploys. Returns a nil slice with no error when the branch has
+// no upstream configured (a common case for a fresh feature branch): --auto
+// then falls back to dirty modules only.
+func gitAheadCommits(ctx context.Context, root string) ([]deployCommit, error) {
+	out, err := gitOutput(ctx, root, "log", "@{upstream}..HEAD", "--pretty=format:%H%x1f%s")
+	if err != nil {
+		// No upstream (or a detached HEAD) is not fatal: treat it as "nothing
+		// ahead" so --auto still deploys the dirty modules.
+		if strings.Contains(err.Error(), "no upstream") ||
+			strings.Contains(err.Error(), "unknown revision") ||
+			strings.Contains(err.Error(), "@{upstream}") {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("git log ahead: %w", err)
 	}
 	var commits []deployCommit
 	for _, line := range strings.Split(strings.TrimRight(string(out), "\n"), "\n") {

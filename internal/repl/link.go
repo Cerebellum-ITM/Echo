@@ -3,6 +3,7 @@ package repl
 import (
 	"context"
 	"errors"
+	"os"
 
 	"github.com/charmbracelet/huh"
 	"github.com/pascualchavez/echo/internal/cmd"
@@ -62,5 +63,27 @@ func (sess *session) cmdOdooLogger(name string) func(level, sub, msg, db string,
 			lf = append(lf, logField{f[0], f[1]})
 		}
 		emitOdooLog(level, logger, msg, lf, sess.styles, sess.palette, db)
+	}
+}
+
+// stderrOdooLogger is cmdOdooLogger routed to stderr — used by `--json`
+// command modes so progress lines don't pollute the JSON on stdout.
+func (sess *session) stderrOdooLogger(name string) func(level, sub, msg, db string, fields ...[2]string) {
+	return func(level, sub, msg, db string, fields ...[2]string) {
+		logger := "echo." + name
+		switch {
+		case sub == "system":
+			logger = "echo.system.status"
+		case sub != "":
+			logger += "." + sub
+		}
+		if db == "" {
+			db = sess.cfg.DBName
+		}
+		lf := make([]logField, 0, len(fields))
+		for _, f := range fields {
+			lf = append(lf, logField{f[0], f[1]})
+		}
+		emitOdooLogTo(os.Stderr, level, logger, msg, lf, sess.styles, sess.palette, db)
 	}
 }

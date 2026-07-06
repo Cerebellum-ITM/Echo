@@ -8,6 +8,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **`deploy` headless para scripts / CI** (Unit 78). Hasta ahora `deploy`
+  resolvía los módulos con un multi-select picker de commits, así que sin TTY
+  fallaba cerrado y no era invocable desde un script. Ahora dos vías
+  explícitas saltan el picker reusando el motor de la Unit 61 sin tocarlo:
+  **`deploy --modules m1,m2`** (lista explícita, validada contra el repo
+  local — un módulo sin `__manifest__.py` es error de uso, exit `2`, antes de
+  tocar el remoto) y **`deploy --auto`** (auto-selecciona los commits
+  pendientes —ahead of upstream, menos los ya desplegados— más todos los
+  módulos dirty; si no hay nada pendiente imprime `nothing to deploy` y sale
+  `0`). Sin TTY y sin `--auto`/`--modules`, `deploy` falla cerrado con un hint
+  específico (`ErrNonInteractive` → exit `2`). Con TTY y sin flags, el picker
+  sigue igual (cero regresión). **`deploy --json`** emite un resumen
+  parseable (`target`, `db`, `modules[]{name,action,ok}`, `skipped`,
+  `errors`, `warnings`, `planned`) a `stdout` con los logs a `stderr` (mismo
+  patrón que `modstate --json`); `--dry-run --json` añade `planned:true` sin
+  ejecutar nada remoto. Nuevo sentinel `ErrUsage` para mapear errores de uso a
+  exit `2`. `--auto` y `--modules` son mutuamente excluyentes.
 - **El builder de `i18n-pull` en `sequence` / `--build` elige varios módulos
   a la vez** (Unit 77). `runI18nPullBuild` pasó de un picker de un módulo a
   **multi-selección** (`runFuzzyPickerCore`, coloreado por el stage del
