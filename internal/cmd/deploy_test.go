@@ -1,7 +1,10 @@
 package cmd
 
 import (
+	"context"
+	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"testing"
@@ -31,6 +34,11 @@ func TestParseDeployArgs(t *testing.T) {
 		{[]string{"--modules=sale,account"}, deployArgs{limit: 20, modules: []string{"sale", "account"}}, false},
 		{[]string{"--commits"}, deployArgs{}, true},
 		{[]string{"--modules"}, deployArgs{}, true},
+		{[]string{"--auto"}, deployArgs{limit: 20, auto: true}, false},
+		{[]string{"--json"}, deployArgs{limit: 20, jsonOut: true}, false},
+		{[]string{"--auto", "--json", "--dry-run"}, deployArgs{limit: 20, auto: true, jsonOut: true, dryRun: true}, false},
+		{[]string{"--auto", "--modules=sale"}, deployArgs{}, true},  // mutually exclusive
+		{[]string{"--auto", "--commits=a1b2"}, deployArgs{}, true}, // mutually exclusive
 	}
 	for _, tc := range cases {
 		got, err := parseDeployArgs(tc.in)
@@ -215,5 +223,56 @@ func TestIsAddonDirRejectsPathTricks(t *testing.T) {
 	}
 	if isAddonDir(root, "") {
 		t.Fatal("empty name must be rejected")
+	}
+}
+
+// TestParseDeployArgsUsageErrors asserts the caller-mistake paths wrap
+// ErrUsage so the REPL/one-shot layer maps them to exit code 2.
+func TestParseDeployArgsUsageErrors(t *testing.T) {
+	for _, in := range [][]string{
+		{"--bogus"},
+		{"positional"},
+		{"--i18n", "--no-i18n"},
+		{"--auto", "--modules=sale"},
+		{"--auto", "--commits=a1b2"},
+	} {
+		_, err := parseDeployArgs(in)
+		if !errors.Is(err, ErrUsage) {
+			t.Errorf("parseDeployArgs(%v) err = %v, want wraps ErrUsage", in, err)
+		}
+	}
+}
+
+// TestGitAheadCommitsNoUpstream verifies the --auto helper degrades to an
+// empty set (no error) when the branch has no upstream, so --auto still
+// falls back to dirty modules instead of failing.
+func TestGitAheadCommitsNoUpstream(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	root := t.TempDir()
+	run := func(args ...string) {
+		t.Helper()
+		c := exec.Command("git", append([]string{"-C", root}, args...)...)
+		c.Env = append(os.Environ(),
+			"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t",
+			"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t")
+		if out, err := c.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	run("init")
+	if err := os.WriteFile(filepath.Join(root, "f"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	run("add", ".")
+	run("commit", "-m", "init")
+
+	commits, err := gitAheadCommits(context.Background(), root)
+	if err != nil {
+		t.Fatalf("gitAheadCommits with no upstream: %v", err)
+	}
+	if len(commits) != 0 {
+		t.Errorf("no-upstream ahead = %v, want empty", commits)
 	}
 }

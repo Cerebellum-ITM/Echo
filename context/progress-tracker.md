@@ -23,6 +23,94 @@ _(siguiente: Unit 14 — meta-commands. Fix deploy-build-muting: el builder de `
 
 ## Completed
 
+- [x] Unit 78 — deploy-headless. `deploy` corre **sin picker** para
+  scripts/CI reusando el motor de la Unit 61 sin tocarlo — solo cambia de
+  dónde sale la lista de módulos. **`--modules m1,m2`** (ya existía para el
+  build mode) ahora se valida contra el repo local en `RunDeploy` (módulo sin
+  `__manifest__.py` → `ErrUsage`, exit 2, antes de tocar el remoto).
+  **`--auto`** auto-selecciona commits ahead-of-upstream (`gitAheadCommits`,
+  `@{upstream}..HEAD`; sin upstream degrada a nil sin error) menos los ya
+  desplegados (`deployedSet`) + todos los dirty (Unit 69); vacío → log
+  `nothing to deploy` y exit 0. Sin TTY y sin `--auto`/`--modules`, el default
+  interactivo falla cerrado con hint específico vía `requireTTY(...)` →
+  `ErrNonInteractive` (exit 2) antes de abrir el picker. `--auto` y
+  `--commits`/`--modules` mutuamente excluyentes. **`--json`**: `RunDeploy`
+  ahora devuelve `(DeployResult, error)` (`target/db/modules[]{name,action,ok}/
+  skipped/planned`); el wrapper `internal/repl/deploy.go` en modo `--json`
+  rutea logs+stream a **stderr** (nuevo `stderrOdooLogger`) y emite el objeto
+  (con `errors`/`warnings` de `runStats`) a **stdout** — patrón de `modstate
+  --json`. Nuevo sentinel `cmd.ErrUsage` (`interactive.go`) para mapear errores
+  de uso a exit 2 en el wrapper. Archivos: `internal/cmd/deploy.go`
+  (parser+validación+`--auto`+`DeployResult`+`gitAheadCommits`+firma),
+  `internal/cmd/interactive.go` (`ErrUsage`), `internal/repl/deploy.go`
+  (json+exit), `internal/repl/link.go` (`stderrOdooLogger`), help en `repl.go`,
+  `commandFlags["deploy"]` += `--auto`/`--json`. Tests `deploy_test.go`
+  (parser `--auto`/`--json`/exclusión, `ErrUsage` wrap, `gitAheadCommits`
+  no-upstream). Spec `78-deploy-headless.md` (ya existía) + fila en build plan
+  + CHANGELOG. Build/vet/test verdes; smoke-test de exit-2 y stdout-limpio en
+  `--json` OK. **Pendiente verificación EN VIVO** de un `--auto`/`--json`
+  contra un remoto real. Nota: no se tocó `architecture.md` (doc de alto nivel,
+  no enumera comandos; la unidad no cambia la arquitectura).
+
+- [x] Unit 77 — i18n-pull-build-multi. El builder de `i18n-pull` que usan
+  `--build` y **cada paso `i18n-pull` en `sequence`** (`runI18nPullBuild`,
+  `internal/cmd/build_i18npull.go`) ahora elige **varios módulos** con
+  multi-selección (`runFuzzyPickerCore`, stage-colored por el perfil remoto)
+  y compone `i18n-pull <mod...> --lang=<lang> [--from=<name>]`. El idioma va
+  como flag `--lang=` (Unit 76) para que todos los positionales sean módulos
+  sin ambigüedad y la línea round-trip por `parseI18nPullArgs`.
+  `remoteI18nModules` ahora devuelve también el stage remoto. Habilita el
+  flujo pedido: secuencia remota `deploy → i18n-pull` que jala el `.po` de
+  todos los módulos desplegados en un paso (elegidos en la revisión,
+  replicable con `sequence --last`). `--all`/`--installed` siguen fuera del
+  builder. `i18n-pull` ya estaba en `sequenceCommands`/`remoteSequenceCommands`
+  y en `mustBuildInSequence`, así que `sequence.go` no cambió. Test de
+  round-trip `build_i18npull_test.go` (composeArgs → parseI18nPullArgs). Spec
+  `77-i18n-pull-build-multi.md` + fila en build plan + CHANGELOG. Build/vet/
+  test verdes; **pendiente verificación EN VIVO** en TTY contra un remoto.
+
+- [x] Unit 76 — i18n-pull-multi-module. `i18n-pull` ahora trae **varios
+  módulos en una corrida**: `i18n-pull sale account es_MX`. El campo
+  `i18nPullArgs.module` pasó a `modules []string`. La distinción
+  módulo-vs-idioma: `--lang <code>` explícito (todos los positionales son
+  módulos), o heurística de locale final (si el último positional matchea
+  `isLocale` — regex `^[a-z]{2,3}(_[A-Z]{2})?(@[a-z]+)?$` — y hay ≥2
+  positionales, es el idioma; si no, todos son módulos, idioma default
+  `es_MX`); un solo positional sigue siendo módulo (compat Unit 50). El
+  picker vacío pasó de single a **multi-select** (`runFuzzyPickerCore`,
+  stage-colored). `batch := p.all || len(modules) > 1` reemplaza los checks
+  `p.all` del loop: en batch un módulo que falla se salta+warn y sigue,
+  cierra con `pull complete pulled/skipped`; single-módulo sigue fail-fast.
+  `--all`/`--installed` sin cambios; build mode de `i18n-pull` intacto.
+  Archivos: `internal/cmd/i18n_pull.go` (parser + `isLocale` + selección +
+  batch), help en `repl.go`, `commandFlags["i18n-pull"]` += `--lang`. Spec
+  `76-i18n-pull-multi-module.md` + fila en build plan + tests actualizados
+  (`i18n_pull_test.go`: tabla multi-módulo + `TestIsLocale`) + CHANGELOG.
+  Build/vet/test verdes; **pendiente verificación EN VIVO** contra un remoto.
+
+- [x] Unit 75 — remote-test. `test <mod...> --from <target>` / `--remote`
+  corre la suite de tests de Odoo en una instancia **remota**, reusando el
+  mismo transporte SSH que `deploy`/`shell-run`/`logs`/`restart`
+  (`resolveRemoteShell` → `remoteContainerCmd` → `runSSHStream`). La
+  conexión (DB/host/credenciales) sale del **perfil remoto**, no de la
+  config local; el argv de `odoo.Test` es idéntico al local (builder sin
+  cambios), así que los logs se colorean igual. Los módulos se resuelven
+  **antes** de ramificar (picker compartido); `--tags`/`--update` componen.
+  El modo remoto **gatea en prod** vía `confirmRemoteProd` (`--force` la
+  salta, sin TTY falla cerrado) — el `test` local sigue sin gatear. Los
+  tokens `--from <val>`/`--remote` se despojan antes de leer positionales
+  (el valor tras `--from` ya no se confunde con un módulo); nuevo parser
+  puro `parseTestArgs`. `requireOdooConfig` solo se exige en modo local, así
+  que el remoto corre projectless desde el repo de addons linkeado (`test`
+  añadido a `projectlessOneShot` en su modo remoto). Archivos:
+  `internal/cmd/test_remote.go` (`parseTestArgs` + `runTestRemote`),
+  `RunTest` ramificado en `internal/cmd/modules.go`, help en `repl.go`,
+  `commandFlags["test"]` += `--from`/`--remote`, `main.go`
+  `projectlessOneShot`. Spec `75-remote-test.md` + fila en build plan +
+  test `test_remote_test.go` (11 casos del parser) + CHANGELOG. Build/vet/
+  test verdes; **pendiente verificación EN VIVO** contra un target remoto
+  (muutrade→develop) por el usuario.
+
 - [x] Unit 74 — deploy-manual-mark. El picker de `deploy` gana marcado
   manual de "desplegado": **`ctrl+d`** togglea la marca del commit bajo el
   cursor y **`ctrl+a`** marca/desmarca en masa todas las filas visibles

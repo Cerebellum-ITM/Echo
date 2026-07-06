@@ -7,6 +7,72 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **`deploy` headless para scripts / CI** (Unit 78). Hasta ahora `deploy`
+  resolvía los módulos con un multi-select picker de commits, así que sin TTY
+  fallaba cerrado y no era invocable desde un script. Ahora dos vías
+  explícitas saltan el picker reusando el motor de la Unit 61 sin tocarlo:
+  **`deploy --modules m1,m2`** (lista explícita, validada contra el repo
+  local — un módulo sin `__manifest__.py` es error de uso, exit `2`, antes de
+  tocar el remoto) y **`deploy --auto`** (auto-selecciona los commits
+  pendientes —ahead of upstream, menos los ya desplegados— más todos los
+  módulos dirty; si no hay nada pendiente imprime `nothing to deploy` y sale
+  `0`). Sin TTY y sin `--auto`/`--modules`, `deploy` falla cerrado con un hint
+  específico (`ErrNonInteractive` → exit `2`). Con TTY y sin flags, el picker
+  sigue igual (cero regresión). **`deploy --json`** emite un resumen
+  parseable (`target`, `db`, `modules[]{name,action,ok}`, `skipped`,
+  `errors`, `warnings`, `planned`) a `stdout` con los logs a `stderr` (mismo
+  patrón que `modstate --json`); `--dry-run --json` añade `planned:true` sin
+  ejecutar nada remoto. Nuevo sentinel `ErrUsage` para mapear errores de uso a
+  exit `2`. `--auto` y `--modules` son mutuamente excluyentes.
+- **El builder de `i18n-pull` en `sequence` / `--build` elige varios módulos
+  a la vez** (Unit 77). `runI18nPullBuild` pasó de un picker de un módulo a
+  **multi-selección** (`runFuzzyPickerCore`, coloreado por el stage del
+  perfil remoto) y compone `i18n-pull <mod...> --lang=<lang> [--from=<name>]`
+  — el idioma va como flag explícito `--lang=` (Unit 76), así todos los
+  positionales son módulos sin ambigüedad y la línea vuelve a parsearse igual.
+  Con esto, una secuencia remota `deploy → i18n-pull` jala el `.po` de **todos**
+  los módulos desplegados en un solo paso, elegidos por adelantado en la
+  revisión (replicable con `sequence --last`). `--all`/`--installed` siguen sin
+  ofrecerse en el builder (para el flujo masivo usa el comando directo).
+- **`i18n-pull` puede traer varios módulos en una sola corrida** (Unit 76).
+  Antes solo aceptaba un módulo o el todo-o-nada `--all`; ahora
+  `i18n-pull sale account es_MX` trae el `es_MX.po` de ambos de un tiro. La
+  ambigüedad módulo-vs-idioma se resuelve así: si el **último** positional
+  tiene forma de locale (`es`, `es_MX`, `pt_BR`, `sr@latin`; regex
+  `isLocale`) y hay dos o más positionales, ese es el idioma y el resto son
+  módulos; si no, todos son módulos y el idioma cae al default `es_MX`. Un
+  solo positional sigue siendo un módulo (compatibilidad con Unit 50). El
+  nuevo flag **`--lang <code>`** fija el idioma de forma explícita y hace que
+  **todos** los positionales sean módulos (escape hatch para módulos con
+  nombre parecido a un locale). El picker de `i18n-pull` sin argumentos pasa
+  a ser **multi-selección** (mismo `runFuzzyPickerCore` de
+  `install`/`update`/`test`, coloreado por el stage remoto). Una corrida de
+  varios módulos es un **batch**: un módulo que falla al exportar se salta con
+  `WARNING` y la corrida continúa, cerrando con el resumen `pull complete
+  pulled=N skipped=M` — igual que ya hacía `--all`. Un solo módulo sigue
+  fallando de inmediato. `--all` e `--installed` sin cambios; el build mode
+  de `i18n-pull` sigue siendo de un módulo.
+- **`test <mod...> --from <target>` / `--remote` corre la suite de tests de
+  Odoo en una instancia remota** (Unit 75). Hasta ahora `test` solo tocaba
+  el contenedor local; ahora acepta los mismos switches remotos que
+  `shell-run` / `deploy` / `logs` / `restart`: `--from <t>` nombra un target
+  global de `connect`, `--remote` usa el binding `[connect]` del directorio.
+  Reusa exactamente el transporte de `deploy`/`shell-run`
+  (`resolveRemoteShell` → `remoteContainerCmd` → `runSSHStream`): la conexión
+  (DB, host, credenciales) sale del **perfil remoto**, no de la config local,
+  y el argv de `odoo.Test` es idéntico al local (mismo `--test-tags`,
+  `--stop-after-init`, `--no-http --http-port=8189`, `--log-level=test`), así
+  que los logs se colorean igual que un test local. Los módulos se resuelven
+  **antes** de ramificar, así que el picker se comparte; `--tags` y
+  `--update` componen con el modo remoto. Como una corrida remota comparte el
+  Postgres del target, el modo remoto **gatea en prod** vía
+  `confirmRemoteProd` (confirmación roja; `--force` la salta; sin TTY falla
+  cerrado), a diferencia del `test` local que nunca gatea. Sin flag remoto,
+  `test` se comporta **exactamente igual que antes** (contenedor local). Los
+  tokens `--from <val>` / `--remote` se despojan antes de leer positionales,
+  así que el valor tras `--from` nunca se confunde con un módulo.
+
 ### Fixed
 - **El builder de `deploy` (dentro de `sequence --remote` / `--from`) ahora
   atenúa los commits ya desplegados.** Al armar una secuencia, el picker de

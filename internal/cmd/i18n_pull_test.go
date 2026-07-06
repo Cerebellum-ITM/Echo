@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 
 	"github.com/pascualchavez/echo/internal/config"
@@ -14,23 +15,28 @@ func TestParseI18nPullArgs(t *testing.T) {
 	cases := []struct {
 		name     string
 		args     []string
-		wantMod  string
+		wantMods []string
 		wantLang string
 		wantFrom string
 		wantAll  bool
 		wantErr  bool
 	}{
-		{"defaults", nil, "", "es_MX", "", false, false},
-		{"module only", []string{"sale"}, "sale", "es_MX", "", false, false},
-		{"module + lang", []string{"sale", "fr_FR"}, "sale", "fr_FR", "", false, false},
-		{"from flag", []string{"sale", "--from", "prod"}, "sale", "es_MX", "prod", false, false},
-		{"from equals", []string{"sale", "--from=prod"}, "sale", "es_MX", "prod", false, false},
-		{"all", []string{"--all"}, "", "es_MX", "", true, false},
-		{"all + lang", []string{"--all", "fr_FR"}, "", "fr_FR", "", true, false},
-		{"all + extra positional", []string{"--all", "sale", "fr_FR"}, "", "", "", true, true},
-		{"too many positionals", []string{"a", "b", "c"}, "", "", "", false, true},
-		{"unknown flag", []string{"--bogus"}, "", "", "", false, true},
-		{"from without value", []string{"--from"}, "", "", "", false, true},
+		{"defaults", nil, nil, "es_MX", "", false, false},
+		{"module only", []string{"sale"}, []string{"sale"}, "es_MX", "", false, false},
+		{"module + lang", []string{"sale", "fr_FR"}, []string{"sale"}, "fr_FR", "", false, false},
+		{"two modules + lang", []string{"sale", "account", "es_MX"}, []string{"sale", "account"}, "es_MX", "", false, false},
+		{"two modules no lang", []string{"sale", "account"}, []string{"sale", "account"}, "es_MX", "", false, false},
+		{"explicit lang flag makes all positionals modules", []string{"sale", "account", "--lang", "fr_FR"}, []string{"sale", "account"}, "fr_FR", "", false, false},
+		{"explicit lang keeps locale-shaped module", []string{"sale", "es_MX", "account", "--lang=pt_BR"}, []string{"sale", "es_MX", "account"}, "pt_BR", "", false, false},
+		{"from flag", []string{"sale", "--from", "prod"}, []string{"sale"}, "es_MX", "prod", false, false},
+		{"from equals", []string{"sale", "--from=prod"}, []string{"sale"}, "es_MX", "prod", false, false},
+		{"all", []string{"--all"}, nil, "es_MX", "", true, false},
+		{"all + lang", []string{"--all", "fr_FR"}, nil, "fr_FR", "", true, false},
+		{"all + extra positional", []string{"--all", "sale", "fr_FR"}, nil, "", "", true, true},
+		{"all + lang flag rejects positional", []string{"--all", "sale", "--lang", "fr_FR"}, nil, "", "", true, true},
+		{"unknown flag", []string{"--bogus"}, nil, "", "", false, true},
+		{"from without value", []string{"--from"}, nil, "", "", false, true},
+		{"lang without value", []string{"--lang"}, nil, "", "", false, true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -44,12 +50,25 @@ func TestParseI18nPullArgs(t *testing.T) {
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
-			if got.module != tc.wantMod || got.lang != tc.wantLang ||
+			if !reflect.DeepEqual(got.modules, tc.wantMods) || got.lang != tc.wantLang ||
 				got.from != tc.wantFrom || got.all != tc.wantAll {
-				t.Errorf("got %+v, want mod=%q lang=%q from=%q all=%v",
-					got, tc.wantMod, tc.wantLang, tc.wantFrom, tc.wantAll)
+				t.Errorf("got %+v, want mods=%q lang=%q from=%q all=%v",
+					got, tc.wantMods, tc.wantLang, tc.wantFrom, tc.wantAll)
 			}
 		})
+	}
+}
+
+func TestIsLocale(t *testing.T) {
+	for _, s := range []string{"es", "es_MX", "pt_BR", "sr@latin"} {
+		if !isLocale(s) {
+			t.Errorf("isLocale(%q) = false, want true", s)
+		}
+	}
+	for _, s := range []string{"sale", "account", "Sale", "account_move", ""} {
+		if isLocale(s) {
+			t.Errorf("isLocale(%q) = true, want false", s)
+		}
 	}
 }
 
@@ -92,8 +111,8 @@ func TestParseI18nPullInstalled(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.module != "sale" || !got.installed {
-		t.Errorf("got %+v, want module=sale installed=true", got)
+	if len(got.modules) != 1 || got.modules[0] != "sale" || !got.installed {
+		t.Errorf("got %+v, want modules=[sale] installed=true", got)
 	}
 	def, _ := parseI18nPullArgs([]string{"sale"})
 	if def.installed {

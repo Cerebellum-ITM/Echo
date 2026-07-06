@@ -15,6 +15,13 @@ import (
 // argument, or pass --force) instead of relying on an interactive prompt.
 var ErrNonInteractive = errors.New("requires a terminal")
 
+// ErrUsage marks a caller mistake (bad flag combination, an argument that
+// doesn't resolve) that should map to the script exit code 2 (usage), the
+// same bucket as ErrNonInteractive. Wrap validation errors with it so the
+// REPL/one-shot layer can distinguish a usage error from an execution
+// failure (exit 1).
+var ErrUsage = errors.New("usage error")
+
 // stdinIsTTY reports whether stdin is connected to a terminal. It is a
 // package-level seam so tests can force the non-interactive path without
 // a real TTY (mirrors dockerInspectFn elsewhere).

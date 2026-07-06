@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -43,19 +44,30 @@ func (o I18nPullOpts) log(level, sub, msg, db string, fields ...[2]string) {
 
 // i18nPullArgs is the parsed shape of the i18n-pull input.
 type i18nPullArgs struct {
-	module    string
+	modules   []string
 	lang      string
 	from      string // connect target name; "" → project's own [connect]
 	all       bool
 	installed bool // list candidates from the DB (all installed) vs conf addons
 }
 
-// parseI18nPullArgs extracts --from/--all and up to two positionals. With
-// --all the single optional positional is the language; otherwise the
-// positionals are module then language.
+// localeRe matches an Odoo language code (es, es_MX, pt_BR, sr@latin). Used
+// to tell a trailing language positional apart from module names.
+var localeRe = regexp.MustCompile(`^[a-z]{2,3}(_[A-Z]{2})?(@[a-z]+)?$`)
+
+// isLocale reports whether s has the shape of an Odoo language code.
+func isLocale(s string) bool { return localeRe.MatchString(s) }
+
+// parseI18nPullArgs extracts --from/--lang/--all/--installed and the module
+// positionals. Multiple modules can be pulled at once. The language is taken
+// from --lang when given (all positionals are then modules); otherwise, with
+// two or more positionals, a trailing locale-shaped token is the language and
+// the rest are modules; a single positional is always a module (default lang).
+// With --all only an optional language positional is accepted.
 func parseI18nPullArgs(args []string) (i18nPullArgs, error) {
 	out := i18nPullArgs{lang: defaultI18nLang}
 	var positional []string
+	langSet := false
 	for i := 0; i < len(args); i++ {
 		a := args[i]
 		switch {
@@ -67,6 +79,14 @@ func parseI18nPullArgs(args []string) (i18nPullArgs, error) {
 			i++
 		case strings.HasPrefix(a, "--from="):
 			out.from = strings.TrimPrefix(a, "--from=")
+		case a == "--lang":
+			if i+1 >= len(args) {
+				return out, fmt.Errorf("--lang requires a language code")
+			}
+			out.lang, langSet = args[i+1], true
+			i++
+		case strings.HasPrefix(a, "--lang="):
+			out.lang, langSet = strings.TrimPrefix(a, "--lang="), true
 		case a == "--all":
 			out.all = true
 		case a == "--installed":
@@ -78,6 +98,12 @@ func parseI18nPullArgs(args []string) (i18nPullArgs, error) {
 		}
 	}
 	if out.all {
+		if langSet {
+			if len(positional) > 0 {
+				return out, fmt.Errorf("--all with --lang takes no positionals")
+			}
+			return out, nil
+		}
 		if len(positional) > 1 {
 			return out, fmt.Errorf("--all takes only an optional language")
 		}
@@ -86,14 +112,14 @@ func parseI18nPullArgs(args []string) (i18nPullArgs, error) {
 		}
 		return out, nil
 	}
-	if len(positional) > 2 {
-		return out, fmt.Errorf("too many arguments (module then language)")
-	}
-	if len(positional) > 0 {
-		out.module = positional[0]
-	}
-	if len(positional) > 1 {
-		out.lang = positional[1]
+	switch {
+	case langSet:
+		out.modules = positional
+	case len(positional) >= 2 && isLocale(positional[len(positional)-1]):
+		out.lang = positional[len(positional)-1]
+		out.modules = positional[:len(positional)-1]
+	default:
+		out.modules = positional
 	}
 	return out, nil
 }
@@ -249,8 +275,8 @@ func RunI18nPull(ctx context.Context, opts I18nPullOpts) error {
 			return ErrNoModulesAvailable
 		}
 		modules = avail
-	case p.module != "":
-		modules = []string{p.module}
+	case len(p.modules) > 0:
+		modules = p.modules
 	default:
 		avail, err := listRemote()
 		if err != nil {
@@ -259,12 +285,16 @@ func RunI18nPull(ctx context.Context, opts I18nPullOpts) error {
 		if len(avail) == 0 {
 			return ErrNoModulesAvailable
 		}
-		picked, err := runSingleFuzzyPickerStaged("Module to pull translations for", avail, opts.Palette, prof.Stage)
+		picked, _, canceled, err := runFuzzyPickerCore("Modules to pull translations for", avail, nil, nil, nil, opts.Palette, prof.Stage)
 		if err != nil {
 			return err
 		}
-		modules = []string{picked}
+		if canceled || len(picked) == 0 {
+			return ErrCancelled
+		}
+		modules = picked
 	}
+	batch := p.all || len(modules) > 1
 
 	addonsPath := remoteAddonsPath(ctx, sshHost, remotePath, target, prof.ConfPath, prof.AddonsPaths)
 
@@ -274,7 +304,7 @@ func RunI18nPull(ctx context.Context, opts I18nPullOpts) error {
 			[2]string{"module", mod}, [2]string{"lang", p.lang})
 		data, err := pullRemotePO(ctx, sshHost, remotePath, target, conn, addonsPath, mod, p.lang)
 		if err != nil {
-			if p.all {
+			if batch {
 				opts.log("WARNING", "", "skipped", prof.DBName,
 					[2]string{"module", mod}, [2]string{"reason", err.Error()})
 				skipped++
@@ -300,7 +330,7 @@ func RunI18nPull(ctx context.Context, opts I18nPullOpts) error {
 			[2]string{"module", mod}, [2]string{"file", dest})
 	}
 
-	if p.all || skipped > 0 {
+	if batch || skipped > 0 {
 		opts.log("INFO", "", "pull complete", prof.DBName,
 			[2]string{"pulled", strconv.Itoa(pulled)}, [2]string{"skipped", strconv.Itoa(skipped)})
 	}

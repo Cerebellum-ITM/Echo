@@ -334,33 +334,19 @@ func RunUninstall(ctx context.Context, opts ModulesOpts) ([]string, error) {
 // Returns the resolved module list so the REPL layer can build the
 // hierarchical logger name (echo.test.module.<mod>).
 func RunTest(ctx context.Context, opts ModulesOpts) ([]string, error) {
-	if err := requireOdooConfig(opts.Cfg); err != nil {
+	modules, tags, update, from, remote, err := parseTestArgs(opts.Args)
+	if err != nil {
 		return nil, err
 	}
+	isRemote := from != "" || remote
 
-	var (
-		modules []string
-		tags    string
-		update  bool
-	)
-	args := opts.Args
-	for i := 0; i < len(args); i++ {
-		a := args[i]
-		switch {
-		case a == "--tags":
-			if i+1 >= len(args) {
-				return nil, fmt.Errorf("--tags requires a value")
-			}
-			tags = args[i+1]
-			i++
-		case strings.HasPrefix(a, "--tags="):
-			tags = strings.TrimPrefix(a, "--tags=")
-		case a == "--update":
-			update = true
-		case strings.HasPrefix(a, "-"):
-			// forward-compat: ignore unknown flags instead of failing
-		default:
-			modules = append(modules, a)
+	// The local path drives the project's own compose stack; the remote
+	// path takes its connection from the remote Echo profile, so it must
+	// not require a local Odoo project (it can run from the linked addons
+	// repo with no docker-compose.yml).
+	if !isRemote {
+		if err := requireOdooConfig(opts.Cfg); err != nil {
+			return nil, err
 		}
 	}
 
@@ -372,11 +358,12 @@ func RunTest(ctx context.Context, opts ModulesOpts) ([]string, error) {
 		modules = picked
 	}
 	emitResolved(opts, modules)
-	return modules, runOdoo(ctx, opts, odoo.Test(buildConn(opts), odoo.TestOpts{
-		Modules: modules,
-		Tags:    tags,
-		Update:  update,
-	}))
+
+	o := odoo.TestOpts{Modules: modules, Tags: tags, Update: update}
+	if isRemote {
+		return modules, runTestRemote(ctx, opts, from, o)
+	}
+	return modules, runOdoo(ctx, opts, odoo.Test(buildConn(opts), o))
 }
 
 // pickModulesInteractive opens an fzf-style fuzzy picker with always-on
