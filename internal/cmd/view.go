@@ -32,6 +32,7 @@ type ViewResult struct {
 	RelPath string // path within the module, e.g. "models/sale.py"
 	Content string
 	Copy    bool
+	From    string // resolved remote target label; "" for a local view
 }
 
 // skipViewPath reports whether a module-relative path is build/VCS noise
@@ -129,35 +130,64 @@ func readModuleFile(ctx context.Context, opts ViewOpts, base, module string, inC
 	return string(data), nil
 }
 
-// RunView resolves a module file to display: it picks the module (if not
-// given), lists its files, picks one, and reads its content. A non-TTY
-// caller without a module/file fails closed via the picker guard.
-func RunView(ctx context.Context, opts ViewOpts) (ViewResult, error) {
-	if opts.Cfg.OdooContainer == "" {
-		return ViewResult{}, ErrNoOdooContainer
-	}
-
-	var module string
-	copyFlag := false
-	for _, a := range opts.Args {
+// parseViewArgs pulls the module positional and the flags out of a `view`
+// argument list. The remote-mode switches (`--from <t>` / `--from=t` /
+// `--remote`) are consumed here — the value token after a bare `--from`
+// must not be mistaken for the module name — and returned via from/remote;
+// any other `-`-prefixed token is an error.
+func parseViewArgs(args []string) (module string, copyFlag bool, from string, remote bool, err error) {
+	from, remote = remoteFlagsIn(args)
+	for i := 0; i < len(args); i++ {
+		a := args[i]
 		switch {
 		case a == "--copy":
 			copyFlag = true
+		case a == "--from":
+			i++ // skip the target value; captured by remoteFlagsIn
+		case strings.HasPrefix(a, "--from="), a == "--remote":
+			// consumed by remoteFlagsIn
 		case strings.HasPrefix(a, "-"):
-			return ViewResult{}, fmt.Errorf("unknown flag: %s", a)
+			return "", false, "", false, fmt.Errorf("unknown flag: %s", a)
 		default:
 			if module == "" {
 				module = a
 			}
 		}
 	}
+	return module, copyFlag, from, remote, nil
+}
+
+// pickViewModule resolves the module to view: it lists the local checkout's
+// modules (the code that corresponds to the deployment, same as remote
+// `test`) and opens the single-select fuzzy picker.
+func pickViewModule(ctx context.Context, opts ViewOpts) (string, error) {
+	names, err := resolveModules(ctx, ModulesOpts{Cfg: opts.Cfg, Root: opts.Root, Palette: opts.Palette})
+	if err != nil || len(names) == 0 {
+		return "", ErrNoModulesAvailable
+	}
+	return runSingleFuzzyPicker("Module to view", names, opts.Palette)
+}
+
+// RunView resolves a module file to display: it picks the module (if not
+// given), lists its files, picks one, and reads its content. A non-TTY
+// caller without a module/file fails closed via the picker guard. With
+// `--from <t>` / `--remote` the file is browsed and read from the remote
+// target over SSH instead of the local container.
+func RunView(ctx context.Context, opts ViewOpts) (ViewResult, error) {
+	module, copyFlag, from, remote, err := parseViewArgs(opts.Args)
+	if err != nil {
+		return ViewResult{}, err
+	}
+	if from != "" || remote {
+		return runViewRemote(ctx, opts, from, module, copyFlag)
+	}
+
+	if opts.Cfg.OdooContainer == "" {
+		return ViewResult{}, ErrNoOdooContainer
+	}
 
 	if module == "" {
-		names, err := resolveModules(ctx, ModulesOpts{Cfg: opts.Cfg, Root: opts.Root, Palette: opts.Palette})
-		if err != nil || len(names) == 0 {
-			return ViewResult{}, ErrNoModulesAvailable
-		}
-		picked, err := runSingleFuzzyPicker("Module to view", names, opts.Palette)
+		picked, err := pickViewModule(ctx, opts)
 		if err != nil {
 			return ViewResult{}, err
 		}
@@ -189,10 +219,64 @@ func RunView(ctx context.Context, opts ViewOpts) (ViewResult, error) {
 	return ViewResult{Module: module, RelPath: rel, Content: content, Copy: copyFlag}, nil
 }
 
+// runViewRemote is RunView's remote branch: resolve the target, pick the
+// module (from the local checkout) if none was given, then list and read
+// the file from the remote deployment over SSH. No prod gate — view is
+// read-only.
+func runViewRemote(ctx context.Context, opts ViewOpts, from, module string, copyFlag bool) (ViewResult, error) {
+	rv, err := resolveRemoteView(ctx, opts, from)
+	if err != nil {
+		return ViewResult{}, err
+	}
+	if module == "" {
+		module, err = pickViewModule(ctx, opts)
+		if err != nil {
+			return ViewResult{}, err
+		}
+	}
+	base, inContainer, err := remoteModuleBase(ctx, rv, module)
+	if err != nil {
+		return ViewResult{}, err
+	}
+	files, err := remoteModuleFiles(ctx, rv, base, module, inContainer)
+	if err != nil {
+		return ViewResult{}, err
+	}
+	if len(files) == 0 {
+		return ViewResult{}, fmt.Errorf("no files found for module %q", module)
+	}
+	rel, err := runSingleFuzzyPicker("File in "+module, files, opts.Palette)
+	if err != nil {
+		return ViewResult{}, err
+	}
+	content, err := remoteReadModuleFile(ctx, rv, base, module, inContainer, rel)
+	if err != nil {
+		return ViewResult{}, err
+	}
+	return ViewResult{Module: module, RelPath: rel, Content: content, Copy: copyFlag, From: rv.displayFrom()}, nil
+}
+
 // RunViewLast re-reads a previously viewed module file directly, without
 // the pickers — used by `view --last` to replay a file first reached
-// interactively (e.g. to copy it). The content is read fresh.
-func RunViewLast(ctx context.Context, opts ViewOpts, module, file string, copy bool) (ViewResult, error) {
+// interactively (e.g. to copy it). The content is read fresh, from the
+// same source: local by default, or the remote target when from/remote is
+// set.
+func RunViewLast(ctx context.Context, opts ViewOpts, module, file string, copy bool, from string, remote bool) (ViewResult, error) {
+	if from != "" || remote {
+		rv, err := resolveRemoteView(ctx, opts, from)
+		if err != nil {
+			return ViewResult{}, err
+		}
+		base, inContainer, err := remoteModuleBase(ctx, rv, module)
+		if err != nil {
+			return ViewResult{}, err
+		}
+		content, err := remoteReadModuleFile(ctx, rv, base, module, inContainer, file)
+		if err != nil {
+			return ViewResult{}, err
+		}
+		return ViewResult{Module: module, RelPath: file, Content: content, Copy: copy, From: rv.displayFrom()}, nil
+	}
 	if opts.Cfg.OdooContainer == "" {
 		return ViewResult{}, ErrNoOdooContainer
 	}

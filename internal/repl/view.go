@@ -33,7 +33,13 @@ func (sess *session) runView(ctx context.Context, args []string) {
 			return
 		}
 		_, copyFlag := stripFlag(args, "--copy")
-		res, err = cmd.RunViewLast(ctx, opts, sess.lastViewModule, sess.lastViewFile, copyFlag)
+		// Replay against the same source: the current args' remote flags win,
+		// else fall back to the stored ones from the original view.
+		from, remote := remoteRunFlags(args)
+		if from == "" && !remote {
+			from, remote = sess.lastViewFrom, sess.lastViewRemote
+		}
+		res, err = cmd.RunViewLast(ctx, opts, sess.lastViewModule, sess.lastViewFile, copyFlag, from, remote)
 	} else {
 		res, err = cmd.RunView(ctx, opts)
 	}
@@ -48,8 +54,14 @@ func (sess *session) runView(ctx context.Context, args []string) {
 		return
 	}
 	sess.lastViewModule, sess.lastViewFile = res.Module, res.RelPath
+	if !last {
+		sess.lastViewFrom, sess.lastViewRemote = remoteRunFlags(args)
+	}
 
 	base := []logField{{"module", res.Module}, {"file", res.RelPath}}
+	if res.From != "" {
+		base = append(base, logField{"from", res.From})
+	}
 
 	if res.Copy {
 		if err := clipboard.WriteAll(res.Content); err != nil {

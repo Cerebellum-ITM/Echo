@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **`view` puede abrir el archivo desplegado en un host remoto** (Unit 79).
+  `view [<mod>] --from <target>` / `--remote` navega y muestra un archivo de
+  módulo desde el contenedor Odoo del servidor sobre SSH, reusando el
+  transporte de `deploy`/`test`/`logs` (`resolveRemoteShell` +
+  `runSSH`/`remoteContainerCmd`). `remoteModuleBase` prueba primero el
+  filesystem del host remoto (`<remotePath>/<addons>/<mod>`, el layout que
+  asume `deploy`) y cae al contenedor (`compose exec test -f`) para el modo
+  conf; `find`/`cat` siguen el transporte que ganó. Los pickers (módulo y
+  archivo) siguen siendo locales, sourced del checkout local vía
+  `resolveModules`; `--copy` y `--last` funcionan contra el origen remoto (el
+  log añade `from=<target>`). No hay confirmación de prod: `view` es
+  estrictamente de lectura. Los flags `--from`/`--remote` se strippean para
+  que el token de valor nunca se lea como nombre de módulo. Sin flag remoto,
+  `view` se comporta exactamente igual que antes.
+
 ## [0.20.0] — 2026-07-05
 
 ### Added

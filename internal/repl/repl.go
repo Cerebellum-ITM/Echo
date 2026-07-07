@@ -81,6 +81,11 @@ type session struct {
 	lastModinfoModule string
 	lastViewModule    string
 	lastViewFile      string
+	// lastViewFrom / lastViewRemote remember the last view's remote source
+	// so `view --last` replays from the same target when the current args
+	// carry no remote flag of their own.
+	lastViewFrom   string
+	lastViewRemote bool
 }
 
 // Exit codes returned by one-shot (script) dispatch. The interactive REPL
@@ -345,6 +350,7 @@ func helpSections() []helpSection {
 			{"view [<mod>]", "Pick a module file and view it (bat, else plain)"},
 			{"  --copy", "Copy the file to the clipboard instead"},
 			{"  --last", "Re-display this session's last viewed file (skips pickers)"},
+			{"  --from <t>", "View the file from a remote target (or --remote for the link binding)"},
 		}},
 		{"i18n", []helpEntry{
 			{"i18n-export <mod> [lang]", "Export <mod>/i18n/<lang>.po (default es_MX)"},

@@ -23,6 +23,29 @@ _(siguiente: Unit 14 — meta-commands. Fix deploy-build-muting: el builder de `
 
 ## Completed
 
+- [x] Unit 79 — remote-view. `view [<mod>] --from <t>` / `--remote` navega
+  y muestra un archivo de módulo desde el host remoto sobre SSH, reusando el
+  transporte de `deploy`/`test`/`logs` (`resolveRemoteShell` +
+  `runSSH`/`remoteContainerCmd`). Nuevo `internal/cmd/view_remote.go`:
+  `remoteView` (wrapper de `remoteShellContext`), `resolveRemoteView`,
+  `remoteModuleBase` (prueba host FS `<remotePath>/<addons>/<mod>` primero,
+  cae al contenedor con `compose exec test -f` para rutas absolutas / modo
+  conf), `remoteModuleFiles` (`find`) y `remoteReadModuleFile` (`cat`),
+  ambos siguiendo el transporte que ganó el probe. `RunView`/`RunViewLast`
+  (`view.go`) strippean los flags remotos vía `parseViewArgs` (el token tras
+  `--from` no se lee como módulo) y ramifican a `runViewRemote`; el picker de
+  módulo se extrajo a `pickViewModule` (compartido, sourced del checkout
+  local vía `resolveModules`). `ViewResult.From` lleva el label del target
+  para el log frame (`from=<target>`). Sin prod gate (lectura pura). En el
+  REPL (`internal/repl/view.go`) se guardan `lastViewFrom`/`lastViewRemote`
+  para que `view --last` reproduzca desde el mismo origen (los flags remotos
+  del comando actual ganan, si no los guardados). `commandFlags["view"]` +=
+  `--from`/`--remote`; help con fila `--from <t>`; `projectlessOneShot` en
+  `main.go` incluye `view` con flag remoto. Tests `view_remote_test.go`
+  (`parseViewArgs` strip/positional, `remoteModuleDir` host vs contenedor).
+  Build/vet/test + cross-check de registry verdes. **Pendiente verificación
+  EN VIVO** contra un remoto real (sin SSH/docker en el entorno dev).
+
 - [x] Unit 78 — deploy-headless. `deploy` corre **sin picker** para
   scripts/CI reusando el motor de la Unit 61 sin tocarlo — solo cambia de
   dónde sale la lista de módulos. **`--modules m1,m2`** (ya existía para el

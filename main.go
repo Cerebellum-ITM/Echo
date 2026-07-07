@@ -187,7 +187,7 @@ func projectlessOneShot(name string, args []string) bool {
 	switch name {
 	case "i18n-pull", "link", "deploy":
 		return true
-	case "shell", "shell-run", "up", "stop", "restart", "logs", "sequence", "test":
+	case "shell", "shell-run", "up", "stop", "restart", "logs", "sequence", "test", "view":
 		return hasRemoteFlag(args)
 	}
 	return false

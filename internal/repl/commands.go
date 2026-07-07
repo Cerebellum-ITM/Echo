@@ -30,7 +30,7 @@ var commandFlags = map[string][]string{
 	"modules":       {"--config"},
 	"modinfo":       {"--copy", "--last"},
 	"modstate":      {"--all", "--json"},
-	"view":          {"--copy", "--last"},
+	"view":          {"--copy", "--last", "--from", "--remote"},
 	"i18n-export":   {"--out"},
 	"i18n-update":   {"--force"},
 	"i18n-pull":     {"--from", "--lang", "--all", "--installed"},
