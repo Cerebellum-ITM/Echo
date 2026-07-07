@@ -23,6 +23,33 @@ _(siguiente: Unit 14 — meta-commands. Fix deploy-build-muting: el builder de `
 
 ## Completed
 
+- [x] Unit 84 — watch-branch. Nuevo `watch <branch> [--from <t>/--remote]
+  [--interval <sec>] [--force]`: loop en foreground que hace poll del ref
+  (`git rev-parse refs/heads/<branch>`, worktree-proof) y en cada avance
+  fast-forward hace push+deploy de los commits nuevos. Nuevo
+  `internal/cmd/watch.go`: `RunWatch` (valida rama, resuelve target una vez,
+  gate de prod que exige `--force` para arrancar, `time.Ticker` + handler
+  SIGINT que cancela el ctx para cierre limpio con Ctrl+C → frame `watch
+  stopped cycles=N`), `parseWatchArgs` (rama posicional requerida, interval en
+  segundos con piso 2s, flags remotos strippeados), `watchCycle`
+  (`isFastForward` vía `merge-base --is-ancestor` — rebase/amend → WARNING
+  `branch rewritten` + re-baseline; `rangeCommits` `old..new` →
+  `resolveCommitModule`, no resolubles saltados; `archiveModules` con `git
+  archive <sha>` → dir temporal para subir el contenido **commiteado** no el
+  working tree; `pushModuleSet` con ese srcRoot; `deployCommitsHeadless` vía
+  `RunDeploy` con `--commits csv --force [--from]`). Fallos de push/deploy
+  loguean ERROR, avanzan el baseline y siguen; solo setup irrecuperable
+  detiene el loop. Helpers `gitRevParse`, `extractTar` (con guard de path
+  traversal), `targetLabel`, `shortSHA`. Wrapper `internal/repl/watch.go`
+  (`runWatch`: ctx-cancel = cierre normal, `ErrUsage`→exit 2). Registrado en
+  `Registry`/`dispatchNames`/dispatch case/`commandFlags`/help (Docker, tras
+  `deploy`); `projectlessOneShot` en `main.go`; **NO** en `sequence` (paso no
+  terminante). Tests `watch_test.go` (`parseWatchArgs`; `isFastForward`/
+  `rangeCommits` contra un repo git scratch — linear vs amend; `archiveModules`
+  extrae el contenido del sha y `moduleSrcDir` lo resuelve). Build/vet/test +
+  cross-check de registry verdes. **Pendiente verificación EN VIVO** con un
+  remoto real y commits reales.
+
 - [x] Unit 83 — push-modules. Nuevo `push [<mod>...] [--from <t>/--remote]
   [--dirty] [--dry-run] [--delete] [--force]`: `rsync -az --itemize-changes`
   de los módulos locales al addons dir remoto sobre SSH, reusando

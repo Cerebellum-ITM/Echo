@@ -8,6 +8,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Nuevo comando `watch` — auto push+deploy al detectar commits en una rama**
+  (Unit 84). `watch <branch> [--from <t>|--remote] [--interval <sec>]
+  [--force]` es un loop en foreground que hace poll del ref de la rama
+  (`git rev-parse refs/heads/<branch>`) y, cada vez que **avanza**, sube el
+  contenido **commiteado** de los módulos afectados (Unit 83) y corre un
+  `deploy --commits` headless (Unit 78). Pensado para el flujo multi-worktree:
+  los refs se comparten entre worktrees, así que un commit en esa rama desde
+  *cualquier* worktree dispara el ciclo — el commit es la unidad de deploy, no
+  hay file-watching. Un ciclo = check de fast-forward (`merge-base
+  --is-ancestor`; un rebase/amend → WARNING `branch rewritten` y re-baseline
+  sin deployar) → commits del rango `old..new` resueltos a módulos
+  (`resolveCommitModule`, los no resolubles se saltan con WARNING) → `git
+  archive <sha>` a un dir temporal (se sube el código commiteado, no el working
+  tree del worktree del watcher) → `pushModuleSet` → deploy headless (el
+  historial de deploy marca los SHAs, así un watcher reiniciado no
+  re-despliega). Un push/deploy fallido loguea ERROR, avanza el baseline y
+  sigue (los commits perdidos se recuperan en el siguiente `deploy --auto`);
+  solo errores de setup irrecuperables (target no resoluble, rama borrada)
+  detienen el watcher. Un target `prod` se niega a arrancar sin `--force`.
+  `Ctrl+C` cierra limpio con un frame `watch stopped cycles=N`. Interval
+  default 10s, mínimo 2s. No se ofrece en `sequence` (un paso que no termina
+  colgaría la secuencia).
 - **Nuevo comando `push` — sube los módulos locales al addons dir remoto**
   (Unit 83). `push [<mod>...] [--from <t>|--remote] [--dirty] [--dry-run]
   [--delete] [--force]` hace `rsync` de los módulos seleccionados al host

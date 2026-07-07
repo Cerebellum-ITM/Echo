@@ -209,7 +209,7 @@ func (sess *session) renderPrompt() string {
 var dispatchNames = []string{
 	"help", "clear", "copy-last", "report", "sequence",
 	"init", "reset", "alias", "link",
-	"up", "down", "stop", "restart", "ps", "logs", "push", "deploy",
+	"up", "down", "stop", "restart", "ps", "logs", "push", "deploy", "watch",
 	"install", "update", "uninstall", "test", "modules", "modinfo", "modstate", "view", "compare",
 	"i18n-export", "i18n-update", "i18n-pull",
 	"db-admin", "db-backup", "db-restore", "db-drop", "db-neutralize", "db-list", "db-use",
@@ -302,6 +302,8 @@ func (sess *session) dispatchParsed(ctx context.Context, cmd string, args []stri
 		sess.runPush(ctx, args)
 	case "deploy":
 		sess.runDeploy(ctx, args)
+	case "watch":
+		sess.runWatch(ctx, args)
 	default:
 		sess.print(Line{Kind: "warn", Text: "unknown command: " + cmd + " — try help"})
 		sess.exitCode = exitUsage
@@ -444,6 +446,11 @@ func helpSections() []helpSection {
 			{"  --modules <names>", "Deploy these modules non-interactively (skips the picker)"},
 			{"  --auto", "Headless: deploy pending commits (ahead of upstream) + dirty modules, no picker"},
 			{"  --json", "Emit a machine-readable deploy summary to stdout (logs to stderr)"},
+			{"watch <branch>", "Auto push+deploy when new commits land on a branch (Ctrl+C to stop)"},
+			{"  --from <target>", "Use a named connect target (default: this dir's link)"},
+			{"  --remote", "Target this directory's linked remote"},
+			{"  --interval <sec>", "Poll interval in seconds (default 10, min 2)"},
+			{"  --force", "Required to watch a prod-stage target"},
 		}},
 		{"Session", []helpEntry{
 			{"copy-last", "Copy the last command's output to clipboard"},
