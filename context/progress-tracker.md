@@ -23,6 +23,30 @@ _(siguiente: Unit 14 — meta-commands. Fix deploy-build-muting: el builder de `
 
 ## Completed
 
+- [x] Unit 80 — compare-command. Nuevo `compare [<mod>] [--from <t>/--remote]
+  [--copy]`: diffea un archivo del checkout local contra su copia dentro de
+  Docker (contenedor local por defecto, o el de un target remoto reusando los
+  primitivos de la Unit 79). Nuevo `internal/cmd/compare.go`: `RunCompare`,
+  `parseCompareArgs` (strippea flags remotos), `unifiedDiff` (wrapper de
+  `go-difflib` `GetUnifiedDiffString`, contenedor=viejo/`---`, local=nuevo/
+  `+++`, labels `<target>/<mod>/<file>` vs `local/<mod>/<file>`),
+  `hostModuleFiles` (walk del módulo local), `containerAddonsPathsFor` (usa
+  `AddonsPaths` conf o parsea el `addons_path` del `odoo.conf` del contenedor)
+  y `localContainerRead` (probe `test -f` + `catContainer`; `found=false` si el
+  módulo o el archivo no están en el contenedor). El picker de módulo/archivo
+  se source del checkout local (el archivo local es el sujeto), reusando
+  `pickViewModule`/`resolveModuleDir`. `go-difflib v1.0.0` promovido a
+  dependencia directa en `go.mod` (ya estaba en el module cache vía testify).
+  Wrapper REPL `internal/repl/compare.go`: identical → una línea INFO
+  `result=identical` sin pager; diff real → `ShowWithBat(<file>.diff)` con
+  fallback interno plano; `--copy` copia el diff crudo; missing-in-container →
+  WARNING + diff todo-`+`. Sin prod gate (lectura pura). Registrado en
+  `Registry`/`dispatchNames`/`commandFlags`/dispatch case/help;
+  `projectlessOneShot` en `main.go` incluye `compare` con flag remoto. Tests
+  `compare_test.go` (`parseCompareArgs`, `unifiedDiff` identical/change/
+  missing). Build/vet/test + cross-check de registry verdes. **Pendiente
+  verificación EN VIVO** con un contenedor/remoto real.
+
 - [x] Unit 79 — remote-view. `view [<mod>] --from <t>` / `--remote` navega
   y muestra un archivo de módulo desde el host remoto sobre SSH, reusando el
   transporte de `deploy`/`test`/`logs` (`resolveRemoteShell` +

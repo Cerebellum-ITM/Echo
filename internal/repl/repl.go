@@ -210,7 +210,7 @@ var dispatchNames = []string{
 	"help", "clear", "copy-last", "report", "sequence",
 	"init", "reset", "alias", "link",
 	"up", "down", "stop", "restart", "ps", "logs", "deploy",
-	"install", "update", "uninstall", "test", "modules", "modinfo", "modstate", "view",
+	"install", "update", "uninstall", "test", "modules", "modinfo", "modstate", "view", "compare",
 	"i18n-export", "i18n-update", "i18n-pull",
 	"db-admin", "db-backup", "db-restore", "db-drop", "db-neutralize", "db-list", "db-use",
 	"shell", "shell-run", "bash", "psql", "connect",
@@ -284,6 +284,8 @@ func (sess *session) dispatchParsed(ctx context.Context, cmd string, args []stri
 		sess.runModstate(ctx, args)
 	case "view":
 		sess.runView(ctx, args)
+	case "compare":
+		sess.runCompare(ctx, args)
 	case "i18n-export", "i18n-update":
 		sess.runI18n(ctx, cmd, args)
 	case "i18n-pull":
@@ -351,6 +353,9 @@ func helpSections() []helpSection {
 			{"  --copy", "Copy the file to the clipboard instead"},
 			{"  --last", "Re-display this session's last viewed file (skips pickers)"},
 			{"  --from <t>", "View the file from a remote target (or --remote for the link binding)"},
+			{"compare [<mod>]", "Diff a local module file against its Docker copy"},
+			{"  --from <t>", "Compare against a remote target (or --remote for the link binding)"},
+			{"  --copy", "Copy the diff to the clipboard"},
 		}},
 		{"i18n", []helpEntry{
 			{"i18n-export <mod> [lang]", "Export <mod>/i18n/<lang>.po (default es_MX)"},

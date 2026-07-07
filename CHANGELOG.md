@@ -8,6 +8,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Nuevo comando `compare` — diff de un archivo local vs su copia en Docker**
+  (Unit 80). `compare [<mod>] [--from <t>|--remote] [--copy]` elige un archivo
+  de módulo del checkout local (la misma cadena de pickers que `view`) y lo
+  compara contra la copia que corre **dentro del contenedor**: el contenedor
+  Odoo local por defecto, o el de un target remoto con `--from`/`--remote`. El
+  diff unificado se calcula **en proceso** con `go-difflib` (sin depender de
+  un `diff` local ni remoto): la copia del contenedor es el lado viejo (`---`)
+  y el archivo local el nuevo (`+++`), así los `+` se leen como "cambios
+  locales aún no desplegados" (labels `<target>/<mod>/<file>` vs
+  `local/<mod>/<file>`). Se renderiza con `bat --language=diff` (paginado) y
+  cae a impresión interna plana si no hay bat; `--copy` copia el diff crudo.
+  Contenidos idénticos (p. ej. en modo mount, donde ambos lados son el mismo
+  archivo bind-mounted) imprimen una sola línea `identical`, sin pager. Un
+  archivo presente en local pero ausente en el contenedor sale como diff
+  todo-`+` tras un WARNING. Lectura pura en ambos lados: sin confirmación de
+  prod. Un módulo sin copia local es error (no compara contenedor-contra-
+  contenedor). El lado del contenedor local se resuelve leyendo el
+  `addons_path` real del `odoo.conf` del contenedor cuando el modo host no
+  expone rutas útiles.
 - **`view` puede abrir el archivo desplegado en un host remoto** (Unit 79).
   `view [<mod>] --from <target>` / `--remote` navega y muestra un archivo de
   módulo desde el contenedor Odoo del servidor sobre SSH, reusando el
