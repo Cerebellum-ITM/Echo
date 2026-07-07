@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **`push` mandaba el módulo a la raíz del proyecto docker remoto en vez de a
+  `addons/`** (Unit 83). El destino se calculaba **espejando la carpeta local**
+  desde donde corrías `push`: si lo corrías desde dentro de `addons/`, el
+  subpath local era `.` y el módulo terminaba en `<remote_path>/<módulo>` (la
+  raíz, junto al `docker-compose.yml`) en lugar de `<remote_path>/addons/
+  <módulo>`; el destino incluso cambiaba entre `--dry-run` y la ejecución real
+  según el cwd. Ahora el destino lo decide **el layout del remoto, nunca la
+  carpeta local**: un módulo ya presente en un addons dir real se actualiza en
+  su sitio (un hallazgo en la raíz, `base "."`, se ignora y se re-aloja), y uno
+  nuevo aterriza en el primer addons dir que exista bajo `remote_path` (las
+  rutas relativas del perfil remoto, si no `addons`/`custom`). Un módulo nunca
+  se escribe en la raíz del proyecto docker, y `push` da el mismo resultado sin
+  importar desde qué directorio local lo corras. Nuevo helper
+  `remoteAddonsCandidates`.
+
 ### Added
 - **Nuevo comando `watch` — auto push+deploy al detectar commits en una rama**
   (Unit 84). `watch <branch> [--from <t>|--remote] [--interval <sec>]

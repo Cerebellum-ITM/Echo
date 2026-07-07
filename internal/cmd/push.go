@@ -183,34 +183,59 @@ var (
 )
 
 // pushDest resolves where a module's files land on the remote host
-// filesystem: its existing location first, else the local subpath mirrored
-// under remotePath, else the first relative addons path in the profile. A
-// container-only (conf-mode) remote has nowhere for rsync to write and
-// fails closed.
+// filesystem. The destination is decided by the REMOTE layout, never the
+// local working directory — so `push` sends to the same place regardless of
+// whether it runs from the project root or from inside addons/:
+//
+//  1. If the module already lives in a real remote addons subdir, update it
+//     in place.
+//  2. Otherwise place it in the remote's addons directory: the first
+//     candidate (the profile's relative addons paths, else addons/custom)
+//     that actually exists under remotePath.
+//
+// A module is never written at the compose-project root (base "."), and a
+// container-only (conf-mode) remote fails closed.
 func pushDest(ctx context.Context, rv remoteView, opts PushOpts, module string) (string, error) {
 	base, inContainer, err := probeRemoteBase(ctx, rv, module)
 	if err == nil {
 		if inContainer {
 			return "", fmt.Errorf("remote addons are container-internal — push needs a host checkout")
 		}
-		return remoteModuleDir(rv, base, module, false), nil
+		// base "." means it was found at the docker root — almost always a
+		// prior mis-push. Ignore it and re-home the module in a real addons dir.
+		if base != "." {
+			return remoteModuleDir(rv, base, module, false), nil
+		}
 	}
 
-	// New module: mirror the local addons subpath if it exists remotely.
-	sub, serr := localAddonsSubpath(opts.Cfg, opts.Root, module)
-	if serr == nil {
-		remoteSub := path.Join(rv.rsc.remotePath, sub)
-		if probeRemoteDir(ctx, rv.rsc.sshHost, remoteSub) {
-			return path.Join(remoteSub, module), nil
+	candidates := remoteAddonsCandidates(rv.rsc.prof.AddonsPaths)
+	for _, b := range candidates {
+		dir := path.Join(rv.rsc.remotePath, b)
+		if probeRemoteDir(ctx, rv.rsc.sshHost, dir) {
+			return path.Join(dir, module), nil
 		}
 	}
-	// Fallback: the first relative addons path in the remote profile.
-	for _, b := range rv.rsc.prof.AddonsPaths {
-		if !path.IsAbs(b) {
-			return path.Join(rv.rsc.remotePath, b, module), nil
+	return "", fmt.Errorf("no addons directory found under %s on the remote (tried: %s)",
+		rv.rsc.remotePath, strings.Join(candidates, ", "))
+}
+
+// remoteAddonsCandidates lists the remote addons subdirectories a new module
+// may land in: the profile's relative addons paths, else the conventional
+// addons/custom. Absolute (container) paths and the docker root (".") are
+// never candidates — a module must never be written at the compose-project
+// root, and rsync can't target a path inside the image.
+func remoteAddonsCandidates(profPaths []string) []string {
+	var out []string
+	for _, b := range profPaths {
+		if b == "" || b == "." || path.IsAbs(b) {
+			continue
 		}
+		out = append(out, b)
 	}
-	return "", fmt.Errorf("no host-filesystem addons path for %q on the remote (tried existing location, local subpath %q, and the profile's addons paths)", module, sub)
+	if len(out) == 0 {
+		out = []string{"addons", "custom"}
+	}
+	return out
 }
 
 // rsyncCommand builds the rsync invocation. A package-level hook so tests can

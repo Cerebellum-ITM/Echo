@@ -35,19 +35,26 @@ rsync -az --itemize-changes \
   (the itemize lines are the progress); a per-module summary line
   closes each sync (`echo.push.module: synced module=<m> changes=<n>`).
 
-**Destination resolution: existing location first, mirror second.**
-For each module:
+**Destination resolution: decided by the REMOTE layout, never the local
+cwd.** The destination must not depend on which local directory `push`
+runs from (project root vs inside `addons/`) — mirroring the local
+subpath made it flip between `<remotePath>/addons/<mod>` and the docker
+root, and could even write a module at the compose-project root. For each
+module:
 
 1. **Probe where it already lives on the remote host filesystem** —
    Unit 79's `remoteModuleBase` host pass (relative profile addons
    paths joined under `remotePath`, `ssh test -f …/__manifest__.py`).
-   An existing module is updated in place, wherever it is.
-2. **New module** (not on the remote yet): mirror the local layout —
-   the module's local addons subpath (from `resolveModuleDir`, made
-   root-relative) joined under `remotePath`, provided that directory
-   exists remotely (`ssh test -d`); else fall back to the first
-   relative addons path in the remote profile; else fail with a clear
-   error naming the paths tried.
+   An existing module in a real addons subdir is updated in place. A hit
+   at the docker root (base `"."` — usually a prior mis-push) is
+   **ignored**: the module is re-homed in a real addons dir below.
+2. **New module** (not on the remote yet): place it in the remote's
+   addons directory — the first candidate that actually exists under
+   `remotePath` (`ssh test -d`), taken from the remote profile's
+   **relative** addons paths, else the conventional `addons`/`custom`.
+   The docker root (`"."`) and absolute (container) paths are never
+   candidates. No local-cwd mirroring. Fail with a clear error naming
+   the candidates when none exists.
 
 **Host-filesystem remotes only (v1).** A conf-mode remote whose addons
 live only inside the image has nothing rsync can write to — `push`
