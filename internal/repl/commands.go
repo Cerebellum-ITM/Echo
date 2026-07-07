@@ -11,7 +11,7 @@ var Registry = []string{
 	"i18n-export", "i18n-update", "i18n-pull",
 	"db-admin", "db-backup", "db-restore", "db-drop", "db-neutralize", "db-list", "db-use",
 	"bash", "psql", "shell", "shell-run", "connect",
-	"up", "down", "stop", "restart", "ps", "logs", "deploy",
+	"up", "down", "stop", "restart", "ps", "logs", "push", "deploy",
 	"copy-last", "report", "sequence",
 	"clear", "help", "exit", "quit",
 }
@@ -48,7 +48,8 @@ var commandFlags = map[string][]string{
 	"shell":         {"--from", "--remote", "--force"},
 	"shell-run":     {"--no-copy", "--force", "--from", "--remote"},
 	"connect":       {"--all", "--force", "--fresh", "--new-window"},
-	"deploy":        {"--from", "--limit", "--dry-run", "--force", "--i18n", "--no-i18n", "--commits", "--modules", "--auto", "--json"},
+	"push":          {"--from", "--remote", "--dirty", "--dry-run", "--delete", "--force"},
+	"deploy":        {"--from", "--limit", "--dry-run", "--force", "--i18n", "--no-i18n", "--commits", "--modules", "--auto", "--push", "--json"},
 	"copy-last":     {"--errors"},
 	"report":        {"--step", "--level", "--min-level", "--copy"},
 	"sequence":      {"--remote", "--from", "--last", "--continue-on-error"},

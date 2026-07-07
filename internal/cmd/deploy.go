@@ -64,6 +64,9 @@ type deployArgs struct {
 	// jsonOut emits a machine-readable deploy summary instead of the decorated
 	// stream (the caller routes it to stdout, logs to stderr).
 	jsonOut bool
+	// push syncs the resolved modules to the remote addons dir (Unit 83)
+	// right before the stop → up → -u run, so a deploy also ships the code.
+	push bool
 }
 
 // parseDeployArgs extracts --from/--limit/--dry-run/--force/--i18n/--no-i18n
@@ -121,6 +124,8 @@ func parseDeployArgs(args []string) (deployArgs, error) {
 			out.limit = n
 		case a == "--auto":
 			out.auto = true
+		case a == "--push":
+			out.push = true
 		case a == "--json":
 			out.jsonOut = true
 		case a == "--dry-run":
@@ -451,7 +456,36 @@ func RunDeploy(ctx context.Context, opts DeployOpts) (DeployResult, error) {
 		[2]string{"i18n", i18nState},
 		[2]string{"skipped", strconv.Itoa(skipped)})
 
+	// --push shares the deploy's already-resolved target: sync the resolved
+	// modules' local code to the remote addons dir before the run. In dry-run
+	// it prints the rsync itemization; on a real run a push failure aborts
+	// before anything restarts.
+	runPush := func(dryRun bool) error {
+		if !p.push {
+			return nil
+		}
+		if err := requireRsync(); err != nil {
+			return err
+		}
+		pushMods := append(append([]string(nil), update...), install...)
+		pushRSC := remoteShellContext{
+			sshHost: sshHost, remotePath: remotePath, fromName: fromName,
+			target: target, prof: prof, conn: conn,
+		}
+		pushOpts := PushOpts{
+			Cfg: opts.Cfg, Root: opts.Root, Palette: opts.Palette,
+			Log: opts.Log, StreamOut: opts.StreamOut,
+		}
+		opts.log("INFO", "push", "syncing modules to remote", prof.DBName,
+			[2]string{"modules", strings.Join(pushMods, ",")})
+		_, perr := pushModuleSet(ctx, pushRSC, pushOpts, pushMods, opts.Root, dryRun, false)
+		return perr
+	}
+
 	if p.dryRun {
+		if err := runPush(true); err != nil {
+			return DeployResult{}, err
+		}
 		opts.log("INFO", "", "dry-run — nothing executed", prof.DBName)
 		return result, nil
 	}
@@ -459,6 +493,9 @@ func RunDeploy(ctx context.Context, opts DeployOpts) (DeployResult, error) {
 		if err := confirmProd(opts.Palette, "deploy", target.dbName); err != nil {
 			return DeployResult{}, err
 		}
+	}
+	if err := runPush(false); err != nil {
+		return DeployResult{}, fmt.Errorf("push failed: %w", err)
 	}
 
 	// The three remote steps, each streamed live. Fail-fast with the step

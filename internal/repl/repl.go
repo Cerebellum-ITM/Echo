@@ -209,7 +209,7 @@ func (sess *session) renderPrompt() string {
 var dispatchNames = []string{
 	"help", "clear", "copy-last", "report", "sequence",
 	"init", "reset", "alias", "link",
-	"up", "down", "stop", "restart", "ps", "logs", "deploy",
+	"up", "down", "stop", "restart", "ps", "logs", "push", "deploy",
 	"install", "update", "uninstall", "test", "modules", "modinfo", "modstate", "view", "compare",
 	"i18n-export", "i18n-update", "i18n-pull",
 	"db-admin", "db-backup", "db-restore", "db-drop", "db-neutralize", "db-list", "db-use",
@@ -298,6 +298,8 @@ func (sess *session) dispatchParsed(ctx context.Context, cmd string, args []stri
 		sess.runShellRun(ctx, args)
 	case "connect":
 		sess.runConnect(ctx, args)
+	case "push":
+		sess.runPush(ctx, args)
 	case "deploy":
 		sess.runDeploy(ctx, args)
 	default:
@@ -423,8 +425,16 @@ func helpSections() []helpSection {
 			{"  --all", "All compose services (instead of just Odoo)"},
 			{"  --from <target>", "Follow logs on a remote instance (named connect target)"},
 			{"  --remote", "Follow logs on this directory's linked remote"},
+			{"push [<mod>...]", "Rsync local modules to the remote addons dir"},
+			{"  --from <target>", "Use a named connect target (default: this dir's link)"},
+			{"  --remote", "Push to this directory's linked remote"},
+			{"  --dirty", "Push every module with uncommitted changes"},
+			{"  --dry-run", "List the changes rsync would make; transfer nothing"},
+			{"  --delete", "Remove remote files no longer present locally"},
+			{"  --force", "Skip the prod-stage confirmation prompt"},
 			{"deploy", "Deploy picked commits + dirty modules to a remote (stop, up, -i/-u)"},
 			{"  --from <target>", "Use a named connect target (default: this dir's link)"},
+			{"  --push", "Rsync the resolved modules to the remote before the run"},
 			{"  --limit <N>", "Commits offered in the picker (default 20)"},
 			{"  --dry-run", "Resolve modules and show the plan; execute nothing"},
 			{"  --force", "Skip the prod-stage confirmation prompt"},

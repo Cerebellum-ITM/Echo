@@ -23,6 +23,33 @@ _(siguiente: Unit 14 — meta-commands. Fix deploy-build-muting: el builder de `
 
 ## Completed
 
+- [x] Unit 83 — push-modules. Nuevo `push [<mod>...] [--from <t>/--remote]
+  [--dirty] [--dry-run] [--delete] [--force]`: `rsync -az --itemize-changes`
+  de los módulos locales al addons dir remoto sobre SSH, reusando
+  `resolveRemoteShell`. Nuevo `internal/cmd/push.go`: `RunPush`,
+  `parsePushArgs` (strippea flags remotos; unknown → `ErrUsage`),
+  `pushModuleSet(ctx, rsc, opts, modules, srcRoot, dryRun, del)` (core
+  reusable con `srcRoot` para la Unit 84), `pushDest` (probe host-FS
+  existente vía `remoteModuleBase` → espejo del subpath local → primera ruta
+  relativa del perfil; conf-mode/container-only falla cerrado; seams
+  `probeRemoteBase`/`probeRemoteDir` para tests), `rsyncArgs`/`rsyncModule`
+  (excludes `__pycache__`/`*.pyc`/`.git`, `-n` en dry-run, `--delete` opt-in,
+  cuenta cambios por líneas de stdout), helpers `moduleSrcDir`/
+  `localAddonsSubpath`/`remoteDirExists`/`withStage`. Validación de
+  positionals contra el repo local antes de SSH; picker multi-select
+  coloreado por el stage remoto; `confirmRemoteProd` salvo en `--dry-run`.
+  `requireRsync` (binario en PATH). Wrapper `internal/repl/push.go`
+  (`runPush`, patrón deploy: `ErrUsage`→exit 2, stream vía `emitStreamLine`).
+  Integrado en **`deploy --push`** (`deployArgs.push`; closure `runPush` tras
+  el plan/prod-confirm, antes del `stop`; dry-run muestra el itemize). Registro
+  en `Registry`/`dispatchNames`/dispatch case/`commandFlags`/help (bloque
+  Docker antes de `deploy`); `projectlessOneShot` en `main.go`;
+  `sequenceCommands` + `remoteSequenceCommands`. Tests `push_test.go`
+  (`parsePushArgs`, `rsyncArgs` golden, `pushDest` los 4 caminos con seams,
+  `mergeModules`). Build/vet/test + cross-check de registry verdes.
+  **Pendiente verificación EN VIVO** con un remoto real (sin SSH/rsync en el
+  entorno dev).
+
 - [x] Unit 80 — compare-command. Nuevo `compare [<mod>] [--from <t>/--remote]
   [--copy]`: diffea un archivo del checkout local contra su copia dentro de
   Docker (contenedor local por defecto, o el de un target remoto reusando los

@@ -8,6 +8,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Nuevo comando `push` — sube los módulos locales al addons dir remoto**
+  (Unit 83). `push [<mod>...] [--from <t>|--remote] [--dirty] [--dry-run]
+  [--delete] [--force]` hace `rsync` de los módulos seleccionados al host
+  remoto sobre SSH, reusando la resolución de target de `deploy`/`link` — así
+  Echo deja de depender del CLI externo para copiar el código al servidor y
+  cierra el ciclo local → servidor → deploy. El destino se resuelve probando
+  primero dónde ya vive el módulo en el filesystem del host remoto (el probe
+  de la Unit 79) y, si es nuevo, espejando el subpath local del checkout (o la
+  primera ruta relativa de addons del perfil). Excluye `__pycache__`/`*.pyc`/
+  `.git`; `--delete` (opt-in) borra en remoto lo que ya no existe local;
+  `--dry-run` usa `rsync -n` y muestra el itemize sin transferir (y salta el
+  gate de prod). Selección: positionals (validados contra el repo local →
+  error de uso antes de tocar SSH), multi-select picker (coloreado por el
+  stage del perfil remoto), o `--dirty` (los módulos con cambios sin
+  commitear). Un remoto conf-mode (addons solo dentro de la imagen) falla
+  cerrado con hint. Gate de prod vía `confirmRemoteProd` (`--force` lo salta,
+  no-TTY falla cerrado). El core `pushModuleSet` (con parámetro `srcRoot`) es
+  reusable. Se integra en `sequence` remoto y en **`deploy --push`**, que
+  sincroniza los módulos resueltos justo antes del `stop → up → -u` (un fallo
+  de push aborta el deploy antes de reiniciar nada; `--dry-run` compone).
 - **Nuevo comando `compare` — diff de un archivo local vs su copia en Docker**
   (Unit 80). `compare [<mod>] [--from <t>|--remote] [--copy]` elige un archivo
   de módulo del checkout local (la misma cadena de pickers que `view`) y lo
