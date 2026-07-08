@@ -2,6 +2,7 @@ package repl
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -119,6 +120,12 @@ type logviewModel struct {
 	metas   []config.CmdLogMeta // all runs, newest first
 	now     time.Time
 	retDays int
+
+	// load opens a run's full record from its meta — config.LoadCmdLog for a
+	// local browse, or a lookup into the SSH-preloaded map for a remote one.
+	load func(config.CmdLogMeta) (config.CmdLogRecord, bool)
+	// fromLabel names the remote target when browsing remotely ("" = local).
+	fromLabel string
 
 	// list state
 	listFilter string
@@ -252,7 +259,7 @@ func (m logviewModel) updateList(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		if m.cursor >= 0 && m.cursor < len(rows) {
 			sel := rows[m.cursor]
-			if rec, ok := config.LoadCmdLog(sel.Path); ok {
+			if rec, ok := m.load(sel); ok {
 				m.record = rec
 				m.recordMeta = sel
 				m.mode = logviewDetail
@@ -446,6 +453,9 @@ func (m logviewModel) viewList() string {
 
 	var b strings.Builder
 	title := fmt.Sprintf("logview — %d run%s", len(rows), plural(len(rows)))
+	if m.fromLabel != "" {
+		title += " · " + m.fromLabel
+	}
 	if m.retDays > 0 {
 		title += faint.Render(fmt.Sprintf("  (%dd retention)", m.retDays))
 	}
@@ -545,6 +555,9 @@ func (m logviewModel) viewDetail() string {
 		logviewTimeLabel(m.recordMeta.Started, m.now),
 		runStatusLabel(m.record.Exit),
 		m.record.DB)
+	if m.fromLabel != "" {
+		head += " · " + m.fromLabel
+	}
 	b.WriteString(bar + dim.Render(head) + "\n")
 
 	lvlLabel := "all"
@@ -623,19 +636,54 @@ func (m logviewModel) filterEcho(f string) string {
 // plus headless escape hatches. It is a meta command — it never resets
 // lastOutput, so `copy-last` still copies the previous command.
 func (sess *session) runLogview(ctx context.Context, args []string) {
-	list, last, clear, force, unknown := parseLogviewArgs(args)
+	list, last, clear, force, remote, from, unknown := parseLogviewArgs(args)
 	if unknown != "" {
 		sess.print(Line{Kind: "warn", Text: "logview: unknown flag " + unknown})
 		sess.exitCode = exitUsage
 		return
 	}
 
+	isRemote := remote || from != ""
+
 	if clear {
+		if isRemote {
+			sess.print(Line{Kind: "warn", Text: "logview --clear is local-only"})
+			sess.exitCode = exitUsage
+			return
+		}
 		sess.logviewClear(force)
 		return
 	}
 
-	metas, _ := config.ListCmdLogs(sess.projectDir)
+	// Resolve the log source: the local cmd-logs dir, or a remote target's
+	// history streamed over SSH (read-only). The loader lets the detail view
+	// open a run's full record the same way in both cases.
+	var (
+		metas     []config.CmdLogMeta
+		fromLabel string
+		loader    = func(mm config.CmdLogMeta) (config.CmdLogRecord, bool) { return config.LoadCmdLog(mm.Path) }
+	)
+	if isRemote {
+		rmetas, records, name, err := cmd.FetchRemoteCmdLogs(ctx, sess.cfg, sess.palette,
+			sess.projectDir, from, sess.cmdOdooLogger("logview"))
+		if err != nil {
+			if errors.Is(err, cmd.ErrCancelled) || errors.Is(err, huh.ErrUserAborted) {
+				sess.finalize("logview", 0, 0, cmd.ErrCancelled)
+				return
+			}
+			emitOdooLog("ERROR", "echo.logview", "remote history unavailable: "+err.Error(),
+				nil, sess.styles, sess.palette, sess.cfg.DBName)
+			sess.exitCode = exitError
+			return
+		}
+		metas, fromLabel = rmetas, name
+		loader = func(mm config.CmdLogMeta) (config.CmdLogRecord, bool) {
+			r, ok := records[mm.Path]
+			return r, ok
+		}
+	} else {
+		metas, _ = config.ListCmdLogs(sess.projectDir)
+	}
 
 	if list {
 		sess.logviewPrintList(metas)
@@ -656,16 +704,21 @@ func (sess *session) runLogview(ctx context.Context, args []string) {
 	}
 
 	m := logviewModel{
-		mode:    logviewList,
-		metas:   metas,
-		now:     time.Now(),
-		retDays: sess.cfg.CmdLogsRetentionDays,
-		palette: sess.palette,
-		accent:  sess.palette.PromptColor(sess.stage),
-		styles:  sess.styles,
+		mode:      logviewList,
+		metas:     metas,
+		now:       time.Now(),
+		retDays:   sess.cfg.CmdLogsRetentionDays,
+		load:      loader,
+		fromLabel: fromLabel,
+		palette:   sess.palette,
+		accent:    sess.palette.PromptColor(sess.stage),
+		styles:    sess.styles,
+	}
+	if isRemote {
+		m.retDays = 0 // retention is the remote's own concern
 	}
 	if last {
-		if rec, ok := config.LoadCmdLog(metas[0].Path); ok {
+		if rec, ok := loader(metas[0]); ok {
 			m.mode = logviewDetail
 			m.record = rec
 			m.recordMeta = metas[0]
@@ -774,18 +827,30 @@ func (sess *session) logviewClear(force bool) {
 }
 
 // parseLogviewArgs pulls the known flags; the first unrecognized token is
-// returned so the caller can fail with a usage error.
-func parseLogviewArgs(args []string) (list, last, clear, force bool, unknown string) {
-	for _, a := range args {
-		switch a {
-		case "--list":
+// returned so the caller can fail with a usage error. `--from <t>` / `--from=t`
+// name a connect target and `--remote` selects this directory's link — both
+// switch the browser to the remote target's log history.
+func parseLogviewArgs(args []string) (list, last, clear, force, remote bool, from, unknown string) {
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		switch {
+		case a == "--list":
 			list = true
-		case "--last":
+		case a == "--last":
 			last = true
-		case "--clear":
+		case a == "--clear":
 			clear = true
-		case "--force":
+		case a == "--force":
 			force = true
+		case a == "--remote":
+			remote = true
+		case a == "--from":
+			if i+1 < len(args) {
+				from = args[i+1]
+				i++
+			}
+		case strings.HasPrefix(a, "--from="):
+			from = strings.TrimPrefix(a, "--from=")
 		default:
 			if unknown == "" {
 				unknown = a

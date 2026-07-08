@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **`logview --from <t>` / `--remote`: navega el historial de logs de un
+  destino remoto por SSH.** Antes `logview` solo abría el `cmd-logs/` local y
+  cualquier flag remoto caía en "unknown flag". Ahora acepta `--from <target>`
+  (destino de connect nombrado) y `--remote` (el `link` de este directorio) y
+  lee el historial del servidor de solo lectura: resuelve el target, deriva su
+  directorio `cmd-logs/` del **`ProjectKey` determinista** del `remote_path`
+  (la misma clave con la que Echo guardó los registros allá) y streamea todos
+  los records en una sola pasada SSH. El navegador es idéntico al local; el
+  título muestra el destino y la vista de detalle carga cada corrida desde el
+  mapa precargado (loader inyectado en el modelo). `--clear` sigue siendo
+  local. Nuevo `internal/cmd/logview_remote.go`
+  (`FetchRemoteCmdLogs`/`parseRemoteCmdLogs`, con tests) y flags remotos en el
+  autocompletado. `parseLogviewArgs` gana `--from`/`--remote`.
+
 ### Fixed
 - **`logview`: la vista de detalle rebasaba la altura del terminal y empujaba
   el header (con el filtro) fuera de vista.** El cálculo de la ventana de

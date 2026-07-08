@@ -138,12 +138,22 @@ func TestLogviewTimeLabel(t *testing.T) {
 }
 
 func TestParseLogviewArgs(t *testing.T) {
-	list, last, clear, force, unknown := parseLogviewArgs([]string{"--clear", "--force"})
-	if !clear || !force || list || last || unknown != "" {
-		t.Fatalf("parse --clear --force wrong: %v %v %v %v %q", list, last, clear, force, unknown)
+	list, last, clear, force, remote, from, unknown := parseLogviewArgs([]string{"--clear", "--force"})
+	if !clear || !force || list || last || remote || from != "" || unknown != "" {
+		t.Fatalf("parse --clear --force wrong: %v %v %v %v %v %q %q", list, last, clear, force, remote, from, unknown)
 	}
-	if _, _, _, _, u := parseLogviewArgs([]string{"--bogus"}); u != "--bogus" {
+	if _, _, _, _, _, _, u := parseLogviewArgs([]string{"--bogus"}); u != "--bogus" {
 		t.Fatalf("unknown flag not surfaced: %q", u)
+	}
+	// --from consumes its value token; --remote is a bare switch.
+	if _, _, _, _, _, f, u := parseLogviewArgs([]string{"--from", "prod"}); f != "prod" || u != "" {
+		t.Fatalf("--from prod → from=%q unknown=%q", f, u)
+	}
+	if _, _, _, _, _, f, _ := parseLogviewArgs([]string{"--from=staging"}); f != "staging" {
+		t.Fatalf("--from=staging → from=%q", f)
+	}
+	if _, _, _, _, r, _, _ := parseLogviewArgs([]string{"--remote"}); !r {
+		t.Fatalf("--remote not parsed")
 	}
 }
 
