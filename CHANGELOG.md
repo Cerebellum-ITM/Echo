@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Iconos nerd-font por tipo de archivo en el árbol de `push`, con toggle y
+  fallback** (Unit 83). Cuando están habilitados, cada archivo del árbol de
+  cambios lleva su glyph nerd-font (set seti: `.py` , `.xml` , `.po` 󰗊,
+  `.csv`, `.js`, `.json`, `.yml`, `.md`, imágenes…, con glyph de carpeta en
+  los nodos de directorio); si no, el árbol se dibuja sin glyphs. Se controla
+  con el nuevo setting `icons` en `global.toml` (`auto` por defecto / `on` /
+  `off`) y el override por env `ECHO_ICONS`; en `auto` se activan solo en una
+  terminal interactiva que no sea "plana" (`$TERM` distinto de `linux`/`dumb`)
+  y se apagan cuando la salida va a un pipe/archivo (`--log`, CI), para no
+  ensuciar logs. El mismo toggle gobierna el glyph de la lista de `modules`
+  (antes incondicional). La forma en texto plano (copy-last/`--log`) nunca
+  lleva iconos. Helpers `resolveIcons`/`fileIcon`/`parseIconToggle`.
+
 ### Fixed
 - **`push`/`watch` re-sincronizaban (y mostraban) el módulo completo en cada
   commit aunque solo cambiara un archivo** (Unit 83). `watch` empaqueta cada

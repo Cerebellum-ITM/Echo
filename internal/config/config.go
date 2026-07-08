@@ -12,10 +12,15 @@ import (
 )
 
 type Config struct {
-	Theme         string
-	Logo          string
-	Banner        string
-	ComposeCmd    string
+	Theme      string
+	Logo       string
+	Banner     string
+	ComposeCmd string
+	// Icons controls nerd-font file-type glyphs in rich output (e.g. the
+	// push change tree, the modules list): "auto" (default — on for an
+	// interactive terminal that isn't a known plain one), "on", or "off".
+	// The ECHO_ICONS env var overrides it.
+	Icons         string
 	OdooVersion   string
 	OdooContainer string
 	DBContainer   string
@@ -89,6 +94,7 @@ type globalFile struct {
 	Logo           string                        `toml:"logo"`
 	Banner         string                        `toml:"banner"`
 	ComposeCmd     string                        `toml:"compose_cmd"`
+	Icons          string                        `toml:"icons"`
 	LogDBMax       int                           `toml:"log_db_max"`
 	Prompt         *promptFile                   `toml:"prompt"`
 	ConnectTargets map[string]*connectTargetFile `toml:"connect_targets"`
@@ -189,6 +195,7 @@ func Load(projectPath string) (*Config, error) {
 	cfg.Logo = g.Logo
 	cfg.Banner = g.Banner
 	cfg.ComposeCmd = g.ComposeCmd
+	cfg.Icons = g.Icons
 	cfg.LogDBMax = g.LogDBMax
 	cfg.ConnectTargets = sortedConnectTargets(g.ConnectTargets)
 	cfg.ProjectAliases = g.ProjectAliases
@@ -422,6 +429,7 @@ func LoadGlobal() (*Config, error) {
 	cfg.Logo = g.Logo
 	cfg.Banner = g.Banner
 	cfg.ComposeCmd = g.ComposeCmd
+	cfg.Icons = g.Icons
 	cfg.LogDBMax = g.LogDBMax
 	cfg.ConnectTargets = sortedConnectTargets(g.ConnectTargets)
 	cfg.ProjectAliases = g.ProjectAliases

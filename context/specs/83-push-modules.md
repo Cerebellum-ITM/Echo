@@ -46,7 +46,11 @@ rsync -az --itemize-changes \
   **directory tree** (`BuildSyncTree` → `OnSync`): dim tree connectors
   (`├─`/`└─`/`│`), root files first then each subdir grouped, an
   operation glyph tinted by kind (`+` new = success, `~` changed =
-  warning, `−` deleted = error). `OnSync` is threaded through
+  warning, `−` deleted = error). When icons are enabled (config `icons`
+  / `ECHO_ICONS`, `auto` default), a nerd-font file-type glyph precedes
+  each name (seti set: `.py`/`.xml`/`.po`/… + a folder glyph on dir
+  nodes); off → the tree renders without glyphs. `OnSync` is threaded
+  through
   `DeployOpts`/`WatchOpts` too, so a `deploy --push` and each `watch`
   cycle render the same tree — except `deploy --json`, where it is
   suppressed so stdout stays machine-readable. The tree's `plain` form

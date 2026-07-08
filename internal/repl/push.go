@@ -40,9 +40,13 @@ func (sess *session) runPush(ctx context.Context, args []string) {
 
 // renderSyncTree prints a module's file changes as a colored tree: dim tree
 // connectors, an operation glyph tinted by kind (+ new = success, ~ changed =
-// warning, − deleted = error), directory nodes dimmed. Backs push's OnSync.
+// warning, − deleted = error), directory nodes dimmed. When icons are enabled
+// a nerd-font file-type glyph precedes each name (folder glyph for dir nodes);
+// the ANSI-free `plain` form kept for copy-last/--log never carries icons.
+// Backs push's OnSync.
 func (sess *session) renderSyncTree(changes []cmd.FileChange) {
 	p := sess.palette
+	icons := sess.iconsEnabled()
 	dim := lipgloss.NewStyle().Foreground(p.Dim)
 	glyphStyle := func(kind string) lipgloss.Style {
 		switch kind {
@@ -57,10 +61,18 @@ func (sess *session) renderSyncTree(changes []cmd.FileChange) {
 	}
 	for _, r := range cmd.BuildSyncTree(changes) {
 		if r.Kind == "dir" {
-			sess.printStyled(dim.Render(r.Prefix+r.Name), r.Prefix+r.Name, "dim")
+			name := r.Name
+			if icons {
+				name = folderIcon + " " + name
+			}
+			sess.printStyled(dim.Render(r.Prefix+name), r.Prefix+r.Name, "dim")
 			continue
 		}
-		rendered := dim.Render(r.Prefix) + glyphStyle(r.Kind).Render(r.Glyph) + " " + sess.styles.Out.Render(r.Name)
+		nameSeg := sess.styles.Out.Render(r.Name)
+		if icons {
+			nameSeg = dim.Render(fileIcon(r.Name)) + " " + nameSeg
+		}
+		rendered := dim.Render(r.Prefix) + glyphStyle(r.Kind).Render(r.Glyph) + " " + nameSeg
 		plain := r.Prefix + r.Glyph + " " + r.Name
 		sess.printStyled(rendered, plain, "out")
 	}

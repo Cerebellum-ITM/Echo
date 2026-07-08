@@ -5,12 +5,15 @@ import (
 	"testing"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/pascualchavez/echo/internal/config"
 	"github.com/pascualchavez/echo/internal/theme"
 )
 
 func newRenderSession() *session {
 	p := theme.PaletteByName("")
-	return &session{palette: p, styles: theme.New(p, theme.StageDev)}
+	// Icons forced on so glyph-dependent render assertions are deterministic
+	// regardless of the test process's TTY/TERM.
+	return &session{palette: p, styles: theme.New(p, theme.StageDev), cfg: &config.Config{Icons: "on"}}
 }
 
 // Every module gets exactly one package glyph prefix, and no name is dropped.
