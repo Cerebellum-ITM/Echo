@@ -342,7 +342,14 @@ func archiveModules(ctx context.Context, cfg *config.Config, root, sha string, m
 // as needed. Only regular files and directories are handled (git archive
 // emits nothing else for a tree).
 func extractTar(data []byte, dir string) error {
-	tr := tar.NewReader(bytes.NewReader(data))
+	return extractTarReader(bytes.NewReader(data), dir)
+}
+
+// extractTarReader extracts a tar stream into dir, guarding against path
+// traversal. The streaming form used by db-pull's filestore (a large tar
+// piped from a temp file, never buffered whole in memory).
+func extractTarReader(r io.Reader, dir string) error {
+	tr := tar.NewReader(r)
 	for {
 		hdr, err := tr.Next()
 		if err == io.EOF {

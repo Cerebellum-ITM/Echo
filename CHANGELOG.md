@@ -8,6 +8,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **`db-pull` — clona una base de datos remota al stack local** (Unit 85).
+  Nuevo comando `db-pull [--from <t>|--remote] [--as <name>]
+  [--neutralize|--no-neutralize] [--filestore] [--force]`: hace `pg_dump -Fc`
+  del target remoto sobre SSH **streameando el stdout binario directo a
+  `./backups/<db>_<target>_<ts>.dump`** (sin buffer en memoria ni temp remoto,
+  con línea de progreso `pulled N MB…`), lo restaura en el Postgres local bajo
+  un nombre distinto reusando la maquinaria de `db-restore`, y —por defecto,
+  solo cuando el origen es prod— lo **neutraliza** (`db-neutralize`). El lado
+  remoto es **solo lectura** (un `pg_dump`, más un tar opcional del filestore):
+  no hay gate de prod remoto; todas las mutaciones ocurren en local con sus
+  propios guards. El `.dump` queda como un backup normal que el picker de
+  `db-restore` puede volver a restaurar. `--as` fija el nombre local (default
+  `<remoteDB>_<target>` saneado a identificador Postgres); un DB local con ese
+  nombre se reemplaza con `--force` (termina conexiones). `--filestore` también
+  trae los adjuntos (tar del filestore del contenedor Odoo remoto → extracción
+  local → copia al contenedor local bajo el nuevo nombre; si no hay filestore,
+  WARNING y sigue). La DB activa **no** cambia: el cierre sugiere
+  `db-use <name>`. Nuevo transporte `runSSHToFile` (stdout binario → archivo
+  con progreso, borra el parcial si falla) y `restoreBackupFile` extraído de
+  `RunDBRestore` para restaurar un dump concreto sin picker. Nuevos
+  `internal/cmd/db_pull.go` (`RunDBPull`/`parseDBPullArgs`/`sanitizeDBName`/
+  `pullFilestore`/`humanBytes`); registrado en la familia `db-*`. Tests
+  `db_pull_test.go` (tri-state de neutralize, `sanitizeDBName`, `runSSHToFile`
+  happy-path + fallo-sin-parcial vía seam).
 - **`logview` — navegador interactivo del historial de logs por comando**
   (Unit 82). Nuevo comando alt-screen (bubbletea) sobre lo que persiste la
   Unit 81, con el mismo lenguaje visual que el `help` pager y el picker (barra

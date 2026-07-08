@@ -23,6 +23,26 @@ _(siguiente: Unit 14 — meta-commands. Fix deploy-build-muting: el builder de `
 
 ## Completed
 
+- [x] Unit 85 — db-pull. Nuevo `db-pull [--from <t>|--remote] [--as <name>]
+  [--neutralize|--no-neutralize] [--filestore] [--force]`: `pg_dump -Fc` del
+  target remoto sobre SSH streameado directo a `./backups/<db>_<target>_<ts>.dump`
+  (progreso `pulled N MB…`), restaurado en local reusando la maquinaria de
+  `db-restore`, y neutralizado por defecto solo si el origen es prod. Remoto
+  solo-lectura → sin gate de prod remoto; mutaciones locales con sus propios
+  guards. La DB activa no cambia (cierre sugiere `db-use <name>`). Nuevo
+  transporte `runSSHToFile` (stdout binario → archivo con progreso, borra el
+  parcial si falla) en `remote.go`; `restoreBackupFile` extraído de
+  `RunDBRestore`; `extractTarReader` (variante streaming) para el filestore.
+  Nuevo `internal/cmd/db_pull.go` (`RunDBPull`/`parseDBPullArgs`/
+  `sanitizeDBName`/`pullFilestore`/`humanBytes`; neutralize tri-state con
+  puntero). Ruteado en la familia `db-*` (dispatch/runDB/Registry/dispatchNames/
+  commandFlags/help Database). NO projectless (el restore necesita el stack
+  docker local). Tests `db_pull_test.go` (matriz de flags + tri-state,
+  `sanitizeDBName`, `runSSHToFile` happy/fallo-sin-parcial vía seam
+  `sshToFileCommand`) y `registry_test` actualizado con `db-pull`.
+  build/vet/gofmt/test verdes. **Pendiente verificación EN VIVO** (remoto real
+  + stack docker local).
+
 - [x] Unit 82 — logview browser. Nuevo comando `logview [--list|--last|--clear
   [--force]]`: navegador interactivo alt-screen (bubbletea) sobre el historial
   de la Unit 81, con el estilo log-framed del `help` pager/picker (barra `│`

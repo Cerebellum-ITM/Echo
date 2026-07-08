@@ -214,7 +214,7 @@ var dispatchNames = []string{
 	"up", "down", "stop", "restart", "ps", "logs", "push", "deploy", "watch",
 	"install", "update", "uninstall", "test", "modules", "modinfo", "modstate", "view", "compare",
 	"i18n-export", "i18n-update", "i18n-pull",
-	"db-admin", "db-backup", "db-restore", "db-drop", "db-neutralize", "db-list", "db-use",
+	"db-admin", "db-backup", "db-restore", "db-pull", "db-drop", "db-neutralize", "db-list", "db-use",
 	"shell", "shell-run", "bash", "psql", "connect",
 }
 
@@ -301,7 +301,7 @@ func (sess *session) dispatchParsed(ctx context.Context, cmd string, args []stri
 		sess.runI18n(ctx, cmd, args)
 	case "i18n-pull":
 		sess.runI18nPull(ctx, args)
-	case "db-admin", "db-backup", "db-restore", "db-drop", "db-neutralize", "db-list", "db-use":
+	case "db-admin", "db-backup", "db-restore", "db-pull", "db-drop", "db-neutralize", "db-list", "db-use":
 		sess.runDB(ctx, cmd, args)
 	case "shell", "bash", "psql":
 		sess.runShell(ctx, cmd, args)
@@ -391,6 +391,14 @@ func helpSections() []helpSection {
 			{"db-restore [--as N]", "Pick a backup, name the target, and restore"},
 			{"  --force", "Replace target DB (terminates its connections)"},
 			{"  --neutralize", "Neutralize the DB after restoring"},
+			{"db-pull", "Pull a remote DB into the local stack (dump → restore)"},
+			{"  --from <target>", "Pull from a named connect target"},
+			{"  --remote", "Pull from this directory's linked remote"},
+			{"  --as <name>", "Local DB name (default: <remoteDB>_<target>)"},
+			{"  --neutralize", "Force neutralize (default: only when source is prod)"},
+			{"  --no-neutralize", "Skip neutralize even for a prod source"},
+			{"  --filestore", "Also pull the DB's filestore attachments"},
+			{"  --force", "Replace an existing local DB of the target name"},
 			{"db-drop [name]", "Drop a database (confirmation by default)"},
 			{"  --force", "Skip confirm and terminate active connections"},
 			{"db-neutralize [name]", "Neutralize a DB (disable mail/cron/payments)"},
@@ -860,6 +868,8 @@ func (sess *session) runDB(ctx context.Context, name string, args []string) {
 		err = cmd.RunDBBackup(ctx, opts)
 	case "db-restore":
 		err = cmd.RunDBRestore(ctx, opts)
+	case "db-pull":
+		err = cmd.RunDBPull(ctx, opts)
 	case "db-drop":
 		err = cmd.RunDBDrop(ctx, opts)
 	case "db-neutralize":

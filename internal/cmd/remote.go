@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
 	"strings"
 	"sync"
@@ -16,6 +17,85 @@ import (
 // real ssh binary.
 var sshStreamCommand = func(ctx context.Context, host, remoteCmd string) *exec.Cmd {
 	return exec.CommandContext(ctx, "ssh", "-o", "BatchMode=yes", host, remoteCmd)
+}
+
+// sshToFileCommand builds the ssh invocation runSSHToFile executes. A
+// package-level hook so tests can substitute a local command for the real
+// ssh binary.
+var sshToFileCommand = func(ctx context.Context, host, remoteCmd string) *exec.Cmd {
+	return exec.CommandContext(ctx, "ssh", "-o", "BatchMode=yes", host, remoteCmd)
+}
+
+// runSSHToFile runs a single remote command over SSH and streams its
+// binary stdout straight into destPath (no buffering the whole payload in
+// memory), reporting the running byte count through onProgress (throttled
+// to ~1 MiB steps, with a final call). stderr is folded into the returned
+// error. A non-zero exit — or any copy failure — removes the partial file
+// so an interrupted pull never leaves a half-written dump behind.
+func runSSHToFile(ctx context.Context, host, remoteCmd, destPath string, onProgress func(int64)) error {
+	f, err := os.Create(destPath)
+	if err != nil {
+		return err
+	}
+	cmd := sshToFileCommand(ctx, host, remoteCmd)
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		f.Close()
+		os.Remove(destPath)
+		return err
+	}
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+
+	fail := func(e error) error {
+		f.Close()
+		os.Remove(destPath)
+		if msg := strings.TrimSpace(stderr.String()); msg != "" {
+			return fmt.Errorf("%w: %s", e, msg)
+		}
+		return e
+	}
+
+	if err := cmd.Start(); err != nil {
+		return fail(err)
+	}
+	pw := &progressWriter{w: f, onProgress: onProgress}
+	if _, err := io.Copy(pw, stdout); err != nil {
+		_ = cmd.Wait()
+		return fail(err)
+	}
+	if err := cmd.Wait(); err != nil {
+		return fail(err)
+	}
+	if err := f.Close(); err != nil {
+		os.Remove(destPath)
+		return err
+	}
+	if onProgress != nil {
+		onProgress(pw.total) // final count
+	}
+	return nil
+}
+
+// progressWriter wraps a file, counting bytes and reporting the running
+// total every ~1 MiB so the REPL can print a live size line.
+type progressWriter struct {
+	w          io.Writer
+	total      int64
+	reported   int64
+	onProgress func(int64)
+}
+
+const progressStep = 1 << 20 // 1 MiB
+
+func (p *progressWriter) Write(b []byte) (int, error) {
+	n, err := p.w.Write(b)
+	p.total += int64(n)
+	if p.onProgress != nil && p.total-p.reported >= progressStep {
+		p.reported = p.total
+		p.onProgress(p.total)
+	}
+	return n, err
 }
 
 // runSSHStream executes a single remote command over SSH like runSSH,
