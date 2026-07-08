@@ -25,6 +25,13 @@ rsync -az --itemize-changes \
   <localAddons>/<mod>/  <host>:<remoteAddons>/<mod>/
 ```
 
+- `--checksum` makes rsync compare by **content**, not size+mtime. The
+  watcher ships each commit from a `git archive`, which stamps every
+  file with the commit's mtime — a size+mtime comparison would re-sync
+  (and re-display) the whole module on every commit. With --checksum
+  only genuinely content-changed files transfer, and `parseItemize`
+  drops attribute-only itemize lines (update type `.`), so a
+  single-file commit shows exactly one file in the tree.
 - `--delete` is **opt-in** (removes remote files that no longer exist
   locally — correct for renames/deletions, but destructive enough to
   require the explicit flag).

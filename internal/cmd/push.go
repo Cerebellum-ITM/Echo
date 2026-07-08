@@ -284,9 +284,16 @@ var rsyncCommand = func(ctx context.Context, args ...string) *exec.Cmd {
 // exclude set (build/VCS noise, mirroring skipViewPath), optional dry-run
 // (`-n`) and `--delete`, and a trailing slash on both endpoints so the
 // module's contents map into the remote module dir.
+//
+// `--checksum` makes rsync decide by CONTENT, not size+mtime: the watcher
+// ships each commit from a `git archive`, which stamps every file with the
+// commit's mtime, so a size+mtime comparison would re-sync the whole module
+// on every commit. With --checksum only genuinely content-changed files are
+// transferred (and, paired with parseItemize dropping attribute-only lines,
+// only those show in the change tree).
 func rsyncArgs(srcDir, sshHost, destDir string, dryRun, del bool) []string {
 	args := []string{
-		"-az", "--itemize-changes",
+		"-az", "--checksum", "--itemize-changes",
 		"--exclude", "__pycache__", "--exclude", "*.pyc", "--exclude", ".git",
 		"-e", "ssh -o BatchMode=yes",
 	}
@@ -382,6 +389,12 @@ func parseItemize(line string) (FileChange, bool) {
 	}
 	code, p := line[:sp], line[sp+1:]
 	if len(code) < 2 || code[1] != 'f' { // only regular files (X == 'f')
+		return FileChange{}, false
+	}
+	// The update type Y (code[0]) is '.' when nothing was transferred — only
+	// attributes (e.g. mtime) changed. Those aren't content changes: skip them
+	// so a re-stamped-but-identical file never appears as a change.
+	if code[0] == '.' {
 		return FileChange{}, false
 	}
 	op := "changed"

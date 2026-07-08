@@ -59,7 +59,7 @@ func TestRsyncArgs(t *testing.T) {
 	// -n / --delete.
 	got := rsyncArgs("/local/addons/sale", "staging", "/srv/odoo/addons/sale", false, false)
 	want := []string{
-		"-az", "--itemize-changes",
+		"-az", "--checksum", "--itemize-changes",
 		"--exclude", "__pycache__", "--exclude", "*.pyc", "--exclude", ".git",
 		"-e", "ssh -o BatchMode=yes",
 		"/local/addons/sale/", "staging:/srv/odoo/addons/sale/",
@@ -206,6 +206,7 @@ func TestParseItemize(t *testing.T) {
 		{"<f+++++++++ __init__.py", "new", "__init__.py", true},
 		{">f+++++++++ data/x.xml", "new", "data/x.xml", true},
 		{"<f.st...... security/s.xml", "changed", "security/s.xml", true},
+		{".f..t...... unchanged.py", "", "", false}, // attribute-only (mtime) → not a content change
 		{"*deleting   old/gone.py", "deleted", "old/gone.py", true},
 		{"cd+++++++++ data/", "", "", false},   // directory
 		{".d..t...... ./", "", "", false},      // directory (root)

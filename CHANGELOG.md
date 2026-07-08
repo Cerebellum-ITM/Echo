@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **`push`/`watch` re-sincronizaban (y mostraban) el módulo completo en cada
+  commit aunque solo cambiara un archivo** (Unit 83). `watch` empaqueta cada
+  commit con `git archive`, que le pone a **todos** los archivos la fecha
+  (mtime) del commit; como rsync decidía por tamaño+fecha, veía todos los
+  archivos como distintos y los re-sincronizaba, imprimiendo el árbol
+  completo. Ahora rsync usa `--checksum` (compara por **contenido**, no por
+  fecha), así solo se transfieren los archivos que de verdad cambiaron; y
+  `parseItemize` descarta las líneas de itemize de solo-atributos (update type
+  `.`, típicamente un ajuste de mtime), de modo que un commit de un solo
+  archivo muestra exactamente ese archivo en el árbol.
+
 ### Changed
 - **La salida de archivos de `push` ahora es un árbol de cambios legible con
   color** (Unit 83). Antes se volcaban tal cual los códigos crípticos de
