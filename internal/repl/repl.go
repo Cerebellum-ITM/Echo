@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/huh"
 	"github.com/charmbracelet/lipgloss"
@@ -81,6 +82,11 @@ type session struct {
 	lastModinfoModule string
 	lastViewModule    string
 	lastViewFile      string
+	// lastViewFrom / lastViewRemote remember the last view's remote source
+	// so `view --last` replays from the same target when the current args
+	// carry no remote flag of their own.
+	lastViewFrom   string
+	lastViewRemote bool
 }
 
 // Exit codes returned by one-shot (script) dispatch. The interactive REPL
@@ -152,6 +158,7 @@ func newSession(s theme.Styles, p theme.Palette, project, id string, stage theme
 func Start(s theme.Styles, p theme.Palette, project, id string, stage theme.Stage, version, themeName, username, cwd string, cfg *config.Config) {
 	sess, unknown := newSession(s, p, project, id, stage, version, themeName, username, cwd, cfg)
 	sess.interactive = true
+	sess.pruneCmdLogs()
 
 	sess.clearAndRenderHeader()
 	for _, u := range unknown {
@@ -202,12 +209,12 @@ func (sess *session) renderPrompt() string {
 // registry_test.go; `exit` and `quit` are handled in Start (above) and
 // are therefore not part of this slice.
 var dispatchNames = []string{
-	"help", "clear", "copy-last", "report", "sequence",
+	"help", "clear", "copy-last", "report", "logview", "sequence",
 	"init", "reset", "alias", "link",
-	"up", "down", "stop", "restart", "ps", "logs", "deploy",
-	"install", "update", "uninstall", "test", "modules", "modinfo", "modstate", "view",
+	"up", "down", "stop", "restart", "ps", "logs", "push", "deploy", "watch",
+	"install", "update", "uninstall", "test", "modules", "modinfo", "modstate", "view", "compare",
 	"i18n-export", "i18n-update", "i18n-pull",
-	"db-admin", "db-backup", "db-restore", "db-drop", "db-neutralize", "db-list", "db-use",
+	"db-admin", "db-backup", "db-restore", "db-pull", "db-drop", "db-neutralize", "db-list", "db-use",
 	"shell", "shell-run", "bash", "psql", "connect",
 }
 
@@ -217,7 +224,7 @@ var dispatchNames = []string{
 // still copy the previously-buffered command, not just the ok line.
 func isMetaCommand(name string) bool {
 	switch name {
-	case "copy-last", "help", "clear":
+	case "copy-last", "help", "clear", "logview":
 		return true
 	}
 	return false
@@ -242,6 +249,13 @@ func (sess *session) dispatchParsed(ctx context.Context, cmd string, args []stri
 		sess.lastOutput.Reset()
 	}
 
+	// Persist the captured output as a history record when the command
+	// finishes (Unit 81). Deferred so the build-mode early return is still
+	// recorded; fires before runStepCaptured's post-dispatch buffer reset,
+	// so recipe steps land as their own records.
+	started := time.Now()
+	defer func() { sess.saveCmdLog(cmd, args, time.Since(started)) }()
+
 	// Build mode (--build / -b) is universal: intercept before the switch,
 	// but only for commands the switch actually routes — an unknown command
 	// with --build falls through to the unknown-command path.
@@ -259,6 +273,8 @@ func (sess *session) dispatchParsed(ctx context.Context, cmd string, args []stri
 		sess.runCopyLast(args)
 	case "report":
 		sess.runReport(args)
+	case "logview":
+		sess.runLogview(ctx, args)
 	case "sequence":
 		sess.runSequence(ctx, args)
 	case "init":
@@ -279,11 +295,13 @@ func (sess *session) dispatchParsed(ctx context.Context, cmd string, args []stri
 		sess.runModstate(ctx, args)
 	case "view":
 		sess.runView(ctx, args)
+	case "compare":
+		sess.runCompare(ctx, args)
 	case "i18n-export", "i18n-update":
 		sess.runI18n(ctx, cmd, args)
 	case "i18n-pull":
 		sess.runI18nPull(ctx, args)
-	case "db-admin", "db-backup", "db-restore", "db-drop", "db-neutralize", "db-list", "db-use":
+	case "db-admin", "db-backup", "db-restore", "db-pull", "db-drop", "db-neutralize", "db-list", "db-use":
 		sess.runDB(ctx, cmd, args)
 	case "shell", "bash", "psql":
 		sess.runShell(ctx, cmd, args)
@@ -291,8 +309,12 @@ func (sess *session) dispatchParsed(ctx context.Context, cmd string, args []stri
 		sess.runShellRun(ctx, args)
 	case "connect":
 		sess.runConnect(ctx, args)
+	case "push":
+		sess.runPush(ctx, args)
 	case "deploy":
 		sess.runDeploy(ctx, args)
+	case "watch":
+		sess.runWatch(ctx, args)
 	default:
 		sess.print(Line{Kind: "warn", Text: "unknown command: " + cmd + " — try help"})
 		sess.exitCode = exitUsage
@@ -345,6 +367,11 @@ func helpSections() []helpSection {
 			{"view [<mod>]", "Pick a module file and view it (bat, else plain)"},
 			{"  --copy", "Copy the file to the clipboard instead"},
 			{"  --last", "Re-display this session's last viewed file (skips pickers)"},
+			{"  --from <t>", "View the file from a remote target (or --remote for the link binding)"},
+			{"compare [<mod>]", "Diff a local module file against its Docker copy"},
+			{"  --all", "Compare the whole module: changed/added/missing table"},
+			{"  --from <t>", "Compare against a remote target (or --remote for the link binding)"},
+			{"  --copy", "Copy the diff to the clipboard"},
 		}},
 		{"i18n", []helpEntry{
 			{"i18n-export <mod> [lang]", "Export <mod>/i18n/<lang>.po (default es_MX)"},
@@ -365,6 +392,14 @@ func helpSections() []helpSection {
 			{"db-restore [--as N]", "Pick a backup, name the target, and restore"},
 			{"  --force", "Replace target DB (terminates its connections)"},
 			{"  --neutralize", "Neutralize the DB after restoring"},
+			{"db-pull", "Pull a remote DB into the local stack (dump → restore)"},
+			{"  --from <target>", "Pull from a named connect target"},
+			{"  --remote", "Pull from this directory's linked remote"},
+			{"  --as <name>", "Local DB name (default: <remoteDB>_<target>)"},
+			{"  --neutralize", "Force neutralize (default: only when source is prod)"},
+			{"  --no-neutralize", "Skip neutralize even for a prod source"},
+			{"  --filestore", "Also pull the DB's filestore attachments"},
+			{"  --force", "Replace an existing local DB of the target name"},
 			{"db-drop [name]", "Drop a database (confirmation by default)"},
 			{"  --force", "Skip confirm and terminate active connections"},
 			{"db-neutralize [name]", "Neutralize a DB (disable mail/cron/payments)"},
@@ -412,8 +447,16 @@ func helpSections() []helpSection {
 			{"  --all", "All compose services (instead of just Odoo)"},
 			{"  --from <target>", "Follow logs on a remote instance (named connect target)"},
 			{"  --remote", "Follow logs on this directory's linked remote"},
+			{"push [<mod>...]", "Rsync local modules to the remote addons dir"},
+			{"  --from <target>", "Use a named connect target (default: this dir's link)"},
+			{"  --remote", "Push to this directory's linked remote"},
+			{"  --dirty", "Push every module with uncommitted changes"},
+			{"  --dry-run", "List the changes rsync would make; transfer nothing"},
+			{"  --delete", "Remove remote files no longer present locally"},
+			{"  --force", "Skip the prod-stage confirmation prompt"},
 			{"deploy", "Deploy picked commits + dirty modules to a remote (stop, up, -i/-u)"},
 			{"  --from <target>", "Use a named connect target (default: this dir's link)"},
+			{"  --push", "Rsync the resolved modules to the remote before the run"},
 			{"  --limit <N>", "Commits offered in the picker (default 20)"},
 			{"  --dry-run", "Resolve modules and show the plan; execute nothing"},
 			{"  --force", "Skip the prod-stage confirmation prompt"},
@@ -423,6 +466,11 @@ func helpSections() []helpSection {
 			{"  --modules <names>", "Deploy these modules non-interactively (skips the picker)"},
 			{"  --auto", "Headless: deploy pending commits (ahead of upstream) + dirty modules, no picker"},
 			{"  --json", "Emit a machine-readable deploy summary to stdout (logs to stderr)"},
+			{"watch <branch>", "Auto push+deploy when new commits land on a branch (Ctrl+C to stop)"},
+			{"  --from <target>", "Use a named connect target (default: this dir's link)"},
+			{"  --remote", "Target this directory's linked remote"},
+			{"  --interval <sec>", "Poll interval in seconds (default 10, min 2)"},
+			{"  --force", "Required to watch a prod-stage target"},
 		}},
 		{"Session", []helpEntry{
 			{"copy-last", "Copy the last command's output to clipboard"},
@@ -432,6 +480,10 @@ func helpSections() []helpSection {
 			{"  --level=<lvl>", "Only lines of that level (debug…critical)"},
 			{"  --min-level=<lvl>", "That level and more severe"},
 			{"  --copy", "Copy the matched lines (default: print)"},
+			{"logview", "Browse past commands' logs (filter by text and level)"},
+			{"  --list", "Print the run list without the interactive browser"},
+			{"  --last", "Open the most recent run directly"},
+			{"  --clear", "Delete this project's log history (--force skips confirm)"},
 			{"sequence", "Pick several commands in order and run them (tri-state Tab)"},
 			{"  --remote", "Run the whole sequence on this directory's linked remote"},
 			{"  --from <target>", "Run the whole sequence on a named connect target"},
@@ -817,6 +869,8 @@ func (sess *session) runDB(ctx context.Context, name string, args []string) {
 		err = cmd.RunDBBackup(ctx, opts)
 	case "db-restore":
 		err = cmd.RunDBRestore(ctx, opts)
+	case "db-pull":
+		err = cmd.RunDBPull(ctx, opts)
 	case "db-drop":
 		err = cmd.RunDBDrop(ctx, opts)
 	case "db-neutralize":
@@ -1074,4 +1128,19 @@ func (sess *session) print(l Line) {
 	}
 	fmt.Println(text)
 	teeRunLog(l.Text)
+}
+
+// printStyled prints a pre-rendered (ANSI-styled) line for display while
+// capturing and logging its ANSI-free `plain` form — so `copy-last` and
+// `--log` stay clean even when the display string carries per-segment color
+// the standard Kind styling can't express (e.g. the push change tree).
+func (sess *session) printStyled(rendered, plain, kind string) {
+	if sess.lastOutput != nil {
+		sess.lastOutput.Add(Line{Kind: kind, Text: plain})
+	}
+	if outputSuppressed(levelFromKind(kind)) {
+		return
+	}
+	fmt.Println(rendered)
+	teeRunLog(plain)
 }

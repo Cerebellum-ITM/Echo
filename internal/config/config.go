@@ -12,10 +12,15 @@ import (
 )
 
 type Config struct {
-	Theme         string
-	Logo          string
-	Banner        string
-	ComposeCmd    string
+	Theme      string
+	Logo       string
+	Banner     string
+	ComposeCmd string
+	// Icons controls nerd-font file-type glyphs in rich output (e.g. the
+	// push change tree, the modules list): "auto" (default — on for an
+	// interactive terminal that isn't a known plain one), "on", or "off".
+	// The ECHO_ICONS env var overrides it.
+	Icons         string
 	OdooVersion   string
 	OdooContainer string
 	DBContainer   string
@@ -82,6 +87,16 @@ type Config struct {
 	// lines before it's middle-truncated, so a long name doesn't wrap the
 	// rest of the line. Global; default 20. Display-only.
 	LogDBMax int
+
+	// Command-log history ([cmd_logs] in global.toml). Every dispatched
+	// command's captured output is persisted as one JSON record per run
+	// under ~/.config/echo/cmd-logs/<key>/ unless CmdLogsDisabled.
+	// Retention is pruned opportunistically: CmdLogsRetentionDays age pass
+	// (0 = keep forever) then CmdLogsMaxRuns count pass (0 = unlimited).
+	// Defaults when the section is absent: 7 days, 500 runs, enabled.
+	CmdLogsRetentionDays int
+	CmdLogsMaxRuns       int
+	CmdLogsDisabled      bool
 }
 
 type globalFile struct {
@@ -89,10 +104,22 @@ type globalFile struct {
 	Logo           string                        `toml:"logo"`
 	Banner         string                        `toml:"banner"`
 	ComposeCmd     string                        `toml:"compose_cmd"`
+	Icons          string                        `toml:"icons"`
 	LogDBMax       int                           `toml:"log_db_max"`
 	Prompt         *promptFile                   `toml:"prompt"`
+	CmdLogs        *cmdLogsFile                  `toml:"cmd_logs"`
 	ConnectTargets map[string]*connectTargetFile `toml:"connect_targets"`
 	ProjectAliases map[string]string             `toml:"project_aliases"`
+}
+
+// cmdLogsFile is the [cmd_logs] table. A nil pointer (section absent) means
+// "use the built-in defaults"; a present table is honored verbatim, so an
+// explicit 0 keeps records forever / unlimited rather than reverting to the
+// default.
+type cmdLogsFile struct {
+	RetentionDays int  `toml:"retention_days"`
+	MaxRuns       int  `toml:"max_runs"`
+	Disabled      bool `toml:"disabled"`
 }
 
 type connectTargetFile struct {
@@ -189,7 +216,9 @@ func Load(projectPath string) (*Config, error) {
 	cfg.Logo = g.Logo
 	cfg.Banner = g.Banner
 	cfg.ComposeCmd = g.ComposeCmd
+	cfg.Icons = g.Icons
 	cfg.LogDBMax = g.LogDBMax
+	applyCmdLogs(cfg, g.CmdLogs)
 	cfg.ConnectTargets = sortedConnectTargets(g.ConnectTargets)
 	cfg.ProjectAliases = g.ProjectAliases
 	if g.Prompt != nil {
@@ -311,6 +340,17 @@ func SaveGlobal(cfg *Config) error {
 			g.Prompt.HealthTTL = cfg.HealthTTL.String()
 		}
 	}
+	// Preserve a non-default [cmd_logs] section across rewrites; a pure
+	// default config leaves it out so global.toml stays clean.
+	if cfg.CmdLogsDisabled ||
+		cfg.CmdLogsRetentionDays != Defaults.CmdLogsRetentionDays ||
+		cfg.CmdLogsMaxRuns != Defaults.CmdLogsMaxRuns {
+		g.CmdLogs = &cmdLogsFile{
+			RetentionDays: cfg.CmdLogsRetentionDays,
+			MaxRuns:       cfg.CmdLogsMaxRuns,
+			Disabled:      cfg.CmdLogsDisabled,
+		}
+	}
 
 	var buf bytes.Buffer
 	if err := toml.NewEncoder(&buf).Encode(g); err != nil {
@@ -422,11 +462,29 @@ func LoadGlobal() (*Config, error) {
 	cfg.Logo = g.Logo
 	cfg.Banner = g.Banner
 	cfg.ComposeCmd = g.ComposeCmd
+	cfg.Icons = g.Icons
 	cfg.LogDBMax = g.LogDBMax
+	applyCmdLogs(cfg, g.CmdLogs)
 	cfg.ConnectTargets = sortedConnectTargets(g.ConnectTargets)
 	cfg.ProjectAliases = g.ProjectAliases
 	applyDefaults(cfg)
 	return cfg, nil
+}
+
+// applyCmdLogs maps the [cmd_logs] table onto the config. A nil table
+// (section absent) applies the built-in defaults (7 days, 500 runs,
+// enabled); a present table is honored verbatim so an explicit 0 means
+// "keep forever" / "unlimited".
+func applyCmdLogs(cfg *Config, f *cmdLogsFile) {
+	if f == nil {
+		cfg.CmdLogsRetentionDays = Defaults.CmdLogsRetentionDays
+		cfg.CmdLogsMaxRuns = Defaults.CmdLogsMaxRuns
+		cfg.CmdLogsDisabled = false
+		return
+	}
+	cfg.CmdLogsRetentionDays = f.RetentionDays
+	cfg.CmdLogsMaxRuns = f.MaxRuns
+	cfg.CmdLogsDisabled = f.Disabled
 }
 
 // SaveConnectTarget inserts or replaces a named connect target in the

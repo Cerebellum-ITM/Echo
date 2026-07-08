@@ -66,6 +66,7 @@ func RunRecipe(s theme.Styles, p theme.Palette, project, id string, stage theme.
 
 	sess, _ := newSession(s, p, project, id, stage, version, themeName, username, cwd, cfg)
 	sess.recipe = true // a `help` step prints flat; never opens the pager.
+	sess.pruneCmdLogs()
 	ctx := context.Background()
 
 	// System-status line: emitted once at the start of the run (not per
@@ -220,19 +221,7 @@ func (sess *session) runStepCaptured(ctx context.Context, name string, sargs []s
 		warnings: sess.lastWarnings,
 		duration: time.Since(start),
 	}
-	lines := sess.lastOutput.Filtered(nil)
-	rls := make([]config.ReportLine, 0, len(lines))
-	for _, l := range lines {
-		// Prefer the exact level token from the text (keeps ERROR vs
-		// CRITICAL distinct); fall back to the line's classified Kind so
-		// Echo's own leveled lines and inherited traceback frames still
-		// carry a level.
-		lvl := lineLevel(l.Text)
-		if lvl == "" {
-			lvl = levelFromKind(l.Kind)
-		}
-		rls = append(rls, config.ReportLine{Level: lvl, Text: l.Text})
-	}
+	rls := captureReportLines(sess.lastOutput.Filtered(nil))
 	// Isolate steps: meta commands (help/clear) don't reset the buffer,
 	// so clear it here to keep each step's capture to its own lines.
 	sess.lastOutput.Reset()

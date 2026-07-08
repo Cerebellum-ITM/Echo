@@ -7,6 +7,223 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **`compare --all` — estado de sincronización del módulo completo** (Unit 86).
+  Extiende el `compare` de la Unit 80 con un modo a nivel de módulo:
+  `compare <mod> --all [--from <t>|--remote] [--copy]` compara **todo el
+  módulo** contra su copia en Docker y muestra una tabla de estado por archivo
+  — `changed / added / missing / equal` — cerrando con un veredicto
+  `echo.compare: module compared module=… from=… changed=N added=N missing=N
+  equal=N` (o un único `in sync` si todo coincide). En TTY (y sin `--copy`),
+  los archivos que difieren alimentan un loop interactivo: se elige un archivo,
+  se ve su diff (el render de la Unit 80), se vuelve, hasta `esc`. Comparación
+  por **checksums, no N lecturas**: cada lado se hashea en un solo comando
+  (local con `crypto/md5` in-process; contenedor local/remoto con un
+  `find -exec md5sum {} +` vía `docker.Exec` o el transporte SSH host/conf de
+  la Unit 79) y se comparan como mapas; `skipViewPath` filtra ambos lados.
+  `--copy` copia la tabla + veredicto en texto plano en vez de entrar al loop;
+  no-TTY imprime solo la tabla. Un módulo ausente en el contenedor lista todos
+  sus archivos como `added`. `compare` sin `--all` es idéntico a la Unit 80.
+  Nuevo `internal/cmd/compare_all.go` (`RunCompareAll`/`CompareModuleFile`/
+  `diffModuleSets`/`localModuleHashes`/`containerModuleHashes`/
+  `remoteModuleHashes`/`parseMD5Sums`, tipo exportado `FileStatus`);
+  `parseCompareArgs` gana `--all` y se extrajo `compareFetchContainer` de
+  `RunCompare`. Tests en `compare_all_test.go`.
+- **`db-pull` — clona una base de datos remota al stack local** (Unit 85).
+  Nuevo comando `db-pull [--from <t>|--remote] [--as <name>]
+  [--neutralize|--no-neutralize] [--filestore] [--force]`: hace `pg_dump -Fc`
+  del target remoto sobre SSH **streameando el stdout binario directo a
+  `./backups/<db>_<target>_<ts>.dump`** (sin buffer en memoria ni temp remoto,
+  con línea de progreso `pulled N MB…`), lo restaura en el Postgres local bajo
+  un nombre distinto reusando la maquinaria de `db-restore`, y —por defecto,
+  solo cuando el origen es prod— lo **neutraliza** (`db-neutralize`). El lado
+  remoto es **solo lectura** (un `pg_dump`, más un tar opcional del filestore):
+  no hay gate de prod remoto; todas las mutaciones ocurren en local con sus
+  propios guards. El `.dump` queda como un backup normal que el picker de
+  `db-restore` puede volver a restaurar. `--as` fija el nombre local (default
+  `<remoteDB>_<target>` saneado a identificador Postgres); un DB local con ese
+  nombre se reemplaza con `--force` (termina conexiones). `--filestore` también
+  trae los adjuntos (tar del filestore del contenedor Odoo remoto → extracción
+  local → copia al contenedor local bajo el nuevo nombre; si no hay filestore,
+  WARNING y sigue). La DB activa **no** cambia: el cierre sugiere
+  `db-use <name>`. Nuevo transporte `runSSHToFile` (stdout binario → archivo
+  con progreso, borra el parcial si falla) y `restoreBackupFile` extraído de
+  `RunDBRestore` para restaurar un dump concreto sin picker. Nuevos
+  `internal/cmd/db_pull.go` (`RunDBPull`/`parseDBPullArgs`/`sanitizeDBName`/
+  `pullFilestore`/`humanBytes`); registrado en la familia `db-*`. Tests
+  `db_pull_test.go` (tri-state de neutralize, `sanitizeDBName`, `runSSHToFile`
+  happy-path + fallo-sin-parcial vía seam).
+- **`logview` — navegador interactivo del historial de logs por comando**
+  (Unit 82). Nuevo comando alt-screen (bubbletea) sobre lo que persiste la
+  Unit 81, con el mismo lenguaje visual que el `help` pager y el picker (barra
+  `│` izquierda teñida por el stage). Dos niveles: una **lista de corridas**
+  (más recientes primero, columnas tiempo · comando · estado · nº de líneas ·
+  db, con filtro por escritura sobre el comando) y, al `enter`, la **vista de
+  log** de esa corrida donde escribir filtra las líneas en vivo y `tab` cicla
+  el filtro de nivel como **umbral mínimo** (all → DEBUG+ → INFO+ → WARNING+ →
+  ERROR+ → CRITICAL, `shift+tab` hacia atrás; las líneas sin nivel solo se ven
+  en "all"). Ambos filtros componen (AND). `ctrl+o` copia exactamente las
+  líneas visibles al portapapeles; `esc` limpia el filtro activo y si no hay,
+  navega atrás/afuera; `q` cierra; `ctrl+x` cierra Echo entero. Cada línea se
+  colorea como se vio en vivo (`renderLogLine`/`kindFromLevel`). Escotillas
+  headless: `--list` (tabla plana sin TTY), `--last` (abre la corrida más
+  reciente directo), `--clear [--force]` (borra el historial del proyecto tras
+  confirmar). Es meta-comando (no resetea `lastOutput`, así `copy-last` sigue
+  copiando el comando anterior) y no se registra a sí mismo. Cierra con una
+  línea `echo.logview`. Helpers puros testeables `filterRuns`/`filterLogLines`/
+  `cycleLevel`/`runStatusLabel`/`logviewTimeLabel` en `internal/repl/logview.go`;
+  `CmdLogMeta` gana `LineCount` para listar sin abrir cuerpos.
+- **Historial de logs por comando persistido a disco** (Unit 81). Cada comando
+  despachado (REPL, one-shot y pasos de recipe por igual) guarda su salida
+  capturada como un registro JSON por ejecución en
+  `~/.config/echo/cmd-logs/<clave-de-proyecto>/`, con nombre
+  `<unix-millis>-<comando>.json` (orden lexicográfico = cronológico). Cada
+  registro lleva la metadata que el navegador (Unit 82) necesita sin abrir el
+  cuerpo (comando completo, verbo, db, stage, `from` remoto, exit, duración,
+  errores/warnings, truncado) más las líneas etiquetadas por nivel reutilizando
+  `config.ReportLine`. El guardado es best-effort (un fallo de escritura nunca
+  rompe ni retrasa el comando). No se registran los meta-comandos
+  (`help`/`clear`/`copy-last`), `report`, `logview`, ni las capturas vacías.
+  Retención podada oportunistamente (al arrancar la sesión y tras cada
+  guardado) con dos perillas en `[cmd_logs]` de `global.toml`: `retention_days`
+  (7 por defecto, 0 = para siempre), `max_runs` (500 por defecto, 0 = sin
+  límite) y `disabled` (apaga escritura y poda). Helpers en
+  `internal/config/cmd_logs.go` (`SaveCmdLog`/`ListCmdLog`/`LoadCmdLog`/
+  `PruneCmdLogs`/`ClearCmdLogs`) y el sink en `internal/repl/cmdlog.go`.
+- **Iconos nerd-font por tipo de archivo en el árbol de `push`, con toggle y
+  fallback** (Unit 83). Cuando están habilitados, cada archivo del árbol de
+  cambios lleva su glyph nerd-font (set seti: `.py` , `.xml` , `.po` 󰗊,
+  `.csv`, `.js`, `.json`, `.yml`, `.md`, imágenes…, con glyph de carpeta en
+  los nodos de directorio); si no, el árbol se dibuja sin glyphs. Se controla
+  con el nuevo setting `icons` en `global.toml` (`auto` por defecto / `on` /
+  `off`) y el override por env `ECHO_ICONS`; en `auto` se activan solo en una
+  terminal interactiva que no sea "plana" (`$TERM` distinto de `linux`/`dumb`)
+  y se apagan cuando la salida va a un pipe/archivo (`--log`, CI), para no
+  ensuciar logs. El mismo toggle gobierna el glyph de la lista de `modules`
+  (antes incondicional). La forma en texto plano (copy-last/`--log`) nunca
+  lleva iconos. Helpers `resolveIcons`/`fileIcon`/`parseIconToggle`.
+
+### Fixed
+- **`push`/`watch` re-sincronizaban (y mostraban) el módulo completo en cada
+  commit aunque solo cambiara un archivo** (Unit 83). `watch` empaqueta cada
+  commit con `git archive`, que le pone a **todos** los archivos la fecha
+  (mtime) del commit; como rsync decidía por tamaño+fecha, veía todos los
+  archivos como distintos y los re-sincronizaba, imprimiendo el árbol
+  completo. Ahora rsync usa `--checksum` (compara por **contenido**, no por
+  fecha), así solo se transfieren los archivos que de verdad cambiaron; y
+  `parseItemize` descarta las líneas de itemize de solo-atributos (update type
+  `.`, típicamente un ajuste de mtime), de modo que un commit de un solo
+  archivo muestra exactamente ese archivo en el árbol.
+
+### Changed
+- **La salida de archivos de `push` ahora es un árbol de cambios legible con
+  color** (Unit 83). Antes se volcaban tal cual los códigos crípticos de
+  `rsync --itemize-changes` (`<f+++++++++`, `cd+++++++`). Ahora se **parsean**
+  a cambios tipados (nuevo/cambiado/borrado) y se renderizan como un árbol
+  agrupado por carpeta entre un frame grepeable `echo.push.module`
+  (`syncing module=… dest=…` … `synced module=… new=N changed=M`): conectores
+  de árbol atenuados (`├─`/`└─`/`│`), archivos de la raíz primero y luego cada
+  subcarpeta, con un glyph por operación coloreado (`+` nuevo en verde, `~`
+  cambiado en ámbar, `−` borrado en rojo). El árbol también aparece en
+  `watch` (cada ciclo) y en `deploy --push` — `OnSync` se propaga por
+  `WatchOpts`/`DeployOpts` —, salvo en `deploy --json`, donde se suprime para
+  no ensuciar el stdout parseable. La forma en texto plano (sin ANSI) sigue
+  alimentando `copy-last`/`--log` vía el nuevo `printStyled`. Helpers
+  `parseItemize`/`BuildSyncTree`/`FileChange`/`SyncRow`.
+
+### Fixed
+- **`push` mandaba el módulo a la raíz del proyecto docker remoto en vez de a
+  `addons/`** (Unit 83). El destino se calculaba **espejando la carpeta local**
+  desde donde corrías `push`: si lo corrías desde dentro de `addons/`, el
+  subpath local era `.` y el módulo terminaba en `<remote_path>/<módulo>` (la
+  raíz, junto al `docker-compose.yml`) en lugar de `<remote_path>/addons/
+  <módulo>`; el destino incluso cambiaba entre `--dry-run` y la ejecución real
+  según el cwd. Ahora el destino lo decide **el layout del remoto, nunca la
+  carpeta local**: un módulo ya presente en un addons dir real se actualiza en
+  su sitio (un hallazgo en la raíz, `base "."`, se ignora y se re-aloja), y uno
+  nuevo aterriza en el primer addons dir que exista bajo `remote_path` (las
+  rutas relativas del perfil remoto, si no `addons`/`custom`). Un módulo nunca
+  se escribe en la raíz del proyecto docker, y `push` da el mismo resultado sin
+  importar desde qué directorio local lo corras. Nuevo helper
+  `remoteAddonsCandidates`.
+
+### Added
+- **Nuevo comando `watch` — auto push+deploy al detectar commits en una rama**
+  (Unit 84). `watch <branch> [--from <t>|--remote] [--interval <sec>]
+  [--force]` es un loop en foreground que hace poll del ref de la rama
+  (`git rev-parse refs/heads/<branch>`) y, cada vez que **avanza**, sube el
+  contenido **commiteado** de los módulos afectados (Unit 83) y corre un
+  `deploy --commits` headless (Unit 78). Pensado para el flujo multi-worktree:
+  los refs se comparten entre worktrees, así que un commit en esa rama desde
+  *cualquier* worktree dispara el ciclo — el commit es la unidad de deploy, no
+  hay file-watching. Un ciclo = check de fast-forward (`merge-base
+  --is-ancestor`; un rebase/amend → WARNING `branch rewritten` y re-baseline
+  sin deployar) → commits del rango `old..new` resueltos a módulos
+  (`resolveCommitModule`, los no resolubles se saltan con WARNING) → `git
+  archive <sha>` a un dir temporal (se sube el código commiteado, no el working
+  tree del worktree del watcher) → `pushModuleSet` → deploy headless (el
+  historial de deploy marca los SHAs, así un watcher reiniciado no
+  re-despliega). Un push/deploy fallido loguea ERROR, avanza el baseline y
+  sigue (los commits perdidos se recuperan en el siguiente `deploy --auto`);
+  solo errores de setup irrecuperables (target no resoluble, rama borrada)
+  detienen el watcher. Un target `prod` se niega a arrancar sin `--force`.
+  `Ctrl+C` cierra limpio con un frame `watch stopped cycles=N`. Interval
+  default 10s, mínimo 2s. No se ofrece en `sequence` (un paso que no termina
+  colgaría la secuencia).
+- **Nuevo comando `push` — sube los módulos locales al addons dir remoto**
+  (Unit 83). `push [<mod>...] [--from <t>|--remote] [--dirty] [--dry-run]
+  [--delete] [--force]` hace `rsync` de los módulos seleccionados al host
+  remoto sobre SSH, reusando la resolución de target de `deploy`/`link` — así
+  Echo deja de depender del CLI externo para copiar el código al servidor y
+  cierra el ciclo local → servidor → deploy. El destino se resuelve probando
+  primero dónde ya vive el módulo en el filesystem del host remoto (el probe
+  de la Unit 79) y, si es nuevo, espejando el subpath local del checkout (o la
+  primera ruta relativa de addons del perfil). Excluye `__pycache__`/`*.pyc`/
+  `.git`; `--delete` (opt-in) borra en remoto lo que ya no existe local;
+  `--dry-run` usa `rsync -n` y muestra el itemize sin transferir (y salta el
+  gate de prod). Selección: positionals (validados contra el repo local →
+  error de uso antes de tocar SSH), multi-select picker (coloreado por el
+  stage del perfil remoto), o `--dirty` (los módulos con cambios sin
+  commitear). Un remoto conf-mode (addons solo dentro de la imagen) falla
+  cerrado con hint. Gate de prod vía `confirmRemoteProd` (`--force` lo salta,
+  no-TTY falla cerrado). El core `pushModuleSet` (con parámetro `srcRoot`) es
+  reusable. Se integra en `sequence` remoto y en **`deploy --push`**, que
+  sincroniza los módulos resueltos justo antes del `stop → up → -u` (un fallo
+  de push aborta el deploy antes de reiniciar nada; `--dry-run` compone).
+- **Nuevo comando `compare` — diff de un archivo local vs su copia en Docker**
+  (Unit 80). `compare [<mod>] [--from <t>|--remote] [--copy]` elige un archivo
+  de módulo del checkout local (la misma cadena de pickers que `view`) y lo
+  compara contra la copia que corre **dentro del contenedor**: el contenedor
+  Odoo local por defecto, o el de un target remoto con `--from`/`--remote`. El
+  diff unificado se calcula **en proceso** con `go-difflib` (sin depender de
+  un `diff` local ni remoto): la copia del contenedor es el lado viejo (`---`)
+  y el archivo local el nuevo (`+++`), así los `+` se leen como "cambios
+  locales aún no desplegados" (labels `<target>/<mod>/<file>` vs
+  `local/<mod>/<file>`). Se renderiza con `bat --language=diff` (paginado) y
+  cae a impresión interna plana si no hay bat; `--copy` copia el diff crudo.
+  Contenidos idénticos (p. ej. en modo mount, donde ambos lados son el mismo
+  archivo bind-mounted) imprimen una sola línea `identical`, sin pager. Un
+  archivo presente en local pero ausente en el contenedor sale como diff
+  todo-`+` tras un WARNING. Lectura pura en ambos lados: sin confirmación de
+  prod. Un módulo sin copia local es error (no compara contenedor-contra-
+  contenedor). El lado del contenedor local se resuelve leyendo el
+  `addons_path` real del `odoo.conf` del contenedor cuando el modo host no
+  expone rutas útiles.
+- **`view` puede abrir el archivo desplegado en un host remoto** (Unit 79).
+  `view [<mod>] --from <target>` / `--remote` navega y muestra un archivo de
+  módulo desde el contenedor Odoo del servidor sobre SSH, reusando el
+  transporte de `deploy`/`test`/`logs` (`resolveRemoteShell` +
+  `runSSH`/`remoteContainerCmd`). `remoteModuleBase` prueba primero el
+  filesystem del host remoto (`<remotePath>/<addons>/<mod>`, el layout que
+  asume `deploy`) y cae al contenedor (`compose exec test -f`) para el modo
+  conf; `find`/`cat` siguen el transporte que ganó. Los pickers (módulo y
+  archivo) siguen siendo locales, sourced del checkout local vía
+  `resolveModules`; `--copy` y `--last` funcionan contra el origen remoto (el
+  log añade `from=<target>`). No hay confirmación de prod: `view` es
+  estrictamente de lectura. Los flags `--from`/`--remote` se strippean para
+  que el token de valor nunca se lea como nombre de módulo. Sin flag remoto,
+  `view` se comporta exactamente igual que antes.
+
 ## [0.20.0] — 2026-07-05
 
 ### Added

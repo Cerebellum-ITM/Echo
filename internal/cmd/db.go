@@ -303,12 +303,22 @@ func RunDBRestore(ctx context.Context, opts DBOpts) error {
 		return ErrNoTargetDB
 	}
 
+	return restoreBackupFile(ctx, opts, picked, target, flags.force, flags.neutralize)
+}
+
+// restoreBackupFile restores a specific backup file into target: it
+// replaces an existing DB (terminate + drop) when force is set (else
+// ErrDBExists), creates the DB, restores the dump/zip, optionally
+// neutralizes, and prints the `→ <target>` footer. Extracted from
+// RunDBRestore so db-pull can restore a freshly pulled dump without the
+// picker.
+func restoreBackupFile(ctx context.Context, opts DBOpts, picked, target string, force, neutralize bool) error {
 	exists, err := docker.DatabaseExists(ctx, opts.Cfg.ComposeCmd, opts.Root, opts.Cfg.DBContainer, dbUser(opts), target)
 	if err != nil {
 		return err
 	}
 	if exists {
-		if !flags.force {
+		if !force {
 			return fmt.Errorf("%w (%q)", ErrDBExists, target)
 		}
 		opts.log("INFO", "restore", "dropping existing database", target)
@@ -339,10 +349,10 @@ func RunDBRestore(ctx context.Context, opts DBOpts) error {
 		}
 	}
 
-	// --neutralize: turn the freshly restored copy into a safe,
+	// neutralize: turn the freshly restored copy into a safe,
 	// non-production DB. Run last so a neutralize failure surfaces after
 	// the data is already in place.
-	if flags.neutralize {
+	if neutralize {
 		opts.log("INFO", "restore", "neutralizing", target)
 		if err := neutralizeDB(ctx, opts, target); err != nil {
 			return err

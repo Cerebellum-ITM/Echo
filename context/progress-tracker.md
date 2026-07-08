@@ -23,6 +23,203 @@ _(siguiente: Unit 14 — meta-commands. Fix deploy-build-muting: el builder de `
 
 ## Completed
 
+- [x] Unit 86 — compare --all. Extiende el `compare` de la Unit 80 con modo de
+  módulo completo: `compare <mod> --all [--from <t>|--remote] [--copy]` hashea
+  todo el módulo local (crypto/md5 in-process) y su copia en Docker (un
+  `find -exec md5sum {} +` vía `docker.Exec` local o el transporte SSH
+  host/conf de la Unit 79) y los compara como mapas → tabla por archivo
+  changed/added/missing/equal (estilo modstate, status coloreado) + veredicto
+  `echo.compare: module compared … changed/added/missing/equal` (o `in sync` si
+  todo coincide). En TTY sin `--copy`, drill-down interactivo: `cmd.PickOne`
+  sobre los archivos que difieren → `CompareModuleFile` → `unifiedDiff` +
+  `ShowWithBat` (o fallback interno) → vuelve al picker; `esc` cierra, ctrl+x
+  cierra Echo. `--copy` copia tabla+veredicto en texto plano; no-TTY solo la
+  tabla. Módulo ausente en el contenedor → todo `added`. `compare` sin `--all`
+  intacto (Unit 80). Nuevo `internal/cmd/compare_all.go` (`RunCompareAll`/
+  `CompareModuleFile`/`diffModuleSets`/`localModuleHashes`/
+  `containerModuleHashes`/`remoteModuleHashes`/`parseMD5Sums`; tipo exportado
+  `FileStatus`); `parseCompareArgs` gana `--all` y `compareFetchContainer`
+  extraído de `RunCompare`; `runCompareAll`/`compareDrillDown` en
+  `internal/repl/compare.go`. Registrado en commandFlags/help (sin comando
+  nuevo). Tests `compare_all_test.go` (`parseMD5Sums` coreutils/BusyBox/prefijo/
+  ruido, `diffModuleSets` 4 estados + orden + all-equal, `localModuleHashes`
+  salta `__pycache__`, `--all` compone con `--from`/`--copy`); `compare_test`
+  actualizado a la nueva firma. build/vet/gofmt/test verdes. **Pendiente
+  verificación EN VIVO** (contenedor local + remoto real).
+
+- [x] Unit 85 — db-pull. Nuevo `db-pull [--from <t>|--remote] [--as <name>]
+  [--neutralize|--no-neutralize] [--filestore] [--force]`: `pg_dump -Fc` del
+  target remoto sobre SSH streameado directo a `./backups/<db>_<target>_<ts>.dump`
+  (progreso `pulled N MB…`), restaurado en local reusando la maquinaria de
+  `db-restore`, y neutralizado por defecto solo si el origen es prod. Remoto
+  solo-lectura → sin gate de prod remoto; mutaciones locales con sus propios
+  guards. La DB activa no cambia (cierre sugiere `db-use <name>`). Nuevo
+  transporte `runSSHToFile` (stdout binario → archivo con progreso, borra el
+  parcial si falla) en `remote.go`; `restoreBackupFile` extraído de
+  `RunDBRestore`; `extractTarReader` (variante streaming) para el filestore.
+  Nuevo `internal/cmd/db_pull.go` (`RunDBPull`/`parseDBPullArgs`/
+  `sanitizeDBName`/`pullFilestore`/`humanBytes`; neutralize tri-state con
+  puntero). Ruteado en la familia `db-*` (dispatch/runDB/Registry/dispatchNames/
+  commandFlags/help Database). NO projectless (el restore necesita el stack
+  docker local). Tests `db_pull_test.go` (matriz de flags + tri-state,
+  `sanitizeDBName`, `runSSHToFile` happy/fallo-sin-parcial vía seam
+  `sshToFileCommand`) y `registry_test` actualizado con `db-pull`.
+  build/vet/gofmt/test verdes. **Pendiente verificación EN VIVO** (remoto real
+  + stack docker local).
+
+- [x] Unit 82 — logview browser. Nuevo comando `logview [--list|--last|--clear
+  [--force]]`: navegador interactivo alt-screen (bubbletea) sobre el historial
+  de la Unit 81, con el estilo log-framed del `help` pager/picker (barra `│`
+  teñida por stage). Dos vistas: lista de corridas (newest-first, columnas
+  tiempo·comando·estado·líneas·db, filtro por texto sobre el comando) y, al
+  `enter`, la vista de log de la corrida con filtro de texto en vivo + filtro
+  de nivel por **umbral** vía `tab`/`shift+tab` (all→DEBUG+→…→CRITICAL; sin
+  nivel solo en "all"), ambos componiendo AND. `ctrl+o` copia las líneas
+  visibles; `esc` limpia filtro y luego navega atrás/afuera; `q` cierra;
+  `ctrl+x` cierra Echo (`handleQuit`/`cmd.ErrQuit`). Líneas coloreadas con
+  `renderLogLine`/`kindFromLevel`. Headless: `--list` (tabla plana, sin TTY),
+  `--last` (abre la más reciente), `--clear [--force]` (borra vía
+  `config.ClearCmdLogs` tras confirm con `cmd.BuildHuhTheme`; non-TTY sin force
+  falla closed). Meta-comando (no resetea `lastOutput`; ya en la skip-list de
+  la Unit 81); cierra con `echo.logview`. Nuevo `internal/repl/logview.go`
+  (`logviewModel` + helpers puros `filterRuns`/`filterLogLines`/`cycleLevel`/
+  `runStatusLabel`/`logviewTimeLabel`/`parseLogviewArgs`); `CmdLogMeta` gana
+  `LineCount` (derivado en `ListCmdLogs`). Registrado en Registry/dispatchNames/
+  dispatch/commandFlags/isMetaCommand/help (Session, junto a `report`). Tests
+  `logview_test.go` (filtros texto/umbral/compuesto/identidad, no-nivel solo en
+  all, ciclo de nivel fwd/back con wrap, `filterRuns` case-insensitive,
+  `runStatusLabel`/`logviewTimeLabel`/`parseLogviewArgs`). build/vet/gofmt/test
+  + cross-check de registry verdes. **Pendiente verificación EN VIVO** (TTY,
+  recompilar `ec`).
+
+- [x] Unit 81 — command-log history. Infraestructura que persiste la salida
+  capturada de **cada** comando despachado (REPL, one-shot y pasos de recipe)
+  como un registro JSON por ejecución en
+  `~/.config/echo/cmd-logs/<clave>/<unix-millis>-<comando>.json`. Nuevo
+  `internal/config/cmd_logs.go`: `CmdLogRecord`/`CmdLogMeta`, `CmdLogsDir`
+  (basado en `ProjectKey(abs(root))`), `SaveCmdLog` (MkdirAll + `writeAtomic`,
+  nombre millis-prefijado y verbo saneado), `ListCmdLogs` (newest-first por
+  nombre, best-effort), `LoadCmdLog` (contrato `(zero,false)` como
+  `LoadRunReport`), `PruneCmdLogs` (pasada de edad por timestamp del nombre +
+  pasada de conteo, tolerante a fallos, `0` desactiva cada pasada) y
+  `ClearCmdLogs` (backend del futuro `logview --clear`). Config `[cmd_logs]`
+  con puntero `cmdLogsFile` para distinguir sección ausente (defaults 7/500/on)
+  de `0` explícito (para-siempre/ilimitado); `SaveGlobal` preserva la sección
+  no-default. Sink en `internal/repl/cmdlog.go`: `saveCmdLog` (skip meta/`report`/
+  `logview`/vacío/`disabled`, metadata + `captureReportLines`), `pruneCmdLogs`
+  (una pasada al arrancar) y `remoteRunLabel` (`--from`/`--remote` → campo
+  `from`). Hook `defer` al inicio de `dispatchParsed` (cubre el early-return del
+  build-mode y precede al reset de `runStepCaptured`); poda al entrar en
+  `Start`/`RunOnce`/`RunRecipe`. Se extrajo el tagging de niveles de
+  `runStepCaptured` al helper compartido `captureReportLines`. Sin cambios de
+  comportamiento en `report`/`copy-last`/`last-run.json`. Tests
+  `config/cmd_logs_test.go` (round-trip, poda edad/conteo, `0` desactiva,
+  corrupto→false, clear) y `repl/cmdlog_test.go` (tabla de niveles,
+  `remoteRunLabel`, escritura y skip-list). build/vet/gofmt/test verdes.
+  **Pendiente verificación EN VIVO** (recompilar `ec`) y la Unit 82 (`logview`)
+  que lee este store.
+
+- [x] Unit 84 — watch-branch. Nuevo `watch <branch> [--from <t>/--remote]
+  [--interval <sec>] [--force]`: loop en foreground que hace poll del ref
+  (`git rev-parse refs/heads/<branch>`, worktree-proof) y en cada avance
+  fast-forward hace push+deploy de los commits nuevos. Nuevo
+  `internal/cmd/watch.go`: `RunWatch` (valida rama, resuelve target una vez,
+  gate de prod que exige `--force` para arrancar, `time.Ticker` + handler
+  SIGINT que cancela el ctx para cierre limpio con Ctrl+C → frame `watch
+  stopped cycles=N`), `parseWatchArgs` (rama posicional requerida, interval en
+  segundos con piso 2s, flags remotos strippeados), `watchCycle`
+  (`isFastForward` vía `merge-base --is-ancestor` — rebase/amend → WARNING
+  `branch rewritten` + re-baseline; `rangeCommits` `old..new` →
+  `resolveCommitModule`, no resolubles saltados; `archiveModules` con `git
+  archive <sha>` → dir temporal para subir el contenido **commiteado** no el
+  working tree; `pushModuleSet` con ese srcRoot; `deployCommitsHeadless` vía
+  `RunDeploy` con `--commits csv --force [--from]`). Fallos de push/deploy
+  loguean ERROR, avanzan el baseline y siguen; solo setup irrecuperable
+  detiene el loop. Helpers `gitRevParse`, `extractTar` (con guard de path
+  traversal), `targetLabel`, `shortSHA`. Wrapper `internal/repl/watch.go`
+  (`runWatch`: ctx-cancel = cierre normal, `ErrUsage`→exit 2). Registrado en
+  `Registry`/`dispatchNames`/dispatch case/`commandFlags`/help (Docker, tras
+  `deploy`); `projectlessOneShot` en `main.go`; **NO** en `sequence` (paso no
+  terminante). Tests `watch_test.go` (`parseWatchArgs`; `isFastForward`/
+  `rangeCommits` contra un repo git scratch — linear vs amend; `archiveModules`
+  extrae el contenido del sha y `moduleSrcDir` lo resuelve). Build/vet/test +
+  cross-check de registry verdes. **Pendiente verificación EN VIVO** con un
+  remoto real y commits reales.
+
+- [x] Unit 83 — push-modules. Nuevo `push [<mod>...] [--from <t>/--remote]
+  [--dirty] [--dry-run] [--delete] [--force]`: `rsync -az --itemize-changes`
+  de los módulos locales al addons dir remoto sobre SSH, reusando
+  `resolveRemoteShell`. Nuevo `internal/cmd/push.go`: `RunPush`,
+  `parsePushArgs` (strippea flags remotos; unknown → `ErrUsage`),
+  `pushModuleSet(ctx, rsc, opts, modules, srcRoot, dryRun, del)` (core
+  reusable con `srcRoot` para la Unit 84), `pushDest` (probe host-FS
+  existente vía `remoteModuleBase` → espejo del subpath local → primera ruta
+  relativa del perfil; conf-mode/container-only falla cerrado; seams
+  `probeRemoteBase`/`probeRemoteDir` para tests), `rsyncArgs`/`rsyncModule`
+  (excludes `__pycache__`/`*.pyc`/`.git`, `-n` en dry-run, `--delete` opt-in,
+  cuenta cambios por líneas de stdout), helpers `moduleSrcDir`/
+  `localAddonsSubpath`/`remoteDirExists`/`withStage`. Validación de
+  positionals contra el repo local antes de SSH; picker multi-select
+  coloreado por el stage remoto; `confirmRemoteProd` salvo en `--dry-run`.
+  `requireRsync` (binario en PATH). Wrapper `internal/repl/push.go`
+  (`runPush`, patrón deploy: `ErrUsage`→exit 2, stream vía `emitStreamLine`).
+  Integrado en **`deploy --push`** (`deployArgs.push`; closure `runPush` tras
+  el plan/prod-confirm, antes del `stop`; dry-run muestra el itemize). Registro
+  en `Registry`/`dispatchNames`/dispatch case/`commandFlags`/help (bloque
+  Docker antes de `deploy`); `projectlessOneShot` en `main.go`;
+  `sequenceCommands` + `remoteSequenceCommands`. Tests `push_test.go`
+  (`parsePushArgs`, `rsyncArgs` golden, `pushDest` los 4 caminos con seams,
+  `mergeModules`). Build/vet/test + cross-check de registry verdes.
+  **Pendiente verificación EN VIVO** con un remoto real (sin SSH/rsync en el
+  entorno dev).
+
+- [x] Unit 80 — compare-command. Nuevo `compare [<mod>] [--from <t>/--remote]
+  [--copy]`: diffea un archivo del checkout local contra su copia dentro de
+  Docker (contenedor local por defecto, o el de un target remoto reusando los
+  primitivos de la Unit 79). Nuevo `internal/cmd/compare.go`: `RunCompare`,
+  `parseCompareArgs` (strippea flags remotos), `unifiedDiff` (wrapper de
+  `go-difflib` `GetUnifiedDiffString`, contenedor=viejo/`---`, local=nuevo/
+  `+++`, labels `<target>/<mod>/<file>` vs `local/<mod>/<file>`),
+  `hostModuleFiles` (walk del módulo local), `containerAddonsPathsFor` (usa
+  `AddonsPaths` conf o parsea el `addons_path` del `odoo.conf` del contenedor)
+  y `localContainerRead` (probe `test -f` + `catContainer`; `found=false` si el
+  módulo o el archivo no están en el contenedor). El picker de módulo/archivo
+  se source del checkout local (el archivo local es el sujeto), reusando
+  `pickViewModule`/`resolveModuleDir`. `go-difflib v1.0.0` promovido a
+  dependencia directa en `go.mod` (ya estaba en el module cache vía testify).
+  Wrapper REPL `internal/repl/compare.go`: identical → una línea INFO
+  `result=identical` sin pager; diff real → `ShowWithBat(<file>.diff)` con
+  fallback interno plano; `--copy` copia el diff crudo; missing-in-container →
+  WARNING + diff todo-`+`. Sin prod gate (lectura pura). Registrado en
+  `Registry`/`dispatchNames`/`commandFlags`/dispatch case/help;
+  `projectlessOneShot` en `main.go` incluye `compare` con flag remoto. Tests
+  `compare_test.go` (`parseCompareArgs`, `unifiedDiff` identical/change/
+  missing). Build/vet/test + cross-check de registry verdes. **Pendiente
+  verificación EN VIVO** con un contenedor/remoto real.
+
+- [x] Unit 79 — remote-view. `view [<mod>] --from <t>` / `--remote` navega
+  y muestra un archivo de módulo desde el host remoto sobre SSH, reusando el
+  transporte de `deploy`/`test`/`logs` (`resolveRemoteShell` +
+  `runSSH`/`remoteContainerCmd`). Nuevo `internal/cmd/view_remote.go`:
+  `remoteView` (wrapper de `remoteShellContext`), `resolveRemoteView`,
+  `remoteModuleBase` (prueba host FS `<remotePath>/<addons>/<mod>` primero,
+  cae al contenedor con `compose exec test -f` para rutas absolutas / modo
+  conf), `remoteModuleFiles` (`find`) y `remoteReadModuleFile` (`cat`),
+  ambos siguiendo el transporte que ganó el probe. `RunView`/`RunViewLast`
+  (`view.go`) strippean los flags remotos vía `parseViewArgs` (el token tras
+  `--from` no se lee como módulo) y ramifican a `runViewRemote`; el picker de
+  módulo se extrajo a `pickViewModule` (compartido, sourced del checkout
+  local vía `resolveModules`). `ViewResult.From` lleva el label del target
+  para el log frame (`from=<target>`). Sin prod gate (lectura pura). En el
+  REPL (`internal/repl/view.go`) se guardan `lastViewFrom`/`lastViewRemote`
+  para que `view --last` reproduzca desde el mismo origen (los flags remotos
+  del comando actual ganan, si no los guardados). `commandFlags["view"]` +=
+  `--from`/`--remote`; help con fila `--from <t>`; `projectlessOneShot` en
+  `main.go` incluye `view` con flag remoto. Tests `view_remote_test.go`
+  (`parseViewArgs` strip/positional, `remoteModuleDir` host vs contenedor).
+  Build/vet/test + cross-check de registry verdes. **Pendiente verificación
+  EN VIVO** contra un remoto real (sin SSH/docker en el entorno dev).
+
 - [x] Unit 78 — deploy-headless. `deploy` corre **sin picker** para
   scripts/CI reusando el motor de la Unit 61 sin tocarlo — solo cambia de
   dónde sale la lista de módulos. **`--modules m1,m2`** (ya existía para el

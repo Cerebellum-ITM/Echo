@@ -7,12 +7,12 @@ import "strings"
 // determines the order of the match list rendered on a double-Tab.
 var Registry = []string{
 	"init", "reset", "alias", "link",
-	"install", "update", "uninstall", "test", "modules", "modinfo", "modstate", "view",
+	"install", "update", "uninstall", "test", "modules", "modinfo", "modstate", "view", "compare",
 	"i18n-export", "i18n-update", "i18n-pull",
-	"db-admin", "db-backup", "db-restore", "db-drop", "db-neutralize", "db-list", "db-use",
+	"db-admin", "db-backup", "db-restore", "db-pull", "db-drop", "db-neutralize", "db-list", "db-use",
 	"bash", "psql", "shell", "shell-run", "connect",
-	"up", "down", "stop", "restart", "ps", "logs", "deploy",
-	"copy-last", "report", "sequence",
+	"up", "down", "stop", "restart", "ps", "logs", "push", "deploy", "watch",
+	"copy-last", "report", "logview", "sequence",
 	"clear", "help", "exit", "quit",
 }
 
@@ -30,13 +30,15 @@ var commandFlags = map[string][]string{
 	"modules":       {"--config"},
 	"modinfo":       {"--copy", "--last"},
 	"modstate":      {"--all", "--json"},
-	"view":          {"--copy", "--last"},
+	"view":          {"--copy", "--last", "--from", "--remote"},
+	"compare":       {"--all", "--copy", "--from", "--remote"},
 	"i18n-export":   {"--out"},
 	"i18n-update":   {"--force"},
 	"i18n-pull":     {"--from", "--lang", "--all", "--installed"},
 	"db-admin":      {"--force"},
 	"db-backup":     {"--with-filestore"},
 	"db-restore":    {"--as", "--force", "--neutralize"},
+	"db-pull":       {"--from", "--remote", "--as", "--neutralize", "--no-neutralize", "--filestore", "--force"},
 	"db-drop":       {"--force"},
 	"db-neutralize": {"--force"},
 	"up":            {"--from", "--remote"},
@@ -47,9 +49,12 @@ var commandFlags = map[string][]string{
 	"shell":         {"--from", "--remote", "--force"},
 	"shell-run":     {"--no-copy", "--force", "--from", "--remote"},
 	"connect":       {"--all", "--force", "--fresh", "--new-window"},
-	"deploy":        {"--from", "--limit", "--dry-run", "--force", "--i18n", "--no-i18n", "--commits", "--modules", "--auto", "--json"},
+	"push":          {"--from", "--remote", "--dirty", "--dry-run", "--delete", "--force"},
+	"deploy":        {"--from", "--limit", "--dry-run", "--force", "--i18n", "--no-i18n", "--commits", "--modules", "--auto", "--push", "--json"},
+	"watch":         {"--from", "--remote", "--interval", "--force"},
 	"copy-last":     {"--errors"},
 	"report":        {"--step", "--level", "--min-level", "--copy"},
+	"logview":       {"--list", "--last", "--clear", "--force"},
 	"sequence":      {"--remote", "--from", "--last", "--continue-on-error"},
 }
 

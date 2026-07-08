@@ -58,15 +58,20 @@ func (sess *session) emitModulesList(found []string) {
 func (sess *session) renderModuleList(found []string) []string {
 	width := terminalWidth()
 	const sep = "  "
-	icon := lipgloss.NewStyle().Foreground(sess.palette.Accent).Render(modIcon)
-	iconW := lipgloss.Width(modIcon)
+	// Icons off (no nerd font / plain terminal): drop the glyph and its width.
+	iconPrefix := ""
+	iconW := 0
+	if sess.iconsEnabled() {
+		iconPrefix = lipgloss.NewStyle().Foreground(sess.palette.Accent).Render(modIcon) + " "
+		iconW = lipgloss.Width(modIcon) + 1 // glyph + space
+	}
 
 	var lines []string
 	var cur strings.Builder
 	curWidth := 0
 	for _, name := range found {
-		cell := icon + " " + sess.styles.Out.Render(name)
-		cellW := iconW + 1 + lipgloss.Width(name) // glyph + space + name
+		cell := iconPrefix + sess.styles.Out.Render(name)
+		cellW := iconW + lipgloss.Width(name)
 		add := cellW
 		if cur.Len() > 0 {
 			add += len(sep)
