@@ -8,6 +8,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Historial de logs por comando persistido a disco** (Unit 81). Cada comando
+  despachado (REPL, one-shot y pasos de recipe por igual) guarda su salida
+  capturada como un registro JSON por ejecución en
+  `~/.config/echo/cmd-logs/<clave-de-proyecto>/`, con nombre
+  `<unix-millis>-<comando>.json` (orden lexicográfico = cronológico). Cada
+  registro lleva la metadata que el navegador (Unit 82) necesita sin abrir el
+  cuerpo (comando completo, verbo, db, stage, `from` remoto, exit, duración,
+  errores/warnings, truncado) más las líneas etiquetadas por nivel reutilizando
+  `config.ReportLine`. El guardado es best-effort (un fallo de escritura nunca
+  rompe ni retrasa el comando). No se registran los meta-comandos
+  (`help`/`clear`/`copy-last`), `report`, `logview`, ni las capturas vacías.
+  Retención podada oportunistamente (al arrancar la sesión y tras cada
+  guardado) con dos perillas en `[cmd_logs]` de `global.toml`: `retention_days`
+  (7 por defecto, 0 = para siempre), `max_runs` (500 por defecto, 0 = sin
+  límite) y `disabled` (apaga escritura y poda). Helpers en
+  `internal/config/cmd_logs.go` (`SaveCmdLog`/`ListCmdLog`/`LoadCmdLog`/
+  `PruneCmdLogs`/`ClearCmdLogs`) y el sink en `internal/repl/cmdlog.go`.
 - **Iconos nerd-font por tipo de archivo en el árbol de `push`, con toggle y
   fallback** (Unit 83). Cuando están habilitados, cada archivo del árbol de
   cambios lleva su glyph nerd-font (set seti: `.py` , `.xml` , `.po` 󰗊,

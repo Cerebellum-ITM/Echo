@@ -17,6 +17,10 @@ var Defaults = Config{
 	PromptNameMax:  18,
 	HealthTTL:      5 * time.Second,
 	LogDBMax:       20,
+
+	CmdLogsRetentionDays: 7,
+	CmdLogsMaxRuns:       500,
+	CmdLogsDisabled:      false,
 }
 
 func applyDefaults(cfg *Config) {

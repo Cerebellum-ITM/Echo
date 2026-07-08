@@ -15,6 +15,7 @@ import (
 // the process exits with the recorded code.
 func RunOnce(s theme.Styles, p theme.Palette, project, id string, stage theme.Stage, version, themeName, username, cwd string, cfg *config.Config, name string, args []string) int {
 	sess, _ := newSession(s, p, project, id, stage, version, themeName, username, cwd, cfg)
+	sess.pruneCmdLogs()
 	sess.dispatchParsed(context.Background(), name, args)
 	return sess.exitCode
 }

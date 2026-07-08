@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/huh"
 	"github.com/charmbracelet/lipgloss"
@@ -157,6 +158,7 @@ func newSession(s theme.Styles, p theme.Palette, project, id string, stage theme
 func Start(s theme.Styles, p theme.Palette, project, id string, stage theme.Stage, version, themeName, username, cwd string, cfg *config.Config) {
 	sess, unknown := newSession(s, p, project, id, stage, version, themeName, username, cwd, cfg)
 	sess.interactive = true
+	sess.pruneCmdLogs()
 
 	sess.clearAndRenderHeader()
 	for _, u := range unknown {
@@ -246,6 +248,13 @@ func (sess *session) dispatchParsed(ctx context.Context, cmd string, args []stri
 	if !isMetaCommand(cmd) {
 		sess.lastOutput.Reset()
 	}
+
+	// Persist the captured output as a history record when the command
+	// finishes (Unit 81). Deferred so the build-mode early return is still
+	// recorded; fires before runStepCaptured's post-dispatch buffer reset,
+	// so recipe steps land as their own records.
+	started := time.Now()
+	defer func() { sess.saveCmdLog(cmd, args, time.Since(started)) }()
 
 	// Build mode (--build / -b) is universal: intercept before the switch,
 	// but only for commands the switch actually routes — an unknown command

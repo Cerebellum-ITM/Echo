@@ -23,6 +23,33 @@ _(siguiente: Unit 14 — meta-commands. Fix deploy-build-muting: el builder de `
 
 ## Completed
 
+- [x] Unit 81 — command-log history. Infraestructura que persiste la salida
+  capturada de **cada** comando despachado (REPL, one-shot y pasos de recipe)
+  como un registro JSON por ejecución en
+  `~/.config/echo/cmd-logs/<clave>/<unix-millis>-<comando>.json`. Nuevo
+  `internal/config/cmd_logs.go`: `CmdLogRecord`/`CmdLogMeta`, `CmdLogsDir`
+  (basado en `ProjectKey(abs(root))`), `SaveCmdLog` (MkdirAll + `writeAtomic`,
+  nombre millis-prefijado y verbo saneado), `ListCmdLogs` (newest-first por
+  nombre, best-effort), `LoadCmdLog` (contrato `(zero,false)` como
+  `LoadRunReport`), `PruneCmdLogs` (pasada de edad por timestamp del nombre +
+  pasada de conteo, tolerante a fallos, `0` desactiva cada pasada) y
+  `ClearCmdLogs` (backend del futuro `logview --clear`). Config `[cmd_logs]`
+  con puntero `cmdLogsFile` para distinguir sección ausente (defaults 7/500/on)
+  de `0` explícito (para-siempre/ilimitado); `SaveGlobal` preserva la sección
+  no-default. Sink en `internal/repl/cmdlog.go`: `saveCmdLog` (skip meta/`report`/
+  `logview`/vacío/`disabled`, metadata + `captureReportLines`), `pruneCmdLogs`
+  (una pasada al arrancar) y `remoteRunLabel` (`--from`/`--remote` → campo
+  `from`). Hook `defer` al inicio de `dispatchParsed` (cubre el early-return del
+  build-mode y precede al reset de `runStepCaptured`); poda al entrar en
+  `Start`/`RunOnce`/`RunRecipe`. Se extrajo el tagging de niveles de
+  `runStepCaptured` al helper compartido `captureReportLines`. Sin cambios de
+  comportamiento en `report`/`copy-last`/`last-run.json`. Tests
+  `config/cmd_logs_test.go` (round-trip, poda edad/conteo, `0` desactiva,
+  corrupto→false, clear) y `repl/cmdlog_test.go` (tabla de niveles,
+  `remoteRunLabel`, escritura y skip-list). build/vet/gofmt/test verdes.
+  **Pendiente verificación EN VIVO** (recompilar `ec`) y la Unit 82 (`logview`)
+  que lee este store.
+
 - [x] Unit 84 — watch-branch. Nuevo `watch <branch> [--from <t>/--remote]
   [--interval <sec>] [--force]`: loop en foreground que hace poll del ref
   (`git rev-parse refs/heads/<branch>`, worktree-proof) y en cada avance
