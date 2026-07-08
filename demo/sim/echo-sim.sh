@@ -61,6 +61,16 @@ _logcolor() {
     echo.sequence)                      printf '189;178;255';;  # lavender
     echo.sequence.step)                 printf '155;246;255';;  # cyan
     echo.sequence.build)                printf '202;255;191';;  # mint
+    echo.push)                          printf '255;198;255';;  # pink
+    echo.push.remote)                   printf '255;198;255';;  # pink
+    echo.push.module)                   printf '255;179;186';;  # coral
+    echo.db-pull)                       printf '160;196;255';;  # sky
+    echo.db-pull.remote)                printf '160;196;255';;  # sky
+    echo.db-pull.dump)                  printf '160;196;255';;  # sky
+    echo.db-pull.restore)               printf '160;196;255';;  # sky
+    echo.db-pull.filestore)             printf '255;214;165';;  # peach
+    echo.compare)                       printf '189;178;255';;  # lavender
+    echo.logview)                       printf '189;178;255';;  # lavender
     werkzeug)                           printf '160;196;255';;  # sky
     *)                                  printf '202;255;191';;
   esac
@@ -106,6 +116,7 @@ _log() {
   read -r chip cc <<<"$(_chip "$level")"
   lc="$(_logcolor "$logger")"
   ts="$(date '+%Y-%m-%d %H:%M:%S'),$(printf '%03d' $(( (RANDOM % 900) + 100 )))"
+  printf '%s' "${LOGPREFIX:-}"
   printf '%s' "$(_c "$DIM" "$ts") $(_c "$FAINT" "$pid") $(_cb "$cc" "$chip") $(_c "$ACCENT" "$DB") $(_c "$lc" "${logger}:")"
   [ -n "$msg" ] && printf ' %s' "$(_c "$FG" "$msg")"
   local f; for f in "$@"; do _field "$f"; done
@@ -388,4 +399,194 @@ _seqstep() {
   [ -n "$4" ] && printf ' %s' "$4"
   [ -n "$5" ] && printf '   %s' "$5"
   printf '\n'
+}
+
+# push: rsync selected local modules to a remote target's addons dir over SSH
+# (Unit 83). Each module is bracketed by a greppable syncing/synced frame; its
+# file changes render as a colored change tree — dim connectors, an op glyph
+# (+ new = success, ~ changed = warning, − deleted = error), a dim nerd-font
+# file-type icon, and the file name in fg. Directory nodes are all-dim with a
+# folder glyph. Mirrors internal/repl/push.go renderSyncTree.
+push() {
+  _log INFO "$EPID" echo.push.remote "target resolved" "host=erp-staging" "path=/srv/odoo/my-shop"
+  sleep 0.30
+  _log INFO "$EPID" echo.push.module "syncing" "module=sale_extra" "dest=/srv/odoo/my-shop/addons/sale_extra"
+  sleep 0.28
+  _treef '├─ '   changed "$GI_PY"  '__manifest__.py'; sleep 0.06
+  _treed '├─ '   'i18n/'
+  _treef '│    ' changed "$GI_PO"  'es_MX.po';         sleep 0.06
+  _treed '├─ '   'models/'
+  _treef '│    ' changed "$GI_PY"  'sale_order.py';    sleep 0.06
+  _treef '│    ' new     "$GI_PY"  'sale_report.py';   sleep 0.06
+  _treed '└─ '   'views/'
+  _treef '     ' changed "$GI_XML" 'sale_order_views.xml'
+  sleep 0.32
+  _log INFO "$EPID" echo.push.module "synced" "module=sale_extra" "new=1" "changed=4"
+  sleep 0.28
+  _log INFO "$EPID" echo.push.module "syncing" "module=website_promo" "dest=/srv/odoo/my-shop/addons/website_promo"
+  sleep 0.22
+  _treef '├─ '   new "$GI_PY"  '__manifest__.py'; sleep 0.06
+  _treed '└─ '   'views/'
+  _treef '     ' new "$GI_XML" 'promo_banner.xml'
+  sleep 0.28
+  _log INFO "$EPID" echo.push.module "synced" "module=website_promo" "new=2" "changed=0"
+  printf '\n'
+  _log INFO "$EPID" echo.push "push complete" "modules=2" "files=7"
+}
+
+# _treef PREFIX OP ICON NAME — one file row of the change tree:
+#   dim connector · op glyph (kind-colored) · dim file icon · fg name.
+_treef() {
+  local prefix="$1" op="$2" icon="$3" name="$4" glyph gc
+  case "$op" in
+    new)     glyph='+'; gc="$SUCCESS";;
+    changed) glyph='~'; gc="$WARNING";;
+    deleted) glyph='−'; gc="$ERROR";;
+  esac
+  printf '%s%s %s %s\n' "$(_c "$DIM" "$prefix")" "$(_c "$gc" "$glyph")" \
+    "$(_c "$DIM" "$icon")" "$(_c "$FG" "$name")"
+}
+
+# _treed PREFIX NAME — a directory node, all dim with a folder glyph.
+_treed() { printf '%s\n' "$(_c "$DIM" "$1$GI_FOLDER $2")"; }
+
+# db-pull: clone a remote database into the local stack (Unit 85). The remote
+# side is read-only (one pg_dump streamed over SSH into ./backups/); the dump
+# is then restored locally under a distinct name and — a prod source, by
+# default — neutralized. The db column shows the local target name throughout.
+db-pull() {
+  local DB='muutrade_prod_prod'
+  _log INFO  "$EPID" echo.db-pull.remote  "target resolved" "host=erp-prod" "path=/srv/odoo/muutrade"; sleep 0.28
+  _log INFO  "$EPID" echo.db-pull         "pulling database" "target=prod" "source=muutrade_prod" "stage=prod"; sleep 0.28
+  _log INFO  "$EPID" echo.db-pull.dump    "streaming remote dump" "file=muutrade_prod_prod_20260708-173204.dump"; sleep 0.30
+  _log DEBUG "$EPID" echo.db-pull.dump    "pulled 12.4 MB"; sleep 0.20
+  _log DEBUG "$EPID" echo.db-pull.dump    "pulled 57.8 MB"; sleep 0.20
+  _log DEBUG "$EPID" echo.db-pull.dump    "pulled 103.2 MB"; sleep 0.20
+  _log INFO  "$EPID" echo.db-pull.dump    "dump complete" "size=124.6 MB"; sleep 0.26
+  _log INFO  "$EPID" echo.db-pull.restore "creating database"; sleep 0.26
+  _log INFO  "$EPID" echo.db-pull.restore "restoring data" "file=muutrade_prod_prod_20260708-173204.dump"; sleep 0.26
+  _log DEBUG "$EPID" echo.db-pull.restore 'creating TABLE "public"."res_partner"';            sleep 0.15
+  _log DEBUG "$EPID" echo.db-pull.restore 'restoring data for table "public"."account_move"'; sleep 0.15
+  _log DEBUG "$EPID" echo.db-pull.restore 'creating INDEX "public"."sale_order_pkey"';         sleep 0.15
+  _log INFO  "$EPID" echo.db-pull.restore "neutralizing"; sleep 0.28
+  printf '\n'
+  _log INFO  "$EPID" echo.db-pull "pull complete" "db=muutrade_prod_prod" "size=124.6 MB" "neutralized=true"
+  printf '  %s %s\n' "$(_c "$SUCCESS" '→')" "$(_c "$FG" 'db-use muutrade_prod_prod')"
+}
+
+# compare --all: whole-module sync-status table vs the container copy (Unit 86).
+# Each file is changed / added / missing (equal is counted, not listed); the
+# table closes with a verdict, and on a TTY the differing files feed an
+# interactive drill-down into each one's diff (the Unit 80 renderer).
+compare() {
+  local w=26
+  printf '\n  %s  %s\n' "$(_cb "$ACCENT" "$(printf '%-26s' file)")" "$(_cb "$ACCENT" status)"
+  _cmprow "$w" 'models/sale_order.py'       changed
+  _cmprow "$w" 'views/sale_order_views.xml' changed
+  _cmprow "$w" 'report/sale_report.py'       added
+  _cmprow "$w" 'i18n/es_MX.po'               missing
+  printf '\n'
+  _log INFO "$EPID" echo.compare "module compared" "module=sale_extra" "from=docker" \
+    "changed=2" "added=1" "missing=1" "equal=17"
+  sleep 0.7
+
+  # interactive drill-down: pick a differing file …
+  printf '\n  %s\n' "$(_cb "$WARNING" 'Changed files in sale_extra')"
+  printf '  %s %s\n' "$(_c "$ACCENT" '❯')" "$(_c "$FG"  'models/sale_order.py')"
+  printf '    %s\n'  "$(_c "$DIM" 'views/sale_order_views.xml')"
+  printf '    %s\n'  "$(_c "$DIM" 'report/sale_report.py')"
+  printf '    %s\n'  "$(_c "$DIM" 'i18n/es_MX.po')"
+  printf '\n'; sleep 1.0
+
+  # … and see its unified diff (internal render, container vs local).
+  _c "$FAINT" '--- docker/sale_extra/models/sale_order.py'; printf '\n'
+  _c "$FAINT" '+++ local/sale_extra/models/sale_order.py';  printf '\n'
+  _c "$INFO"  '@@ -18,7 +18,7 @@ class SaleOrder(models.Model)'; printf '\n'
+  _c "$FG"    '         @api.depends("order_line.price_total")'; printf '\n'
+  _c "$FG"    '         def _compute_tax(self):'; printf '\n'
+  _c "$ERROR" '-            rate = 0.16'; printf '\n'
+  _c "$SUCCESS" '+            rate = self.company_id.account_tax_rate'; printf '\n'
+  _c "$FG"    '             self.amount_tax = self.amount_untaxed * rate'; printf '\n'
+}
+
+# _cmprow WIDTH REL STATUS — one status row: fg path padded to WIDTH, then the
+# status colored (changed=warn, added=info, missing=err).
+_cmprow() {
+  local w="$1" rel="$2" st="$3" sc
+  case "$st" in
+    changed) sc="$WARNING";; added) sc="$INFO";; missing) sc="$ERROR";;
+  esac
+  printf '  %s  %s\n' "$(_c "$FG" "$(printf "%-${w}s" "$rel")")" "$(_c "$sc" "$st")"
+}
+
+# logview: interactive alt-screen browser over the per-command log history
+# (Unit 82). A stage-tinted `│` bar frames every line, matching the help pager.
+# The sim plays three beats: the run list → open the top run (enter) → live
+# text filter ("translation"). Mirrors internal/repl/logview.go View().
+logview() {
+  local bar; bar="$(_c "$SUCCESS" '│ ')"
+
+  # 1) run list — time · cmd · status · line count · db.
+  printf '%s%s%s\n' "$bar" "$(_c "$DIM" 'logview — 6 runs')" "$(_c "$FAINT" '  (7d retention)')"
+  printf '%s%s%s\n'  "$bar" "$(_c "$FAINT" 'filter › ')" "$(_c "$FAINT" 'type to filter…')"
+  printf '%s\n' "$bar"
+  _lvrun "$bar" 1 '17:41:12' 'update sale --i18n'              ok  9  my_shop
+  _lvrun "$bar" 0 '17:39:50' 'deploy'                          ok  14 my_shop
+  _lvrun "$bar" 0 '17:38:02' 'db-pull --from prod --filestore' ok  22 muutrade_prod_prod
+  _lvrun "$bar" 0 '17:35:20' 'test sale --tags=/sale'          err 31 my_shop
+  _lvrun "$bar" 0 '17:31:07' 'compare sale_extra --all'        ok  6  my_shop
+  _lvrun "$bar" 0 '17:28:44' 'db-backup --with-filestore'      ok  8  my_shop
+  printf '%s\n' "$bar"
+  printf '%s%s\n' "$bar" "$(_c "$FAINT" '↑↓ move · enter open · type filter · esc close · ctrl+x quit')"
+  sleep 2.4
+
+  # 2) open the top run (enter): its stored log lines, colored as they ran.
+  clear
+  _lvhead "$bar" '' all
+  LOGPREFIX="$bar"
+  _log INFO "$EPID" echo.update.module.sale.start     "update" "modules=sale" "flags=--i18n"
+  _log INFO "$OPID" odoo.modules.loading              "loading 1 modules..."
+  _log INFO "$OPID" odoo.modules.loading              "Loading module sale (1/1)"
+  _log INFO "$OPID" odoo.addons.base.models.ir_module "module sale: loading translation es_MX"
+  _log INFO "$OPID" odoo.tools.translate              "module sale: overwriting es_MX translation"
+  _log INFO "$OPID" odoo.modules.loading              "Module sale loaded in 0.42s, 318 queries"
+  _log INFO "$OPID" odoo.modules.loading              "1 modules loaded in 0.44s, 318 queries"
+  _log INFO "$EPID" echo.update.module.sale           "update completed"
+  LOGPREFIX=""
+  printf '%s\n' "$bar"
+  printf '%s%s\n' "$bar" "$(_c "$FAINT" '↑↓ scroll · tab level · type filter · ctrl+o copy · esc back · ctrl+x quit')"
+  sleep 2.0
+
+  # 3) live text filter: typing narrows the lines in place (AND with level).
+  clear
+  _lvhead "$bar" 'translation' all
+  LOGPREFIX="$bar"
+  _log INFO "$OPID" odoo.addons.base.models.ir_module "module sale: loading translation es_MX"
+  _log INFO "$OPID" odoo.tools.translate              "module sale: overwriting es_MX translation"
+  LOGPREFIX=""
+  printf '%s\n' "$bar"
+  printf '%s%s\n' "$bar" "$(_c "$FAINT" '↑↓ scroll · tab level · type filter · ctrl+o copy · esc back · ctrl+x quit')"
+}
+
+# _lvrun BAR SELECTED TIME CMD STATUS NLINES DB — one run-list row.
+_lvrun() {
+  local bar="$1" sel="$2" tm="$3" cmd="$4" st="$5" n="$6" db="$7" cur stc
+  if [ "$sel" = 1 ]; then cur="$(_c "$SUCCESS" '❯ ')"; else cur='  '; fi
+  case "$st" in
+    ok)  stc="$(_c "$DIM"   ok)";;
+    err) stc="$(_c "$ERROR" err)";;
+    *)   stc="$(_c "$FAINT" cancel)";;
+  esac
+  printf '%s%s%s  %s  %s  %s  %s\n' "$bar" "$cur" "$(_c "$DIM" "$tm")" \
+    "$(_c "$FG" "$cmd")" "$stc" "$(_c "$FAINT" "$n lines")" "$(_c "$DIM" "$db")"
+}
+
+# _lvhead BAR TEXTFILTER LEVEL — the detail header + filter line.
+_lvhead() {
+  local bar="$1" tf="$2" lvl="$3" tfr
+  printf '%s%s\n' "$bar" "$(_c "$DIM" 'update sale --i18n — 17:41:12 · ok · my_shop')"
+  if [ -n "$tf" ]; then tfr="$(_c "$FG" "$tf")"; else tfr="$(_c "$FAINT" 'type to filter…')"; fi
+  printf '%s%s%s%s%s\n' "$bar" "$(_c "$FAINT" 'filter › ')" "$tfr" \
+    "$(_c "$FAINT" '   level › ')" "$(_c "$FAINT" "$lvl")"
+  printf '%s\n' "$bar"
 }

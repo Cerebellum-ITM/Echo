@@ -5,6 +5,21 @@ All notable changes to Echo are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+- **README: documentados los comandos del 0.21.0 y añadidos sus GIFs de demo.**
+  El `README.md` no cubría los comandos entrados en el último release; ahora
+  documenta `push`/`watch`/`compare` (nueva sección **Sync & compare**),
+  `db-pull` (sección Database) y `logview` (Output & reporting), con filas en la
+  tabla de Status y cuatro GIFs nuevos grabados con VHS en modo simulación
+  (`demo/gifs/{push,db-pull,compare,logview}.gif`). Se añadieron sus tapes
+  (`demo/tapes/*.tape`), las funciones de simulación fieles al render real en
+  `demo/sim/echo-sim.sh` (árbol de cambios de `push`, secuencia dump→restore de
+  `db-pull`, tabla de estado + drill-down de `compare`, TUI alt-screen de
+  `logview`), los colores de logger (FNV-1a % 8) de los nuevos loggers y los
+  glyphs seti/md de tipo de archivo en `demo/sim/glyphs.sh`.
+
 ## [0.21.0] — 2026-07-08
 
 ### Added

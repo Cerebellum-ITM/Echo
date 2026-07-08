@@ -54,4 +54,6 @@ If Echo's styling changes, update the sim to match:
 - **Logger pastel** — `loggerColor` is `FNV-1a(name) % 8` over `loggerPalette`;
   `_logcolor` precomputes that map, so a renamed logger needs its slot recomputed.
 - **Glyphs** — `glyphs.sh` holds the PUA runes from `internal/banner/header.go`
-  (logo) and `internal/repl/prompt.go` (docker/postgres health).
+  (logo), `internal/repl/prompt.go` (docker/postgres health), and
+  `internal/repl/icons.go` (the seti/md file-type glyphs the `push` change tree
+  draws).

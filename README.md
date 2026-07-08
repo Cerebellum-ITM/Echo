@@ -26,13 +26,14 @@ Echo is a work in progress; below is what currently ships in `main`.
 | Project   | `init`, `reset`, `alias` (`-C <name>` registry), `help`, `clear`        | `version`, `stage`, `theme`, `logo` |
 | Docker    | `up`, `down`, `stop`, `restart`, `ps`, `logs` (`--copy`/`--all`/`-t`; `up`/`stop`/`restart`/`logs` also `--from`/`--remote` over SSH) | — |
 | Modules   | `install`, `update` (`--i18n`), `uninstall`, `test`, `modules` (`--config`), `modinfo`, `view` | —             |
-| Database  | `db-admin`, `db-backup` (`--with-filestore`), `db-restore` (rename + live progress), `db-drop`, `db-neutralize`, `db-list`, `db-use` | — |
+| Database  | `db-admin`, `db-backup` (`--with-filestore`), `db-restore` (rename + live progress), `db-pull` (clone a remote DB), `db-drop`, `db-neutralize`, `db-list`, `db-use` | — |
 | Shell     | `shell`, `bash`, `psql`                                                  | —                               |
 | i18n      | `i18n-export`, `i18n-update`, `i18n-pull` (from a remote)                | —                               |
 | Connect   | `connect` — open Chrome logged in as any user, no password              | —                               |
 | Deploy    | `link` — bind a local repo to a remote target; `deploy` — commit- and dirty-module-driven remote update/install over SSH | — |
+| Sync      | `push` — rsync local modules to the remote addons dir; `watch` — auto push+deploy on new commits; `compare` — diff a module against its Docker copy (`--all` for a whole-module status table) | — |
 | Build     | `<cmd> --build` / `-b` — compose any command interactively, then run/copy | —                             |
-| Scripting | `echo <cmd>` one-shot, `echo run <file>` recipes, `sequence` (interactive multi-command), `report` | —              |
+| Scripting | `echo <cmd>` one-shot, `echo run <file>` recipes, `sequence` (interactive multi-command), `report`, `logview` (interactive log history) | —              |
 | REPL UX   | ↑↓ history, fzf picker, level-colored logs, ✓/✗ result, Tab + flag autocomplete, live command/flag highlighting | Full ASCII banners |
 | Themes    | charm, hacker, odoo, tokyo                                              | —                               |
 
@@ -216,6 +217,11 @@ only changes what the picker offers:
 | `  --with-filestore`             | Package dump + container filestore into a `.zip` (Odoo-compatible) |
 | `db-restore [--as N] [--force] [--neutralize]` | Pick a backup (Echo `.dump` or native Odoo `.zip`), name the target DB, create it, and restore the filestore — narrating each step live |
 | `  --as <name>`                  | Set the target name up front (skips the rename prompt)            |
+| `db-pull [--from <t>\|--remote]` | Clone a **remote** database into the local stack: `pg_dump` over SSH → `./backups/` → restore under a distinct name |
+| `  --as <name>`                  | Local DB name (default `<remoteDB>_<target>`, sanitized)         |
+| `  --neutralize` / `--no-neutralize` | Force / skip neutralize (default: only when the source is `prod`) |
+| `  --filestore`                  | Also pull the DB's filestore attachments                         |
+| `  --force`                      | Replace an existing local DB of the target name                  |
 | `db-drop [name] [--force]`       | Drop a database; red confirm unless `--force` (terminates active connections) |
 | `db-neutralize [name] [--force]` | Run Odoo's native `neutralize`; red confirm only on the active DB or `prod` |
 | `db-list`                        | Table of DBs with size and creation date; `●` marks the active one |
@@ -239,6 +245,18 @@ resets the admin user to `admin`/`admin` to get back into the back office
 when you don't have the password.
 
 <p align="center"><img src="demo/gifs/db-list.gif" alt="echo db-list" width="860"></p>
+
+`db-pull` brings a **remote** database down into your local stack in one step:
+it streams a `pg_dump` over SSH straight into `./backups/` (with a live
+`pulled N MB…` line), restores it into local Postgres under a distinct name
+(reusing `db-restore`'s machinery), and — when the source is `prod` — runs
+`db-neutralize` on the local copy. The remote side is **read-only** (just the
+dump, plus an optional filestore tar), so there's no remote prod gate; every
+mutation happens locally under its own guards. The `.dump` stays a normal
+backup the `db-restore` picker can replay, and the active DB doesn't change —
+the closing line suggests `db-use <name>`.
+
+<p align="center"><img src="demo/gifs/db-pull.gif" alt="echo db-pull --from prod --filestore — remote dump, local restore, neutralize" width="860"></p>
 
 ### Shell
 
@@ -396,17 +414,77 @@ echo deploy                       # the real thing (red confirm if the remote st
 `ir_module_module`, not from the commit tags. `stock_extra` was picked from
 the working tree (`via=dirty`) and joins the update set.
 
+### Sync & compare
+
+Where `deploy` handles the container and module state on a server that has
+**already pulled** your code, `push` moves the code itself: it rsyncs selected
+local modules to the remote target's addons directory over SSH. Each module is
+bracketed by a greppable `syncing`/`synced` frame, and its file changes render
+as a colored change tree — `+` new, `~` changed, `−` deleted, with a nerd-font
+file-type icon per file. The destination is decided by the **remote** layout
+(a module already on the server updates in place; a new one lands in the
+remote's addons dir), never by the directory you run `push` from.
+
+| Command                          | Description                                                       |
+|----------------------------------|-------------------------------------------------------------------|
+| `push [<mod>...]`                | Rsync local modules to the remote target's addons dir over SSH   |
+| `  --from <target>` / `--remote` | Named connect target, or this directory's `link` binding         |
+| `  --dirty`                      | Push every module with uncommitted working-tree changes          |
+| `  --dry-run`                    | List the changes rsync would make; transfer nothing              |
+| `  --delete`                     | Remove remote files no longer present locally                    |
+| `  --force`                      | Skip the remote `prod`-stage confirmation                        |
+| `watch <branch>`                 | Poll a branch and auto `push`+`deploy` when new commits land (`Ctrl+C` to stop) |
+| `  --from <target>` / `--remote` | Target a named connect target or this directory's linked remote  |
+| `  --interval <sec>`             | Poll interval in seconds (default `10`, min `2`)                 |
+| `  --force`                      | Required to watch a `prod`-stage target                          |
+
+<p align="center"><img src="demo/gifs/push.gif" alt="echo push — colored change tree per module, synced over SSH" width="860"></p>
+
+`compare` diffs a local module against the copy that's actually **inside the
+container** — the local Odoo container, or a remote target's over SSH. Point it
+at a single file to see that file's unified diff (through `bat` when
+available); pass `--all` for a whole-module **sync-status table** —
+`changed` / `added` / `missing` / `equal` — closed by a verdict line. On a TTY
+the differing files then feed an interactive drill-down: pick one, read its
+diff, go back, until `esc`. Comparison is by checksum (one hashing command per
+side), not file-by-file reads.
+
+| Command                          | Description                                                       |
+|----------------------------------|-------------------------------------------------------------------|
+| `compare [<mod>]`                | Diff a local module file against its Docker copy                  |
+| `  --all`                        | Compare the whole module: `changed`/`added`/`missing` status table + drill-down |
+| `  --from <target>` / `--remote` | Compare against a remote target instead of the local container   |
+| `  --copy`                       | Copy the diff (or the `--all` table) to the clipboard            |
+
+<p align="center"><img src="demo/gifs/compare.gif" alt="echo compare sale_extra --all — status table, verdict, and per-file diff drill-down" width="860"></p>
+
 ### Output & reporting
 
 | Command                 | Description                                                  |
 |-------------------------|--------------------------------------------------------------|
 | `copy-last [--errors]`  | Copy the last command's output (or only its error/warn lines) |
 | `report [--step=N] [--level=lvl \| --min-level=lvl] [--copy]` | Inspect or copy the last `echo run`'s logs by step and level |
+| `logview`               | Interactive browser over every past command's saved logs     |
+| `  --list`              | Print the run list without the interactive browser           |
+| `  --last`              | Open the most recent run directly                            |
+| `  --clear [--force]`   | Delete this project's log history (`--force` skips the confirm) |
 
 `report` reads the structured record every `echo run` persists, so it works
 across invocations. `--level=warn` matches that level exactly;
 `--min-level=error` matches it and more severe (`ERROR`/`CRITICAL` stay
 distinct). Without `--copy` the matched lines print, colored by level.
+
+Every dispatched command (REPL, one-shot, and recipe steps alike) also persists
+its captured output to `~/.config/echo/cmd-logs/`, and `logview` is an
+alt-screen browser over that history. It opens on a **run list** (newest first:
+time · command · status · line count · db) with type-to-filter; `enter` opens a
+run's **log view**, where typing filters the lines live and `Tab` cycles a
+minimum-level threshold (`all → DEBUG+ → … → CRITICAL`) — both filters compose.
+`Ctrl+O` copies exactly the visible lines; `esc` steps back, `q` closes. Each
+line keeps the color it had when it first streamed. Retention is pruned by age
+and count (`[cmd_logs]` in `global.toml`).
+
+<p align="center"><img src="demo/gifs/logview.gif" alt="echo logview — run list, per-run log view, live text and level filters" width="860"></p>
 
 ## Build mode
 
