@@ -209,7 +209,7 @@ func (sess *session) renderPrompt() string {
 // registry_test.go; `exit` and `quit` are handled in Start (above) and
 // are therefore not part of this slice.
 var dispatchNames = []string{
-	"help", "clear", "copy-last", "report", "sequence",
+	"help", "clear", "copy-last", "report", "logview", "sequence",
 	"init", "reset", "alias", "link",
 	"up", "down", "stop", "restart", "ps", "logs", "push", "deploy", "watch",
 	"install", "update", "uninstall", "test", "modules", "modinfo", "modstate", "view", "compare",
@@ -224,7 +224,7 @@ var dispatchNames = []string{
 // still copy the previously-buffered command, not just the ok line.
 func isMetaCommand(name string) bool {
 	switch name {
-	case "copy-last", "help", "clear":
+	case "copy-last", "help", "clear", "logview":
 		return true
 	}
 	return false
@@ -273,6 +273,8 @@ func (sess *session) dispatchParsed(ctx context.Context, cmd string, args []stri
 		sess.runCopyLast(args)
 	case "report":
 		sess.runReport(args)
+	case "logview":
+		sess.runLogview(ctx, args)
 	case "sequence":
 		sess.runSequence(ctx, args)
 	case "init":
@@ -469,6 +471,10 @@ func helpSections() []helpSection {
 			{"  --level=<lvl>", "Only lines of that level (debug…critical)"},
 			{"  --min-level=<lvl>", "That level and more severe"},
 			{"  --copy", "Copy the matched lines (default: print)"},
+			{"logview", "Browse past commands' logs (filter by text and level)"},
+			{"  --list", "Print the run list without the interactive browser"},
+			{"  --last", "Open the most recent run directly"},
+			{"  --clear", "Delete this project's log history (--force skips confirm)"},
 			{"sequence", "Pick several commands in order and run them (tri-state Tab)"},
 			{"  --remote", "Run the whole sequence on this directory's linked remote"},
 			{"  --from <target>", "Run the whole sequence on a named connect target"},

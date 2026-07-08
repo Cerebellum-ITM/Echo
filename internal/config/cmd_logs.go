@@ -45,6 +45,7 @@ type CmdLogMeta struct {
 	Errors     int
 	Warnings   int
 	Truncated  bool
+	LineCount  int // number of captured lines, for a listing without the body
 }
 
 // CmdLogsDir returns the per-project command-log directory,
@@ -143,6 +144,7 @@ func ListCmdLogs(root string) ([]CmdLogMeta, error) {
 			Errors:     rec.Errors,
 			Warnings:   rec.Warnings,
 			Truncated:  rec.Truncated,
+			LineCount:  len(rec.Lines),
 		})
 	}
 	return out, nil

@@ -23,6 +23,31 @@ _(siguiente: Unit 14 — meta-commands. Fix deploy-build-muting: el builder de `
 
 ## Completed
 
+- [x] Unit 82 — logview browser. Nuevo comando `logview [--list|--last|--clear
+  [--force]]`: navegador interactivo alt-screen (bubbletea) sobre el historial
+  de la Unit 81, con el estilo log-framed del `help` pager/picker (barra `│`
+  teñida por stage). Dos vistas: lista de corridas (newest-first, columnas
+  tiempo·comando·estado·líneas·db, filtro por texto sobre el comando) y, al
+  `enter`, la vista de log de la corrida con filtro de texto en vivo + filtro
+  de nivel por **umbral** vía `tab`/`shift+tab` (all→DEBUG+→…→CRITICAL; sin
+  nivel solo en "all"), ambos componiendo AND. `ctrl+o` copia las líneas
+  visibles; `esc` limpia filtro y luego navega atrás/afuera; `q` cierra;
+  `ctrl+x` cierra Echo (`handleQuit`/`cmd.ErrQuit`). Líneas coloreadas con
+  `renderLogLine`/`kindFromLevel`. Headless: `--list` (tabla plana, sin TTY),
+  `--last` (abre la más reciente), `--clear [--force]` (borra vía
+  `config.ClearCmdLogs` tras confirm con `cmd.BuildHuhTheme`; non-TTY sin force
+  falla closed). Meta-comando (no resetea `lastOutput`; ya en la skip-list de
+  la Unit 81); cierra con `echo.logview`. Nuevo `internal/repl/logview.go`
+  (`logviewModel` + helpers puros `filterRuns`/`filterLogLines`/`cycleLevel`/
+  `runStatusLabel`/`logviewTimeLabel`/`parseLogviewArgs`); `CmdLogMeta` gana
+  `LineCount` (derivado en `ListCmdLogs`). Registrado en Registry/dispatchNames/
+  dispatch/commandFlags/isMetaCommand/help (Session, junto a `report`). Tests
+  `logview_test.go` (filtros texto/umbral/compuesto/identidad, no-nivel solo en
+  all, ciclo de nivel fwd/back con wrap, `filterRuns` case-insensitive,
+  `runStatusLabel`/`logviewTimeLabel`/`parseLogviewArgs`). build/vet/gofmt/test
+  + cross-check de registry verdes. **Pendiente verificación EN VIVO** (TTY,
+  recompilar `ec`).
+
 - [x] Unit 81 — command-log history. Infraestructura que persiste la salida
   capturada de **cada** comando despachado (REPL, one-shot y pasos de recipe)
   como un registro JSON por ejecución en

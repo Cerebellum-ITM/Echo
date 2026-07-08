@@ -12,7 +12,7 @@ var Registry = []string{
 	"db-admin", "db-backup", "db-restore", "db-drop", "db-neutralize", "db-list", "db-use",
 	"bash", "psql", "shell", "shell-run", "connect",
 	"up", "down", "stop", "restart", "ps", "logs", "push", "deploy", "watch",
-	"copy-last", "report", "sequence",
+	"copy-last", "report", "logview", "sequence",
 	"clear", "help", "exit", "quit",
 }
 
@@ -53,6 +53,7 @@ var commandFlags = map[string][]string{
 	"watch":         {"--from", "--remote", "--interval", "--force"},
 	"copy-last":     {"--errors"},
 	"report":        {"--step", "--level", "--min-level", "--copy"},
+	"logview":       {"--list", "--last", "--clear", "--force"},
 	"sequence":      {"--remote", "--from", "--last", "--continue-on-error"},
 }
 

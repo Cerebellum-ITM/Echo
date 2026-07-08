@@ -8,6 +8,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **`logview` — navegador interactivo del historial de logs por comando**
+  (Unit 82). Nuevo comando alt-screen (bubbletea) sobre lo que persiste la
+  Unit 81, con el mismo lenguaje visual que el `help` pager y el picker (barra
+  `│` izquierda teñida por el stage). Dos niveles: una **lista de corridas**
+  (más recientes primero, columnas tiempo · comando · estado · nº de líneas ·
+  db, con filtro por escritura sobre el comando) y, al `enter`, la **vista de
+  log** de esa corrida donde escribir filtra las líneas en vivo y `tab` cicla
+  el filtro de nivel como **umbral mínimo** (all → DEBUG+ → INFO+ → WARNING+ →
+  ERROR+ → CRITICAL, `shift+tab` hacia atrás; las líneas sin nivel solo se ven
+  en "all"). Ambos filtros componen (AND). `ctrl+o` copia exactamente las
+  líneas visibles al portapapeles; `esc` limpia el filtro activo y si no hay,
+  navega atrás/afuera; `q` cierra; `ctrl+x` cierra Echo entero. Cada línea se
+  colorea como se vio en vivo (`renderLogLine`/`kindFromLevel`). Escotillas
+  headless: `--list` (tabla plana sin TTY), `--last` (abre la corrida más
+  reciente directo), `--clear [--force]` (borra el historial del proyecto tras
+  confirmar). Es meta-comando (no resetea `lastOutput`, así `copy-last` sigue
+  copiando el comando anterior) y no se registra a sí mismo. Cierra con una
+  línea `echo.logview`. Helpers puros testeables `filterRuns`/`filterLogLines`/
+  `cycleLevel`/`runStatusLabel`/`logviewTimeLabel` en `internal/repl/logview.go`;
+  `CmdLogMeta` gana `LineCount` para listar sin abrir cuerpos.
 - **Historial de logs por comando persistido a disco** (Unit 81). Cada comando
   despachado (REPL, one-shot y pasos de recipe por igual) guarda su salida
   capturada como un registro JSON por ejecución en
