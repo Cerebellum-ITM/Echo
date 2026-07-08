@@ -16,9 +16,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`syncing module=… dest=…` … `synced module=… new=N changed=M`): conectores
   de árbol atenuados (`├─`/`└─`/`│`), archivos de la raíz primero y luego cada
   subcarpeta, con un glyph por operación coloreado (`+` nuevo en verde, `~`
-  cambiado en ámbar, `−` borrado en rojo). `deploy --push`/`watch` muestran
-  solo el frame grepeable (sin árbol). La forma en texto plano (sin ANSI)
-  sigue alimentando `copy-last`/`--log` vía el nuevo `printStyled`. Helpers
+  cambiado en ámbar, `−` borrado en rojo). El árbol también aparece en
+  `watch` (cada ciclo) y en `deploy --push` — `OnSync` se propaga por
+  `WatchOpts`/`DeployOpts` —, salvo en `deploy --json`, donde se suprime para
+  no ensuciar el stdout parseable. La forma en texto plano (sin ANSI) sigue
+  alimentando `copy-last`/`--log` vía el nuevo `printStyled`. Helpers
   `parseItemize`/`BuildSyncTree`/`FileChange`/`SyncRow`.
 
 ### Fixed

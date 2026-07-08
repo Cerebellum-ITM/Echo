@@ -29,6 +29,9 @@ type DeployOpts struct {
 	Log func(level, sub, msg, db string, fields ...[2]string)
 	// StreamOut receives the remote stop/up/odoo lines as they stream.
 	StreamOut func(string)
+	// OnSync, when set, receives each --push module's file changes so the
+	// caller can render the change tree (same as the standalone `push`).
+	OnSync func(changes []FileChange)
 }
 
 // log emits a progress line when a logger is set; a no-op otherwise.
@@ -474,7 +477,7 @@ func RunDeploy(ctx context.Context, opts DeployOpts) (DeployResult, error) {
 		}
 		pushOpts := PushOpts{
 			Cfg: opts.Cfg, Root: opts.Root, Palette: opts.Palette,
-			Log: opts.Log, StreamOut: opts.StreamOut,
+			Log: opts.Log, StreamOut: opts.StreamOut, OnSync: opts.OnSync,
 		}
 		opts.log("INFO", "push", "syncing modules to remote", prof.DBName,
 			[2]string{"modules", strings.Join(pushMods, ",")})

@@ -25,6 +25,7 @@ func (sess *session) runWatch(ctx context.Context, args []string) {
 		StreamOut: stats.wrap(func(line string) {
 			sess.emitStreamLine(lc, line)
 		}),
+		OnSync: sess.renderSyncTree,
 	})
 
 	switch {

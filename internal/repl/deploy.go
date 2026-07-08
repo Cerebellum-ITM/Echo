@@ -32,6 +32,12 @@ func (sess *session) runDeploy(ctx context.Context, args []string) {
 		streamFn = stats.wrap(func(line string) { os.Stderr.WriteString(line + "\n") })
 	}
 
+	// The --push change tree renders to stdout; suppress it under --json so
+	// the machine-readable object stays the only thing on stdout.
+	var onSync func([]cmd.FileChange)
+	if !wantJSON {
+		onSync = sess.renderSyncTree
+	}
 	res, err := cmd.RunDeploy(ctx, cmd.DeployOpts{
 		Cfg:       sess.cfg,
 		Root:      sess.projectDir,
@@ -39,6 +45,7 @@ func (sess *session) runDeploy(ctx context.Context, args []string) {
 		Palette:   sess.palette,
 		Log:       logFn,
 		StreamOut: streamFn,
+		OnSync:    onSync,
 	})
 
 	if wantJSON {

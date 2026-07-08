@@ -39,9 +39,11 @@ rsync -az --itemize-changes \
   **directory tree** (`BuildSyncTree` → `OnSync`): dim tree connectors
   (`├─`/`└─`/`│`), root files first then each subdir grouped, an
   operation glyph tinted by kind (`+` new = success, `~` changed =
-  warning, `−` deleted = error). `deploy --push`/`watch` (no `OnSync`)
-  get just the greppable frame, no tree. The tree's `plain` form (no
-  ANSI) still feeds `copy-last`/`--log` via `printStyled`.
+  warning, `−` deleted = error). `OnSync` is threaded through
+  `DeployOpts`/`WatchOpts` too, so a `deploy --push` and each `watch`
+  cycle render the same tree — except `deploy --json`, where it is
+  suppressed so stdout stays machine-readable. The tree's `plain` form
+  (no ANSI) still feeds `copy-last`/`--log` via `printStyled`.
 
 **Destination resolution: decided by the REMOTE layout, never the local
 cwd.** The destination must not depend on which local directory `push`

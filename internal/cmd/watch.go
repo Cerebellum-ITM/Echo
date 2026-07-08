@@ -26,6 +26,9 @@ type WatchOpts struct {
 	Log     func(level, sub, msg, db string, fields ...[2]string)
 	// StreamOut receives the push/deploy remote lines as they stream.
 	StreamOut func(string)
+	// OnSync, when set, receives each pushed module's file changes so the
+	// caller can render the change tree (same as the standalone `push`).
+	OnSync func(changes []FileChange)
 }
 
 func (o WatchOpts) log(level, sub, msg, db string, fields ...[2]string) {
@@ -238,7 +241,7 @@ func watchCycle(ctx context.Context, opts WatchOpts, rsc remoteShellContext, fro
 
 	pushOpts := PushOpts{
 		Cfg: opts.Cfg, Root: opts.Root, Palette: opts.Palette,
-		Log: opts.Log, StreamOut: opts.StreamOut,
+		Log: opts.Log, StreamOut: opts.StreamOut, OnSync: opts.OnSync,
 	}
 	if _, err := pushModuleSet(ctx, rsc, pushOpts, modules, srcRoot, false, false); err != nil {
 		return 0, fmt.Errorf("push: %w", err)
