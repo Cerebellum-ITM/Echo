@@ -28,7 +28,7 @@ func TestParseCompareArgs(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			module, copyFlag, from, remote, err := parseCompareArgs(tc.args)
+			module, copyFlag, _, from, remote, err := parseCompareArgs(tc.args)
 			if tc.wantErr {
 				if err == nil {
 					t.Fatalf("parseCompareArgs(%v) err = nil, want error", tc.args)

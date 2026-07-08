@@ -369,6 +369,7 @@ func helpSections() []helpSection {
 			{"  --last", "Re-display this session's last viewed file (skips pickers)"},
 			{"  --from <t>", "View the file from a remote target (or --remote for the link binding)"},
 			{"compare [<mod>]", "Diff a local module file against its Docker copy"},
+			{"  --all", "Compare the whole module: changed/added/missing table"},
 			{"  --from <t>", "Compare against a remote target (or --remote for the link binding)"},
 			{"  --copy", "Copy the diff to the clipboard"},
 		}},

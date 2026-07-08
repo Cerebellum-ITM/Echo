@@ -39,26 +39,28 @@ type CompareResult struct {
 // argument list. The remote-mode switches (`--from <t>` / `--from=t` /
 // `--remote`) are consumed here so the value token after a bare `--from` is
 // not mistaken for the module name; any other `-`-prefixed token errors.
-func parseCompareArgs(args []string) (module string, copyFlag bool, from string, remote bool, err error) {
+func parseCompareArgs(args []string) (module string, copyFlag, all bool, from string, remote bool, err error) {
 	from, remote = remoteFlagsIn(args)
 	for i := 0; i < len(args); i++ {
 		a := args[i]
 		switch {
 		case a == "--copy":
 			copyFlag = true
+		case a == "--all":
+			all = true
 		case a == "--from":
 			i++ // skip the target value; captured by remoteFlagsIn
 		case strings.HasPrefix(a, "--from="), a == "--remote":
 			// consumed by remoteFlagsIn
 		case strings.HasPrefix(a, "-"):
-			return "", false, "", false, fmt.Errorf("unknown flag: %s", a)
+			return "", false, false, "", false, fmt.Errorf("unknown flag: %s", a)
 		default:
 			if module == "" {
 				module = a
 			}
 		}
 	}
-	return module, copyFlag, from, remote, nil
+	return module, copyFlag, all, from, remote, nil
 }
 
 // unifiedDiff renders the git-style unified diff of oldText → newText with
@@ -159,7 +161,7 @@ func localContainerRead(ctx context.Context, opts ViewOpts, module, rel string) 
 // copy: the local Odoo container by default, or a remote target's container
 // with `--from <t>` / `--remote`. Read-only on both sides — no prod gate.
 func RunCompare(ctx context.Context, opts CompareOpts) (CompareResult, error) {
-	module, copyFlag, from, remote, err := parseCompareArgs(opts.Args)
+	module, copyFlag, _, from, remote, err := parseCompareArgs(opts.Args)
 	if err != nil {
 		return CompareResult{}, err
 	}
@@ -201,28 +203,9 @@ func RunCompare(ctx context.Context, opts CompareOpts) (CompareResult, error) {
 	local := string(localBytes)
 
 	// Fetch the container counterpart (old side).
-	var (
-		container string
-		found     bool
-		fromLabel string
-	)
-	if isRemote {
-		rv, rerr := resolveRemoteView(ctx, vopts, from)
-		if rerr != nil {
-			return CompareResult{}, rerr
-		}
-		fromLabel = rv.displayFrom()
-		if base, inContainer, berr := remoteModuleBase(ctx, rv, module); berr == nil {
-			if c, cerr := remoteReadModuleFile(ctx, rv, base, module, inContainer, rel); cerr == nil {
-				container, found = c, true
-			}
-		}
-	} else {
-		fromLabel = "docker"
-		container, found, err = localContainerRead(ctx, vopts, module, rel)
-		if err != nil {
-			return CompareResult{}, err
-		}
+	container, found, fromLabel, err := compareFetchContainer(ctx, vopts, module, rel, from, isRemote)
+	if err != nil {
+		return CompareResult{}, err
 	}
 
 	fromFile := fromLabel + "/" + module + "/" + rel
@@ -238,4 +221,28 @@ func RunCompare(ctx context.Context, opts CompareOpts) (CompareResult, error) {
 		MissingInContainer: !found,
 		Copy:               copyFlag,
 	}, nil
+}
+
+// compareFetchContainer reads a module-relative file from the container
+// side — the local Odoo container, or a remote target's over SSH. found is
+// false (no error) when the module or file is absent in the container (an
+// all-`+` diff). fromLabel is "docker" locally, else the remote target
+// label. Shared by RunCompare and the Unit 86 drill-down.
+func compareFetchContainer(ctx context.Context, vopts ViewOpts, module, rel, from string, isRemote bool) (container string, found bool, fromLabel string, err error) {
+	if isRemote {
+		rv, rerr := resolveRemoteView(ctx, vopts, from)
+		if rerr != nil {
+			return "", false, "", rerr
+		}
+		fromLabel = rv.displayFrom()
+		if base, inContainer, berr := remoteModuleBase(ctx, rv, module); berr == nil {
+			if c, cerr := remoteReadModuleFile(ctx, rv, base, module, inContainer, rel); cerr == nil {
+				container, found = c, true
+			}
+		}
+		return container, found, fromLabel, nil
+	}
+	fromLabel = "docker"
+	container, found, err = localContainerRead(ctx, vopts, module, rel)
+	return container, found, fromLabel, err
 }

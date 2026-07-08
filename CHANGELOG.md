@@ -8,6 +8,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **`compare --all` — estado de sincronización del módulo completo** (Unit 86).
+  Extiende el `compare` de la Unit 80 con un modo a nivel de módulo:
+  `compare <mod> --all [--from <t>|--remote] [--copy]` compara **todo el
+  módulo** contra su copia en Docker y muestra una tabla de estado por archivo
+  — `changed / added / missing / equal` — cerrando con un veredicto
+  `echo.compare: module compared module=… from=… changed=N added=N missing=N
+  equal=N` (o un único `in sync` si todo coincide). En TTY (y sin `--copy`),
+  los archivos que difieren alimentan un loop interactivo: se elige un archivo,
+  se ve su diff (el render de la Unit 80), se vuelve, hasta `esc`. Comparación
+  por **checksums, no N lecturas**: cada lado se hashea en un solo comando
+  (local con `crypto/md5` in-process; contenedor local/remoto con un
+  `find -exec md5sum {} +` vía `docker.Exec` o el transporte SSH host/conf de
+  la Unit 79) y se comparan como mapas; `skipViewPath` filtra ambos lados.
+  `--copy` copia la tabla + veredicto en texto plano en vez de entrar al loop;
+  no-TTY imprime solo la tabla. Un módulo ausente en el contenedor lista todos
+  sus archivos como `added`. `compare` sin `--all` es idéntico a la Unit 80.
+  Nuevo `internal/cmd/compare_all.go` (`RunCompareAll`/`CompareModuleFile`/
+  `diffModuleSets`/`localModuleHashes`/`containerModuleHashes`/
+  `remoteModuleHashes`/`parseMD5Sums`, tipo exportado `FileStatus`);
+  `parseCompareArgs` gana `--all` y se extrajo `compareFetchContainer` de
+  `RunCompare`. Tests en `compare_all_test.go`.
 - **`db-pull` — clona una base de datos remota al stack local** (Unit 85).
   Nuevo comando `db-pull [--from <t>|--remote] [--as <name>]
   [--neutralize|--no-neutralize] [--filestore] [--force]`: hace `pg_dump -Fc`

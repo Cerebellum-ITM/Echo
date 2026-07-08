@@ -23,6 +23,30 @@ _(siguiente: Unit 14 — meta-commands. Fix deploy-build-muting: el builder de `
 
 ## Completed
 
+- [x] Unit 86 — compare --all. Extiende el `compare` de la Unit 80 con modo de
+  módulo completo: `compare <mod> --all [--from <t>|--remote] [--copy]` hashea
+  todo el módulo local (crypto/md5 in-process) y su copia en Docker (un
+  `find -exec md5sum {} +` vía `docker.Exec` local o el transporte SSH
+  host/conf de la Unit 79) y los compara como mapas → tabla por archivo
+  changed/added/missing/equal (estilo modstate, status coloreado) + veredicto
+  `echo.compare: module compared … changed/added/missing/equal` (o `in sync` si
+  todo coincide). En TTY sin `--copy`, drill-down interactivo: `cmd.PickOne`
+  sobre los archivos que difieren → `CompareModuleFile` → `unifiedDiff` +
+  `ShowWithBat` (o fallback interno) → vuelve al picker; `esc` cierra, ctrl+x
+  cierra Echo. `--copy` copia tabla+veredicto en texto plano; no-TTY solo la
+  tabla. Módulo ausente en el contenedor → todo `added`. `compare` sin `--all`
+  intacto (Unit 80). Nuevo `internal/cmd/compare_all.go` (`RunCompareAll`/
+  `CompareModuleFile`/`diffModuleSets`/`localModuleHashes`/
+  `containerModuleHashes`/`remoteModuleHashes`/`parseMD5Sums`; tipo exportado
+  `FileStatus`); `parseCompareArgs` gana `--all` y `compareFetchContainer`
+  extraído de `RunCompare`; `runCompareAll`/`compareDrillDown` en
+  `internal/repl/compare.go`. Registrado en commandFlags/help (sin comando
+  nuevo). Tests `compare_all_test.go` (`parseMD5Sums` coreutils/BusyBox/prefijo/
+  ruido, `diffModuleSets` 4 estados + orden + all-equal, `localModuleHashes`
+  salta `__pycache__`, `--all` compone con `--from`/`--copy`); `compare_test`
+  actualizado a la nueva firma. build/vet/gofmt/test verdes. **Pendiente
+  verificación EN VIVO** (contenedor local + remoto real).
+
 - [x] Unit 85 — db-pull. Nuevo `db-pull [--from <t>|--remote] [--as <name>]
   [--neutralize|--no-neutralize] [--filestore] [--force]`: `pg_dump -Fc` del
   target remoto sobre SSH streameado directo a `./backups/<db>_<target>_<ts>.dump`
