@@ -27,10 +27,11 @@ const (
 	logviewDetail = 1 // one run's log lines
 )
 
-// logviewChrome is the count of non-body lines the browser always renders
-// (header, filter line, blank, footer), subtracted from the terminal
-// height to size the scroll window.
-const logviewChrome = 4
+// logviewChrome is the count of fixed non-body lines both views always
+// render — header/title, filter line, the blank after it, the blank before
+// the footer, and the footer itself (5). The two `↑/↓ N more` indicators are
+// reserved separately in maxRows so a full window never overflows the screen.
+const logviewChrome = 5
 
 // --- pure helpers (unit-testable without a TTY) ------------------------
 
@@ -133,6 +134,7 @@ type logviewModel struct {
 	opened     bool // a run was opened at least once (drives the close frame)
 
 	height  int
+	width   int
 	palette theme.Palette
 	accent  lipgloss.Color
 	styles  theme.Styles
@@ -143,20 +145,72 @@ type logviewModel struct {
 
 func (m logviewModel) Init() tea.Cmd { return nil }
 
+// maxRows is the body budget: how many terminal rows the scroll window may
+// occupy after the fixed chrome and the two `↑/↓ more` indicators are
+// reserved. In the list view (one row per run) this is a line count; in the
+// detail view — where a long log line soft-wraps to several rows — it is a
+// VISUAL-row budget that bodyWindow fills wrap-aware.
 func (m logviewModel) maxRows() int {
 	if m.height <= 0 {
 		return defaultHelpRows
 	}
-	r := m.height - logviewChrome
+	r := m.height - logviewChrome - 2 // 2 = reserve for ↑ more / ↓ more
 	if r < 3 {
 		return 3
 	}
 	return r
 }
 
+// visualRows reports how many terminal rows a rendered line occupies once the
+// terminal soft-wraps it to the viewport width. lipgloss.Width ignores ANSI
+// escapes, so the wrap count is measured on visible columns. A zero/unknown
+// width (before the first WindowSizeMsg) counts every line as a single row.
+func visualRows(rendered string, width int) int {
+	if width <= 0 {
+		return 1
+	}
+	w := lipgloss.Width(rendered)
+	if w <= width {
+		return 1
+	}
+	return (w + width - 1) / width
+}
+
+// bodyWindow returns how many consecutive lines, starting at offset, fit
+// within a budget of visual rows given each line's wrapped height (rowsOf).
+// At least the top line is always shown, even if it alone overflows, so the
+// cursor never lands on an invisible line.
+func bodyWindow(rowsOf []int, offset, budget int) int {
+	used, count := 0, 0
+	for i := offset; i < len(rowsOf); i++ {
+		if used+rowsOf[i] > budget && count > 0 {
+			break
+		}
+		used += rowsOf[i]
+		count++
+	}
+	return count
+}
+
+// maxTopOffset is the largest start offset from which every remaining line
+// still fits in budget visual rows — i.e. how far down the window can scroll
+// while keeping the last line reachable.
+func maxTopOffset(rowsOf []int, budget int) int {
+	used, off := 0, len(rowsOf)
+	for i := len(rowsOf) - 1; i >= 0; i-- {
+		if used+rowsOf[i] > budget && off != len(rowsOf) {
+			break
+		}
+		used += rowsOf[i]
+		off = i
+	}
+	return off
+}
+
 func (m logviewModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if ws, ok := msg.(tea.WindowSizeMsg); ok {
 		m.height = ws.Height
+		m.width = ws.Width
 		return m, nil
 	}
 	k, ok := msg.(tea.KeyMsg)
@@ -272,9 +326,11 @@ func (m logviewModel) updateDetail(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "down", "ctrl+n":
 		m.lineOffset++
 	case "pgup":
-		m.lineOffset -= m.maxRows()
+		rowsOf := m.detailRowsOf()
+		m.lineOffset -= pageBack(rowsOf, m.lineOffset, m.maxRows())
 	case "pgdown":
-		m.lineOffset += m.maxRows()
+		rowsOf := m.detailRowsOf()
+		m.lineOffset += bodyWindow(rowsOf, m.lineOffset, m.maxRows())
 	case "ctrl+u":
 		m.textFilter = ""
 		m.lineOffset = 0
@@ -293,7 +349,7 @@ func (m logviewModel) updateDetail(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	}
-	m.clampLineOffset(len(filterLogLines(m.record.Lines, m.textFilter, m.minLevel)))
+	m.clampLineOffset(m.detailRowsOf())
 	return m, nil
 }
 
@@ -322,18 +378,54 @@ func (m *logviewModel) clampListCursor(n int) {
 	}
 }
 
-// clampLineOffset keeps the detail scroll offset valid for n filtered lines.
-func (m *logviewModel) clampLineOffset(n int) {
-	maxOffset := n - m.maxRows()
-	if maxOffset < 0 {
-		maxOffset = 0
-	}
+// clampLineOffset keeps the detail scroll offset valid: never past the point
+// where the last line stops being reachable (measured wrap-aware), never
+// negative.
+func (m *logviewModel) clampLineOffset(rowsOf []int) {
+	maxOffset := maxTopOffset(rowsOf, m.maxRows())
 	if m.lineOffset > maxOffset {
 		m.lineOffset = maxOffset
 	}
 	if m.lineOffset < 0 {
 		m.lineOffset = 0
 	}
+}
+
+// detailRenderedRows renders every filtered detail line with its stage-tinted
+// bar prefix and returns the rendered strings alongside each one's wrapped
+// visual height at the current width.
+func (m logviewModel) detailRenderedRows() (rendered []string, rowsOf []int) {
+	bar := lipgloss.NewStyle().Foreground(m.accent).Render("│ ")
+	lines := filterLogLines(m.record.Lines, m.textFilter, m.minLevel)
+	rendered = make([]string, len(lines))
+	rowsOf = make([]int, len(lines))
+	for i, l := range lines {
+		full := bar + m.renderLogLine(l)
+		rendered[i] = full
+		rowsOf[i] = visualRows(full, m.width)
+	}
+	return rendered, rowsOf
+}
+
+// detailRowsOf is detailRenderedRows without the rendered strings — the
+// per-line wrapped heights the scroll math needs in Update.
+func (m logviewModel) detailRowsOf() []int {
+	_, rowsOf := m.detailRenderedRows()
+	return rowsOf
+}
+
+// pageBack counts how many lines a PageUp from offset should step back — the
+// lines that fill one budget of visual rows ending just above offset.
+func pageBack(rowsOf []int, offset, budget int) int {
+	used, count := 0, 0
+	for i := offset - 1; i >= 0; i-- {
+		if used+rowsOf[i] > budget && count > 0 {
+			break
+		}
+		used += rowsOf[i]
+		count++
+	}
+	return count
 }
 
 func (m logviewModel) View() string {
@@ -408,12 +500,21 @@ func (m logviewModel) runRow(meta config.CmdLogMeta) string {
 }
 
 // cmdBudget is how many runes of the command line a row shows before
-// truncation, scaled to the terminal width (fallback 40).
+// truncation, scaled to the viewport width (fallback 40 before the first
+// WindowSizeMsg). The time/status/count/db columns and their separators eat
+// ~44 cols; the command gets the rest, clamped to a readable band.
 func (m logviewModel) cmdBudget() int {
-	if m.height == 0 { // width isn't tracked separately; use a sane default
+	if m.width <= 0 {
 		return 40
 	}
-	return 48
+	b := m.width - 44
+	if b < 20 {
+		b = 20
+	}
+	if b > 80 {
+		b = 80
+	}
+	return b
 }
 
 func (m logviewModel) statusStyled(exit int) string {
@@ -435,7 +536,8 @@ func (m logviewModel) viewDetail() string {
 	dim := lipgloss.NewStyle().Foreground(p.Dim)
 	faint := lipgloss.NewStyle().Foreground(p.Faint)
 
-	lines := filterLogLines(m.record.Lines, m.textFilter, m.minLevel)
+	rendered, rowsOf := m.detailRenderedRows()
+	total := len(rendered)
 
 	var b strings.Builder
 	head := fmt.Sprintf("%s — %s · %s · %s",
@@ -455,27 +557,29 @@ func (m logviewModel) viewDetail() string {
 		faint.Render("   level › ") + lvlStyle.Render(lvlLabel) + "\n")
 	b.WriteString(bar + "\n")
 
-	if len(lines) == 0 {
+	if total == 0 {
 		b.WriteString(bar + faint.Render("no lines match") + "\n")
 		b.WriteString(bar + "\n")
 		b.WriteString(bar + faint.Render("tab level · type filter · esc back · ctrl+x quit"))
 		return b.String()
 	}
 
-	maxR := m.maxRows()
 	start := m.lineOffset
-	end := start + maxR
-	if end > len(lines) {
-		end = len(lines)
+	if start < 0 {
+		start = 0
 	}
+	if start >= total {
+		start = total - 1
+	}
+	end := start + bodyWindow(rowsOf, start, m.maxRows())
 	if start > 0 {
 		b.WriteString(bar + dim.Render(fmt.Sprintf("↑ %d more", start)) + "\n")
 	}
-	for _, l := range lines[start:end] {
-		b.WriteString(bar + m.renderLogLine(l) + "\n")
+	for _, r := range rendered[start:end] {
+		b.WriteString(r + "\n")
 	}
-	if end < len(lines) {
-		b.WriteString(bar + dim.Render(fmt.Sprintf("↓ %d more", len(lines)-end)) + "\n")
+	if end < total {
+		b.WriteString(bar + dim.Render(fmt.Sprintf("↓ %d more", total-end)) + "\n")
 	}
 	b.WriteString(bar + "\n")
 	b.WriteString(bar + faint.Render("↑↓ scroll · tab level · type filter · ctrl+o copy · esc back · ctrl+x quit"))

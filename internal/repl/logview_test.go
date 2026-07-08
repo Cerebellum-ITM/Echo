@@ -1,6 +1,7 @@
 package repl
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -143,5 +144,65 @@ func TestParseLogviewArgs(t *testing.T) {
 	}
 	if _, _, _, _, u := parseLogviewArgs([]string{"--bogus"}); u != "--bogus" {
 		t.Fatalf("unknown flag not surfaced: %q", u)
+	}
+}
+
+func TestVisualRows(t *testing.T) {
+	if got := visualRows("short", 0); got != 1 {
+		t.Fatalf("unknown width should be 1 row, got %d", got)
+	}
+	if got := visualRows("abcdef", 80); got != 1 {
+		t.Fatalf("fits in width = 1 row, got %d", got)
+	}
+	// 100 visible cols at width 40 → ceil(100/40) = 3 rows.
+	if got := visualRows(strings.Repeat("x", 100), 40); got != 3 {
+		t.Fatalf("wrap count = %d, want 3", got)
+	}
+	// ANSI escapes don't count toward width.
+	styled := "\x1b[38;2;1;2;3m" + strings.Repeat("y", 20) + "\x1b[0m"
+	if got := visualRows(styled, 40); got != 1 {
+		t.Fatalf("ANSI-styled 20-col line = %d rows, want 1", got)
+	}
+}
+
+func TestBodyWindow(t *testing.T) {
+	rows := []int{1, 2, 3, 1, 1} // visual heights
+	// budget 4 from offset 0: 1+2 fit (3), +3 overflows → 2 lines.
+	if got := bodyWindow(rows, 0, 4); got != 2 {
+		t.Fatalf("bodyWindow(0,4) = %d, want 2", got)
+	}
+	// budget smaller than the top line still shows it (never zero).
+	if got := bodyWindow([]int{5, 1}, 0, 3); got != 1 {
+		t.Fatalf("oversized top line should still show 1, got %d", got)
+	}
+	// from an inner offset, fills forward.
+	if got := bodyWindow(rows, 3, 2); got != 2 {
+		t.Fatalf("bodyWindow(3,2) = %d, want 2", got)
+	}
+}
+
+func TestMaxTopOffset(t *testing.T) {
+	rows := []int{1, 1, 1, 1, 1}
+	// budget 2 → last two lines fit → top offset 3.
+	if got := maxTopOffset(rows, 2); got != 3 {
+		t.Fatalf("maxTopOffset budget 2 = %d, want 3", got)
+	}
+	// budget ≥ total → offset 0 (everything fits).
+	if got := maxTopOffset(rows, 10); got != 0 {
+		t.Fatalf("maxTopOffset budget 10 = %d, want 0", got)
+	}
+	// a final line taller than the budget is still reachable (offset = last).
+	if got := maxTopOffset([]int{1, 1, 5}, 2); got != 2 {
+		t.Fatalf("oversized last line offset = %d, want 2", got)
+	}
+}
+
+func TestPageBack(t *testing.T) {
+	rows := []int{1, 1, 1, 1, 1}
+	if got := pageBack(rows, 4, 2); got != 2 {
+		t.Fatalf("pageBack(4,2) = %d, want 2", got)
+	}
+	if got := pageBack(rows, 0, 3); got != 0 {
+		t.Fatalf("pageBack at top = %d, want 0", got)
 	}
 }

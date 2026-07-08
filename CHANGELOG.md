@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **`logview`: la vista de detalle rebasaba la altura del terminal y empujaba
+  el header (con el filtro) fuera de vista.** El cálculo de la ventana de
+  scroll (a) contaba solo 4 líneas de chrome cuando el detalle dibuja 5
+  (head, filtro, blank, blank, footer) y no reservaba las filas de los
+  indicadores `↑/↓ N more`, y (b) medía cada log-line como **una** fila
+  aunque las líneas largas se **envuelven** a varias filas visuales — así el
+  cuerpo desbordaba y el terminal scrolleaba el header hacia arriba. Ahora el
+  modelo captura también el `Width` del `WindowSizeMsg` y el llenado es
+  *wrap-aware*: `visualRows` mide las filas envueltas de cada línea (ignorando
+  ANSI vía `lipgloss.Width`), `bodyWindow` llena la ventana por filas visuales,
+  `maxTopOffset` mantiene la última línea alcanzable y `pageBack` pagina
+  correctamente; `logviewChrome` pasa a 5 y `maxRows` reserva 2 filas para los
+  indicadores. `cmdBudget` de la lista ahora escala con el ancho real. Helpers
+  puros con tests en `logview_test.go`.
+
 ### Changed
 - **README: documentados los comandos del 0.21.0 y añadidos sus GIFs de demo.**
   El `README.md` no cubría los comandos entrados en el último release; ahora
