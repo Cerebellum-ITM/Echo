@@ -1103,3 +1103,18 @@ func (sess *session) print(l Line) {
 	fmt.Println(text)
 	teeRunLog(l.Text)
 }
+
+// printStyled prints a pre-rendered (ANSI-styled) line for display while
+// capturing and logging its ANSI-free `plain` form — so `copy-last` and
+// `--log` stay clean even when the display string carries per-segment color
+// the standard Kind styling can't express (e.g. the push change tree).
+func (sess *session) printStyled(rendered, plain, kind string) {
+	if sess.lastOutput != nil {
+		sess.lastOutput.Add(Line{Kind: kind, Text: plain})
+	}
+	if outputSuppressed(levelFromKind(kind)) {
+		return
+	}
+	fmt.Println(rendered)
+	teeRunLog(plain)
+}

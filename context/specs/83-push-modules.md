@@ -31,9 +31,17 @@ rsync -az --itemize-changes \
 - `--dry-run` adds rsync's `-n`: the itemized listing shows exactly
   which files would change, nothing is transferred.
 - The exclude set mirrors `skipViewPath` (build/VCS noise never ships).
-- rsync's stdout streams live through the session's dim-line printing
-  (the itemize lines are the progress); a per-module summary line
-  closes each sync (`echo.push.module: synced module=<m> changes=<n>`).
+- rsync's cryptic `--itemize-changes` codes (`<f+++++++++`) are **parsed**
+  into typed `FileChange`s (new/changed/deleted) rather than dumped. A
+  greppable `echo.push.module` frame brackets each module —
+  `syncing module=<m> dest=<dir>` then `synced module=<m> new=N
+  changed=M` — and between them the REPL renders the changes as a colored
+  **directory tree** (`BuildSyncTree` → `OnSync`): dim tree connectors
+  (`├─`/`└─`/`│`), root files first then each subdir grouped, an
+  operation glyph tinted by kind (`+` new = success, `~` changed =
+  warning, `−` deleted = error). `deploy --push`/`watch` (no `OnSync`)
+  get just the greppable frame, no tree. The tree's `plain` form (no
+  ANSI) still feeds `copy-last`/`--log` via `printStyled`.
 
 **Destination resolution: decided by the REMOTE layout, never the local
 cwd.** The destination must not depend on which local directory `push`

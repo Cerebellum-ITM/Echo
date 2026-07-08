@@ -196,6 +196,83 @@ func TestMergeModules(t *testing.T) {
 	}
 }
 
+func TestParseItemize(t *testing.T) {
+	tests := []struct {
+		line string
+		op   string
+		path string
+		ok   bool
+	}{
+		{"<f+++++++++ __init__.py", "new", "__init__.py", true},
+		{">f+++++++++ data/x.xml", "new", "data/x.xml", true},
+		{"<f.st...... security/s.xml", "changed", "security/s.xml", true},
+		{"*deleting   old/gone.py", "deleted", "old/gone.py", true},
+		{"cd+++++++++ data/", "", "", false},   // directory
+		{".d..t...... ./", "", "", false},      // directory (root)
+		{"created directory /srv/x", "", "", false}, // rsync noise
+		{"", "", "", false},
+		{"*deleting   stale/", "", "", false}, // whole-dir deletion skipped
+	}
+	for _, tc := range tests {
+		fc, ok := parseItemize(tc.line)
+		if ok != tc.ok {
+			t.Errorf("parseItemize(%q) ok = %v, want %v", tc.line, ok, tc.ok)
+			continue
+		}
+		if ok && (fc.Op != tc.op || fc.Path != tc.path) {
+			t.Errorf("parseItemize(%q) = {%s %s}, want {%s %s}", tc.line, fc.Op, fc.Path, tc.op, tc.path)
+		}
+	}
+}
+
+func TestBuildSyncTree(t *testing.T) {
+	changes := []FileChange{
+		{Op: "new", Path: "__init__.py"},
+		{Op: "new", Path: "__manifest__.py"},
+		{Op: "new", Path: "data/mail_template_data.xml"},
+		{Op: "new", Path: "report/a.xml"},
+		{Op: "new", Path: "report/b.xml"},
+		{Op: "changed", Path: "security/s.xml"},
+	}
+	rows := BuildSyncTree(changes)
+
+	// Root files come first as ├─ leaves; the last top-level entry uses └─.
+	if rows[0].Prefix != "├─ " || rows[0].Name != "__init__.py" || rows[0].Kind != "new" {
+		t.Fatalf("row 0 = %+v", rows[0])
+	}
+	if rows[0].Glyph != "+" {
+		t.Errorf("new glyph = %q, want +", rows[0].Glyph)
+	}
+
+	// Find the security dir node — it's the last group, so └─, children indented
+	// with plain spaces (no │).
+	var secIdx = -1
+	for i, r := range rows {
+		if r.Kind == "dir" && r.Name == "security/" {
+			secIdx = i
+		}
+	}
+	if secIdx < 0 {
+		t.Fatal("security/ dir node not found")
+	}
+	if rows[secIdx].Prefix != "└─ " {
+		t.Errorf("last dir prefix = %q, want └─ ", rows[secIdx].Prefix)
+	}
+	child := rows[secIdx+1]
+	if child.Prefix != "     " || child.Glyph != "~" || child.Name != "s.xml" || child.Kind != "changed" {
+		t.Errorf("security child = %+v, want plain-indented ~ s.xml", child)
+	}
+
+	// A non-last dir (data/ or report/) indents children with the │ connector.
+	for i, r := range rows {
+		if r.Kind == "dir" && r.Name == "report/" {
+			if rows[i+1].Prefix != "│    " {
+				t.Errorf("non-last dir child prefix = %q, want │ connector", rows[i+1].Prefix)
+			}
+		}
+	}
+}
+
 func containsInOrder(haystack []string, needles ...string) bool {
 	i := 0
 	for _, h := range haystack {

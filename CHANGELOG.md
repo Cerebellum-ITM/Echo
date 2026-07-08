@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **La salida de archivos de `push` ahora es un árbol de cambios legible con
+  color** (Unit 83). Antes se volcaban tal cual los códigos crípticos de
+  `rsync --itemize-changes` (`<f+++++++++`, `cd+++++++`). Ahora se **parsean**
+  a cambios tipados (nuevo/cambiado/borrado) y se renderizan como un árbol
+  agrupado por carpeta entre un frame grepeable `echo.push.module`
+  (`syncing module=… dest=…` … `synced module=… new=N changed=M`): conectores
+  de árbol atenuados (`├─`/`└─`/`│`), archivos de la raíz primero y luego cada
+  subcarpeta, con un glyph por operación coloreado (`+` nuevo en verde, `~`
+  cambiado en ámbar, `−` borrado en rojo). `deploy --push`/`watch` muestran
+  solo el frame grepeable (sin árbol). La forma en texto plano (sin ANSI)
+  sigue alimentando `copy-last`/`--log` vía el nuevo `printStyled`. Helpers
+  `parseItemize`/`BuildSyncTree`/`FileChange`/`SyncRow`.
+
 ### Fixed
 - **`push` mandaba el módulo a la raíz del proyecto docker remoto en vez de a
   `addons/`** (Unit 83). El destino se calculaba **espejando la carpeta local**

@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -23,8 +24,12 @@ type PushOpts struct {
 	Palette theme.Palette
 	// Log emits one Odoo-style progress line under `echo.push[.sub]`.
 	Log func(level, sub, msg, db string, fields ...[2]string)
-	// StreamOut receives rsync's itemized change lines as they stream.
+	// StreamOut receives any raw remote lines (unused by rsync, which is now
+	// parsed into a change tree); kept for interface parity with other verbs.
 	StreamOut func(string)
+	// OnSync, when set, receives a module's parsed file changes so the caller
+	// (the REPL) can render the change tree between the syncing/synced frame.
+	OnSync func(changes []FileChange)
 }
 
 // log emits a progress line when a logger is set; a no-op otherwise.
@@ -145,10 +150,19 @@ func RunPush(ctx context.Context, opts PushOpts) error {
 	return nil
 }
 
+// FileChange is one file rsync would (or did) transfer for a module, with a
+// coarse operation: "new" (created), "changed" (updated), or "deleted".
+type FileChange struct {
+	Op   string
+	Path string // module-relative, e.g. "data/mail_template_data.xml"
+}
+
 // pushModuleSet syncs each module to the remote target, reading the source
 // files from srcRoot (the project root for a manual push, the archive
 // scratch dir for the watcher). Returns the total number of changed files.
-// Shared by `push`, `deploy --push`, and `watch`.
+// Shared by `push`, `deploy --push`, and `watch`. A greppable syncing/synced
+// log frame brackets each module; opts.OnSync (when set) receives the file
+// list so the caller can render the change tree between them.
 func pushModuleSet(ctx context.Context, rsc remoteShellContext, opts PushOpts, modules []string, srcRoot string, dryRun, del bool) (int, error) {
 	rv := remoteView{rsc: rsc}
 	total := 0
@@ -163,15 +177,37 @@ func pushModuleSet(ctx context.Context, rsc remoteShellContext, opts PushOpts, m
 		}
 		opts.log("INFO", "module", "syncing", rsc.prof.DBName,
 			[2]string{"module", m}, [2]string{"dest", destDir})
-		changes, err := rsyncModule(ctx, srcDir, rsc.sshHost, destDir, dryRun, del, opts.StreamOut)
+		changes, err := rsyncModule(ctx, srcDir, rsc.sshHost, destDir, dryRun, del)
 		if err != nil {
 			return total, fmt.Errorf("rsync %q: %w", m, err)
 		}
-		total += changes
-		opts.log("INFO", "module", "synced", rsc.prof.DBName,
-			[2]string{"module", m}, [2]string{"changes", strconv.Itoa(changes)})
+		if opts.OnSync != nil {
+			opts.OnSync(changes)
+		}
+		total += len(changes)
+		newN, chgN, delN := countChanges(changes)
+		fields := [][2]string{{"module", m}, {"new", strconv.Itoa(newN)}, {"changed", strconv.Itoa(chgN)}}
+		if delN > 0 {
+			fields = append(fields, [2]string{"deleted", strconv.Itoa(delN)})
+		}
+		opts.log("INFO", "module", "synced", rsc.prof.DBName, fields...)
 	}
 	return total, nil
+}
+
+// countChanges tallies a change slice by operation.
+func countChanges(changes []FileChange) (newN, chgN, delN int) {
+	for _, c := range changes {
+		switch c.Op {
+		case "new":
+			newN++
+		case "changed":
+			chgN++
+		case "deleted":
+			delN++
+		}
+	}
+	return newN, chgN, delN
 }
 
 // probeRemoteBase / probeRemoteDir are the SSH-facing seams pushDest uses,
@@ -264,49 +300,40 @@ func rsyncArgs(srcDir, sshHost, destDir string, dryRun, del bool) []string {
 	return args
 }
 
-// rsyncModule runs one module's rsync, streaming stdout (the itemized change
-// lines) through onLine while counting them, and folding stderr into the
-// error on failure. Returns the number of changed files.
-func rsyncModule(ctx context.Context, srcDir, sshHost, destDir string, dryRun, del bool, onLine func(string)) (int, error) {
+// rsyncModule runs one module's rsync and parses its itemized output into a
+// typed change list (rather than dumping rsync's cryptic `<f+++++++++` codes).
+// stderr is folded into the error on failure.
+func rsyncModule(ctx context.Context, srcDir, sshHost, destDir string, dryRun, del bool) ([]FileChange, error) {
 	c := rsyncCommand(ctx, rsyncArgs(srcDir, sshHost, destDir, dryRun, del)...)
 	stdout, err := c.StdoutPipe()
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
 	stderr, err := c.StderrPipe()
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
 	if err := c.Start(); err != nil {
-		return 0, err
+		return nil, err
 	}
 
 	var (
 		mu          sync.Mutex
-		changes     int
+		changes     []FileChange
 		lastErrLine string
 		wg          sync.WaitGroup
 	)
-	emit := func(line string) {
-		mu.Lock()
-		defer mu.Unlock()
-		if onLine != nil {
-			onLine(line)
-		}
-	}
 	wg.Add(2)
 	go func() {
 		defer wg.Done()
 		sc := bufio.NewScanner(stdout)
 		sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 		for sc.Scan() {
-			line := sc.Text()
-			if strings.TrimSpace(line) != "" {
+			if fc, ok := parseItemize(sc.Text()); ok {
 				mu.Lock()
-				changes++
+				changes = append(changes, fc)
 				mu.Unlock()
 			}
-			emit(line)
 		}
 	}()
 	go func() {
@@ -314,24 +341,136 @@ func rsyncModule(ctx context.Context, srcDir, sshHost, destDir string, dryRun, d
 		sc := bufio.NewScanner(stderr)
 		sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 		for sc.Scan() {
-			line := sc.Text()
-			if strings.TrimSpace(line) != "" {
+			if line := sc.Text(); strings.TrimSpace(line) != "" {
 				mu.Lock()
 				lastErrLine = line
 				mu.Unlock()
 			}
-			emit(line)
 		}
 	}()
 	wg.Wait()
 
 	if err := c.Wait(); err != nil {
 		if s := strings.TrimSpace(lastErrLine); s != "" {
-			return 0, fmt.Errorf("%w: %s", err, s)
+			return nil, fmt.Errorf("%w: %s", err, s)
 		}
-		return 0, err
+		return nil, err
 	}
 	return changes, nil
+}
+
+// parseItemize turns one rsync `--itemize-changes` line into a FileChange.
+// The itemize code is `YXcstpoguax`: Y = update type, X = file type, then 9
+// attribute flags. Directory entries, symlinks, and non-item noise
+// ("created directory …") return ok=false — the tree groups by directory
+// itself. A new file has all-`+` flags; a deletion is the `*deleting` form.
+func parseItemize(line string) (FileChange, bool) {
+	line = strings.TrimRight(line, "\r")
+	if strings.TrimSpace(line) == "" {
+		return FileChange{}, false
+	}
+	if strings.HasPrefix(line, "*deleting") {
+		p := strings.TrimSpace(strings.TrimPrefix(line, "*deleting"))
+		if p == "" || strings.HasSuffix(p, "/") {
+			return FileChange{}, false // whole-dir deletions aren't listed
+		}
+		return FileChange{Op: "deleted", Path: p}, true
+	}
+	sp := strings.IndexByte(line, ' ')
+	if sp < 2 {
+		return FileChange{}, false
+	}
+	code, p := line[:sp], line[sp+1:]
+	if len(code) < 2 || code[1] != 'f' { // only regular files (X == 'f')
+		return FileChange{}, false
+	}
+	op := "changed"
+	if flags := code[2:]; len(flags) > 0 && strings.Trim(flags, "+") == "" {
+		op = "new" // all-`+` attribute flags → freshly created
+	}
+	return FileChange{Op: op, Path: p}, true
+}
+
+// SyncRow is one rendered line of the change tree: a tree connector prefix, an
+// optional operation glyph, the file/dir name, and a kind the caller colors
+// by (new/changed/deleted/dir).
+type SyncRow struct {
+	Prefix string
+	Glyph  string
+	Name   string
+	Kind   string
+}
+
+// glyphForOp maps a change operation to its tree glyph.
+func glyphForOp(op string) string {
+	switch op {
+	case "new":
+		return "+"
+	case "changed":
+		return "~"
+	case "deleted":
+		return "−"
+	}
+	return ""
+}
+
+// BuildSyncTree groups a module's changes into a directory tree: root files
+// first, then each subdirectory (by full relative path) with its files. Pure
+// and deterministic — the caller renders the returned rows with color.
+func BuildSyncTree(changes []FileChange) []SyncRow {
+	var rootFiles []FileChange
+	dirs := map[string][]FileChange{}
+	var dirOrder []string
+	for _, c := range changes {
+		d := path.Dir(c.Path)
+		if d == "." {
+			rootFiles = append(rootFiles, c)
+			continue
+		}
+		if _, ok := dirs[d]; !ok {
+			dirOrder = append(dirOrder, d)
+		}
+		dirs[d] = append(dirs[d], c)
+	}
+	sort.Slice(rootFiles, func(i, j int) bool { return rootFiles[i].Path < rootFiles[j].Path })
+	sort.Strings(dirOrder)
+
+	// Top-level entries: root files (leaves), then directory groups.
+	type entry struct {
+		dir  string // "" for a root-file leaf
+		file FileChange
+	}
+	var entries []entry
+	for _, f := range rootFiles {
+		entries = append(entries, entry{file: f})
+	}
+	for _, d := range dirOrder {
+		entries = append(entries, entry{dir: d})
+	}
+
+	var rows []SyncRow
+	for i, e := range entries {
+		last := i == len(entries)-1
+		conn := "├─ "
+		if last {
+			conn = "└─ "
+		}
+		if e.dir == "" {
+			rows = append(rows, SyncRow{Prefix: conn, Glyph: glyphForOp(e.file.Op), Name: path.Base(e.file.Path), Kind: e.file.Op})
+			continue
+		}
+		rows = append(rows, SyncRow{Prefix: conn, Name: e.dir + "/", Kind: "dir"})
+		childPre := "│    "
+		if last {
+			childPre = "     "
+		}
+		files := dirs[e.dir]
+		sort.Slice(files, func(i, j int) bool { return files[i].Path < files[j].Path })
+		for _, f := range files {
+			rows = append(rows, SyncRow{Prefix: childPre, Glyph: glyphForOp(f.Op), Name: path.Base(f.Path), Kind: f.Op})
+		}
+	}
+	return rows
 }
 
 // requireRsync fails closed with a clear message when rsync isn't on PATH.
