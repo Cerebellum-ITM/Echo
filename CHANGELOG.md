@@ -70,6 +70,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   autocompletado. `parseLogviewArgs` gana `--from`/`--remote`.
 
 ### Fixed
+- **Comandos que no necesitan proyecto se bloqueaban con "not inside a
+  project".** `projectlessOneShot` no incluía `help` (puramente informativo) ni
+  `update` en modo remoto, así que `echo help` y `echo update --remote`/`--from`
+  desde un repo de addons puro (sin `docker-compose.yml`) fallaban en el gate de
+  proyecto en vez de ejecutarse — pese a que `update --remote` está diseñado
+  para correr desde ahí, como `deploy`/`push`. Ahora `help` es projectless
+  incondicional y `update` se suma al grupo remoto (`--from`/`--remote`). Tests
+  en `main_test.go`.
+
 - **`logview`: la vista de detalle rebasaba la altura del terminal y empujaba
   el header (con el filtro) fuera de vista.** El cálculo de la ventana de
   scroll (a) contaba solo 4 líneas de chrome cuando el detalle dibuja 5
