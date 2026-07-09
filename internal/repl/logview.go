@@ -28,12 +28,6 @@ const (
 	logviewDetail = 1 // one run's log lines
 )
 
-// logviewChrome is the count of fixed non-body lines both views always
-// render — header/title, filter line, the blank after it, the blank before
-// the footer, and the footer itself (5). The two `↑/↓ N more` indicators are
-// reserved separately in maxRows so a full window never overflows the screen.
-const logviewChrome = 5
-
 // --- pure helpers (unit-testable without a TTY) ------------------------
 
 // filterRuns keeps the records whose full command line contains q
@@ -92,6 +86,46 @@ func cycleLevel(cur string, back bool) string {
 	return logviewLevels[idx]
 }
 
+// blockStartOf returns the index of the block that filtered line i belongs to.
+// A block is a leveled line plus every unleveled line that follows it (a log
+// entry and its continuation — e.g. a traceback, which already inherits the
+// entry's color) up to the next leveled line. Unleveled lines with no leveled
+// line before them form a leading block anchored at index 0.
+func blockStartOf(lines []config.ReportLine, i int) int {
+	for j := i; j >= 0; j-- {
+		if lines[j].Level != "" {
+			return j
+		}
+	}
+	return 0
+}
+
+// blockEndOf returns the exclusive end index of the block anchored at start:
+// the next leveled line after it, or the end of the slice.
+func blockEndOf(lines []config.ReportLine, start int) int {
+	for j := start + 1; j < len(lines); j++ {
+		if lines[j].Level != "" {
+			return j
+		}
+	}
+	return len(lines)
+}
+
+// selectedLines returns, in order, the filtered lines whose block is selected
+// — the payload ctrl+o copies when a selection exists.
+func selectedLines(lines []config.ReportLine, selected map[int]bool) []config.ReportLine {
+	if len(selected) == 0 {
+		return nil
+	}
+	out := make([]config.ReportLine, 0, len(lines))
+	for i, l := range lines {
+		if selected[blockStartOf(lines, i)] {
+			out = append(out, l)
+		}
+	}
+	return out
+}
+
 // runStatusLabel maps an exit code to the list's short status token.
 func runStatusLabel(exit int) string {
 	switch exit {
@@ -133,12 +167,14 @@ type logviewModel struct {
 	listOffset int
 
 	// detail state
-	record     config.CmdLogRecord
-	recordMeta config.CmdLogMeta
-	textFilter string
-	minLevel   string
-	lineOffset int
-	opened     bool // a run was opened at least once (drives the close frame)
+	record       config.CmdLogRecord
+	recordMeta   config.CmdLogMeta
+	textFilter   string
+	minLevel     string
+	lineOffset   int
+	detailCursor int          // cursor line index into the filtered lines
+	selected     map[int]bool // selected block starts (indices into filtered lines)
+	opened       bool         // a run was opened at least once (drives the close frame)
 
 	height  int
 	width   int
@@ -152,20 +188,47 @@ type logviewModel struct {
 
 func (m logviewModel) Init() tea.Cmd { return nil }
 
-// maxRows is the body budget: how many terminal rows the scroll window may
-// occupy after the fixed chrome and the two `↑/↓ more` indicators are
-// reserved. In the list view (one row per run) this is a line count; in the
-// detail view — where a long log line soft-wraps to several rows — it is a
-// VISUAL-row budget that bodyWindow fills wrap-aware.
-func (m logviewModel) maxRows() int {
+// bar renders the stage-tinted "│ " prefix every logview line carries.
+func (m logviewModel) bar() string {
+	return lipgloss.NewStyle().Foreground(m.accent).Render("│ ")
+}
+
+// bodyBudget turns a measured chrome height into the scroll window's row
+// budget: the terminal height minus the chrome minus two rows held back for
+// the `↑/↓ N more` indicators. Never below 1, so at least one line always
+// shows. Both the list and detail views measure their own chrome — including
+// footers/headers that themselves soft-wrap at narrow widths, which a
+// fixed chrome count would ignore and which caused the header-off-screen
+// overflow.
+func (m logviewModel) bodyBudget(chromeRows int) int {
 	if m.height <= 0 {
 		return defaultHelpRows
 	}
-	r := m.height - logviewChrome - 2 // 2 = reserve for ↑ more / ↓ more
-	if r < 3 {
-		return 3
+	r := m.height - chromeRows - 2
+	if r < 1 {
+		return 1
 	}
 	return r
+}
+
+// detailBudget is the detail view's visual-row body budget, computed from the
+// live head/filter/footer heights (each may wrap).
+func (m logviewModel) detailBudget() int {
+	chrome := visualRows(m.detailHead(), m.width) +
+		visualRows(m.detailFilterLine(), m.width) +
+		2 + // the two blank bar lines
+		visualRows(m.detailFooterLine(), m.width)
+	return m.bodyBudget(chrome)
+}
+
+// listBudget is the run-list body budget. List rows are single-line
+// (truncated to cmdBudget), so this doubles as a line count.
+func (m logviewModel) listBudget(rowCount int) int {
+	chrome := visualRows(m.listTitleLine(rowCount), m.width) +
+		visualRows(m.listFilterLine(), m.width) +
+		2 + // the two blank bar lines
+		visualRows(m.listFooterLine(), m.width)
+	return m.bodyBudget(chrome)
 }
 
 // visualRows reports how many terminal rows a rendered line occupies once the
@@ -250,9 +313,9 @@ func (m logviewModel) updateList(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "down", "ctrl+n":
 		m.cursor++
 	case "pgup":
-		m.cursor -= m.maxRows()
+		m.cursor -= m.listBudget(len(rows))
 	case "pgdown":
-		m.cursor += m.maxRows()
+		m.cursor += m.listBudget(len(rows))
 	case "enter":
 		if len(rows) == 0 {
 			return m, nil
@@ -264,6 +327,8 @@ func (m logviewModel) updateList(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.recordMeta = sel
 				m.mode = logviewDetail
 				m.textFilter, m.minLevel, m.lineOffset = "", "", 0
+				m.detailCursor = 0
+				m.selected = map[int]bool{}
 				m.opened = true
 			}
 		}
@@ -298,66 +363,140 @@ func (m logviewModel) updateDetail(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "q", "ctrl+c":
 		return m, tea.Quit
 	case "esc":
+		// esc peels one layer at a time: the text filter, then the block
+		// selection, then back to the run list.
 		if m.textFilter != "" {
-			m.textFilter = ""
-			m.lineOffset = 0
+			m.resetDetailView()
 			return m, nil
 		}
-		// Back to the run list; the level filter resets.
+		if len(m.selected) > 0 {
+			m.selected = map[int]bool{}
+			return m, nil
+		}
 		m.mode = logviewList
 		m.minLevel = ""
 		return m, nil
 	case "tab":
 		m.minLevel = cycleLevel(m.minLevel, false)
-		m.lineOffset = 0
+		m.resetDetailAnchor()
 		return m, nil
 	case "shift+tab":
 		m.minLevel = cycleLevel(m.minLevel, true)
-		m.lineOffset = 0
+		m.resetDetailAnchor()
+		return m, nil
+	case " ", "space":
+		// Toggle selection of the block under the cursor. (Space arrives as
+		// either " " or "space" depending on the terminal/key path.)
+		lines := filterLogLines(m.record.Lines, m.textFilter, m.minLevel)
+		if len(lines) > 0 {
+			start := blockStartOf(lines, clampInt(m.detailCursor, 0, len(lines)-1))
+			if m.selected == nil {
+				m.selected = map[int]bool{}
+			}
+			if m.selected[start] {
+				delete(m.selected, start)
+			} else {
+				m.selected[start] = true
+			}
+		}
 		return m, nil
 	case "ctrl+o":
 		lines := filterLogLines(m.record.Lines, m.textFilter, m.minLevel)
-		if len(lines) > 0 {
+		payload := selectedLines(lines, m.selected)
+		if payload == nil {
+			payload = lines // nothing selected → copy everything visible
+		}
+		if len(payload) > 0 {
 			var b strings.Builder
-			for _, l := range lines {
+			for _, l := range payload {
 				b.WriteString(l.Text)
 				b.WriteByte('\n')
 			}
 			if clipboard.WriteAll(b.String()) == nil {
-				m.copied = len(lines)
+				m.copied = len(payload)
 			}
 		}
 		return m, tea.Quit
 	case "up", "ctrl+p":
-		m.lineOffset--
+		m.detailCursor--
 	case "down", "ctrl+n":
-		m.lineOffset++
+		m.detailCursor++
 	case "pgup":
 		rowsOf := m.detailRowsOf()
-		m.lineOffset -= pageBack(rowsOf, m.lineOffset, m.maxRows())
+		m.detailCursor -= pageBack(rowsOf, m.detailCursor, m.detailBudget())
 	case "pgdown":
 		rowsOf := m.detailRowsOf()
-		m.lineOffset += bodyWindow(rowsOf, m.lineOffset, m.maxRows())
+		m.detailCursor += bodyWindow(rowsOf, clampInt(m.detailCursor, 0, len(rowsOf)), m.detailBudget())
 	case "ctrl+u":
-		m.textFilter = ""
-		m.lineOffset = 0
+		if m.textFilter != "" {
+			m.resetDetailView()
+		}
 		return m, nil
 	case "backspace":
 		if m.textFilter != "" {
 			m.textFilter = trimLastRune(m.textFilter)
-			m.lineOffset = 0
+			m.resetDetailAnchor()
 		}
 		return m, nil
 	default:
 		if s := typedText(k); s != "" {
 			m.textFilter += s
-			m.lineOffset = 0
+			m.resetDetailAnchor()
 			return m, nil
 		}
 		return m, nil
 	}
-	m.clampLineOffset(m.detailRowsOf())
+	m.clampDetailCursor()
 	return m, nil
+}
+
+// resetDetailAnchor re-anchors the detail view — cursor, scroll, and block
+// selection all reset — without touching the text filter. Called on any change
+// to the filtered line set (filter edit, level cycle), since block selection
+// is keyed by line position and would otherwise point at the wrong blocks.
+func (m *logviewModel) resetDetailAnchor() {
+	m.detailCursor, m.lineOffset = 0, 0
+	m.selected = map[int]bool{}
+}
+
+// resetDetailView clears the text filter as well, then re-anchors — used when
+// esc/ctrl+u drop the whole filter.
+func (m *logviewModel) resetDetailView() {
+	m.textFilter = ""
+	m.resetDetailAnchor()
+}
+
+// clampDetailCursor keeps the cursor inside the filtered lines and scrolls the
+// window (wrap-aware) so the cursor line stays visible.
+func (m *logviewModel) clampDetailCursor() {
+	rowsOf := m.detailRowsOf()
+	n := len(rowsOf)
+	if n == 0 {
+		m.detailCursor, m.lineOffset = 0, 0
+		return
+	}
+	m.detailCursor = clampInt(m.detailCursor, 0, n-1)
+	if m.detailCursor < m.lineOffset {
+		m.lineOffset = m.detailCursor
+	}
+	// Scroll down until the cursor fits in the window from the current offset.
+	for m.detailCursor >= m.lineOffset+bodyWindow(rowsOf, m.lineOffset, m.detailBudget()) {
+		m.lineOffset++
+	}
+	if m.lineOffset < 0 {
+		m.lineOffset = 0
+	}
+}
+
+// clampInt confines v to [lo, hi].
+func clampInt(v, lo, hi int) int {
+	if v < lo {
+		return lo
+	}
+	if v > hi {
+		return hi
+	}
+	return v
 }
 
 // clampListCursor keeps the cursor and scroll offset inside the filtered
@@ -373,7 +512,7 @@ func (m *logviewModel) clampListCursor(n int) {
 	if m.cursor >= n {
 		m.cursor = n - 1
 	}
-	rows := m.maxRows()
+	rows := m.listBudget(n)
 	if m.cursor < m.listOffset {
 		m.listOffset = m.cursor
 	}
@@ -385,29 +524,28 @@ func (m *logviewModel) clampListCursor(n int) {
 	}
 }
 
-// clampLineOffset keeps the detail scroll offset valid: never past the point
-// where the last line stops being reachable (measured wrap-aware), never
-// negative.
-func (m *logviewModel) clampLineOffset(rowsOf []int) {
-	maxOffset := maxTopOffset(rowsOf, m.maxRows())
-	if m.lineOffset > maxOffset {
-		m.lineOffset = maxOffset
-	}
-	if m.lineOffset < 0 {
-		m.lineOffset = 0
-	}
-}
-
 // detailRenderedRows renders every filtered detail line with its stage-tinted
-// bar prefix and returns the rendered strings alongside each one's wrapped
-// visual height at the current width.
+// bar and a 3-column gutter (a `❯` cursor mark and a `✓` selection mark, both
+// blank when off), returning the rendered strings alongside each one's wrapped
+// visual height at the current width. The gutter is part of the measured line
+// so the wrap math accounts for it.
 func (m logviewModel) detailRenderedRows() (rendered []string, rowsOf []int) {
 	bar := lipgloss.NewStyle().Foreground(m.accent).Render("│ ")
+	cursorStyle := lipgloss.NewStyle().Foreground(m.accent).Bold(true)
+	selStyle := lipgloss.NewStyle().Foreground(m.palette.Success)
 	lines := filterLogLines(m.record.Lines, m.textFilter, m.minLevel)
 	rendered = make([]string, len(lines))
 	rowsOf = make([]int, len(lines))
 	for i, l := range lines {
-		full := bar + m.renderLogLine(l)
+		cur := " "
+		if i == m.detailCursor {
+			cur = cursorStyle.Render("❯")
+		}
+		sel := " "
+		if m.selected[blockStartOf(lines, i)] {
+			sel = selStyle.Render("✓")
+		}
+		full := bar + cur + sel + " " + m.renderLogLine(l)
 		rendered[i] = full
 		rowsOf[i] = visualRows(full, m.width)
 	}
@@ -442,25 +580,44 @@ func (m logviewModel) View() string {
 	return m.viewDetail()
 }
 
+// listTitleLine / listFilterLine / listFooterLine build the run list's chrome
+// lines (with the bar) so both the renderer and the budget measure the same
+// strings.
+func (m logviewModel) listTitleLine(rowCount int) string {
+	dim := lipgloss.NewStyle().Foreground(m.palette.Dim)
+	faint := lipgloss.NewStyle().Foreground(m.palette.Faint)
+	title := fmt.Sprintf("logview — %d run%s", rowCount, plural(rowCount))
+	if m.fromLabel != "" {
+		title += " · " + m.fromLabel
+	}
+	out := m.bar() + dim.Render(title)
+	if m.retDays > 0 {
+		out += faint.Render(fmt.Sprintf("  (%dd retention)", m.retDays))
+	}
+	return out
+}
+
+func (m logviewModel) listFilterLine() string {
+	faint := lipgloss.NewStyle().Foreground(m.palette.Faint)
+	return m.bar() + faint.Render("filter › ") + m.filterEcho(m.listFilter)
+}
+
+func (m logviewModel) listFooterLine() string {
+	faint := lipgloss.NewStyle().Foreground(m.palette.Faint)
+	return m.bar() + faint.Render("↑↓ move · enter open · type filter · esc close · ctrl+x quit")
+}
+
 func (m logviewModel) viewList() string {
-	p := m.palette
-	bar := lipgloss.NewStyle().Foreground(m.accent).Render("│ ")
-	dim := lipgloss.NewStyle().Foreground(p.Dim)
-	faint := lipgloss.NewStyle().Foreground(p.Faint)
+	bar := m.bar()
+	dim := lipgloss.NewStyle().Foreground(m.palette.Dim)
+	faint := lipgloss.NewStyle().Foreground(m.palette.Faint)
 	accent := lipgloss.NewStyle().Foreground(m.accent)
 
 	rows := filterRuns(m.metas, m.listFilter)
 
 	var b strings.Builder
-	title := fmt.Sprintf("logview — %d run%s", len(rows), plural(len(rows)))
-	if m.fromLabel != "" {
-		title += " · " + m.fromLabel
-	}
-	if m.retDays > 0 {
-		title += faint.Render(fmt.Sprintf("  (%dd retention)", m.retDays))
-	}
-	b.WriteString(bar + dim.Render(title) + "\n")
-	b.WriteString(bar + faint.Render("filter › ") + m.filterEcho(m.listFilter) + "\n")
+	b.WriteString(m.listTitleLine(len(rows)) + "\n")
+	b.WriteString(m.listFilterLine() + "\n")
 	b.WriteString(bar + "\n")
 
 	if len(rows) == 0 {
@@ -470,7 +627,7 @@ func (m logviewModel) viewList() string {
 		return b.String()
 	}
 
-	maxR := m.maxRows()
+	maxR := m.listBudget(len(rows))
 	start := m.listOffset
 	end := start + maxR
 	if end > len(rows) {
@@ -490,7 +647,7 @@ func (m logviewModel) viewList() string {
 		b.WriteString(bar + dim.Render(fmt.Sprintf("↓ %d more", len(rows)-end)) + "\n")
 	}
 	b.WriteString(bar + "\n")
-	b.WriteString(bar + faint.Render("↑↓ move · enter open · type filter · esc close · ctrl+x quit"))
+	b.WriteString(m.listFooterLine())
 	return b.String()
 }
 
@@ -540,16 +697,11 @@ func (m logviewModel) statusStyled(exit int) string {
 	}
 }
 
-func (m logviewModel) viewDetail() string {
-	p := m.palette
-	bar := lipgloss.NewStyle().Foreground(m.accent).Render("│ ")
-	dim := lipgloss.NewStyle().Foreground(p.Dim)
-	faint := lipgloss.NewStyle().Foreground(p.Faint)
-
-	rendered, rowsOf := m.detailRenderedRows()
-	total := len(rendered)
-
-	var b strings.Builder
+// detailHead / detailFilterLine / detailFooterLine build the detail view's
+// chrome lines (with the bar) so the renderer and the budget agree on their
+// wrapped heights.
+func (m logviewModel) detailHead() string {
+	dim := lipgloss.NewStyle().Foreground(m.palette.Dim)
 	head := fmt.Sprintf("%s — %s · %s · %s",
 		m.record.Cmd,
 		logviewTimeLabel(m.recordMeta.Started, m.now),
@@ -558,16 +710,36 @@ func (m logviewModel) viewDetail() string {
 	if m.fromLabel != "" {
 		head += " · " + m.fromLabel
 	}
-	b.WriteString(bar + dim.Render(head) + "\n")
+	return m.bar() + dim.Render(head)
+}
 
-	lvlLabel := "all"
-	lvlStyle := faint
+func (m logviewModel) detailFilterLine() string {
+	dim := lipgloss.NewStyle().Foreground(m.palette.Dim)
+	faint := lipgloss.NewStyle().Foreground(m.palette.Faint)
+	lvlLabel, lvlStyle := "all", faint
 	if m.minLevel != "" {
-		lvlLabel = m.minLevel + "+"
-		lvlStyle = dim
+		lvlLabel, lvlStyle = m.minLevel+"+", dim
 	}
-	b.WriteString(bar + faint.Render("filter › ") + m.filterEcho(m.textFilter) +
-		faint.Render("   level › ") + lvlStyle.Render(lvlLabel) + "\n")
+	return m.bar() + faint.Render("filter › ") + m.filterEcho(m.textFilter) +
+		faint.Render("   level › ") + lvlStyle.Render(lvlLabel)
+}
+
+func (m logviewModel) detailFooterLine() string {
+	faint := lipgloss.NewStyle().Foreground(m.palette.Faint)
+	return m.bar() + faint.Render(m.detailFooter())
+}
+
+func (m logviewModel) viewDetail() string {
+	bar := m.bar()
+	dim := lipgloss.NewStyle().Foreground(m.palette.Dim)
+	faint := lipgloss.NewStyle().Foreground(m.palette.Faint)
+
+	rendered, rowsOf := m.detailRenderedRows()
+	total := len(rendered)
+
+	var b strings.Builder
+	b.WriteString(m.detailHead() + "\n")
+	b.WriteString(m.detailFilterLine() + "\n")
 	b.WriteString(bar + "\n")
 
 	if total == 0 {
@@ -577,14 +749,8 @@ func (m logviewModel) viewDetail() string {
 		return b.String()
 	}
 
-	start := m.lineOffset
-	if start < 0 {
-		start = 0
-	}
-	if start >= total {
-		start = total - 1
-	}
-	end := start + bodyWindow(rowsOf, start, m.maxRows())
+	start := clampInt(m.lineOffset, 0, total-1)
+	end := start + bodyWindow(rowsOf, start, m.detailBudget())
 	if start > 0 {
 		b.WriteString(bar + dim.Render(fmt.Sprintf("↑ %d more", start)) + "\n")
 	}
@@ -595,8 +761,17 @@ func (m logviewModel) viewDetail() string {
 		b.WriteString(bar + dim.Render(fmt.Sprintf("↓ %d more", total-end)) + "\n")
 	}
 	b.WriteString(bar + "\n")
-	b.WriteString(bar + faint.Render("↑↓ scroll · tab level · type filter · ctrl+o copy · esc back · ctrl+x quit"))
+	b.WriteString(m.detailFooterLine())
 	return b.String()
+}
+
+// detailFooter is the detail view's key hint. It reflects whether a block
+// selection is active so ctrl+o's target ("selection" vs "all") is clear.
+func (m logviewModel) detailFooter() string {
+	if len(m.selected) > 0 {
+		return "↑↓ move · space select · ctrl+o copy selection · esc clear · ctrl+x quit"
+	}
+	return "↑↓ move · space select · tab level · type filter · ctrl+o copy all · esc back · ctrl+x quit"
 }
 
 // renderLogLine colors a stored line the same way the live REPL did: the
@@ -710,6 +885,7 @@ func (sess *session) runLogview(ctx context.Context, args []string) {
 		retDays:   sess.cfg.CmdLogsRetentionDays,
 		load:      loader,
 		fromLabel: fromLabel,
+		selected:  map[int]bool{},
 		palette:   sess.palette,
 		accent:    sess.palette.PromptColor(sess.stage),
 		styles:    sess.styles,

@@ -8,6 +8,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **`logview`: selección de logs por bloques y copia de la selección.** La
+  vista de detalle gana un cursor de línea (`❯`) y con **Espacio** marca/
+  desmarca el **bloque** bajo el cursor — un bloque es una línea con nivel más
+  sus líneas sin nivel siguientes (una entrada de log y su continuación, p. ej.
+  un `ERROR` con su traceback, que ya heredan su color) hasta el siguiente
+  nivel. Las líneas seleccionadas muestran `✓` en un gutter y `Ctrl+O` copia
+  **solo los bloques marcados** (o, si no hay ninguno, todo lo visible, como
+  antes). `esc` limpia primero el filtro de texto, luego la selección, y
+  después vuelve a la lista; editar el filtro o cambiar de nivel re-ancla la
+  selección (va por posición). Helpers puros `blockStartOf`/`blockEndOf`/
+  `selectedLines` con tests.
 - **`logview --from <t>` / `--remote`: navega el historial de logs de un
   destino remoto por SSH.** Antes `logview` solo abría el `cmd-logs/` local y
   cualquier flag remoto caía en "unknown flag". Ahora acepta `--from <target>`
