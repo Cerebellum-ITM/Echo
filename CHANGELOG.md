@@ -93,6 +93,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   autocompletado. `parseLogviewArgs` gana `--from`/`--remote`.
 
 ### Fixed
+- **`logview --remote`/`--from` se bloqueaba con "not inside a project".** Al
+  agregar el modo remoto de `logview` faltó sumarlo a `projectlessOneShot`, así
+  que navegar el historial de logs de un remoto desde un repo sin
+  `docker-compose.yml` fallaba en el gate. Ahora `logview` está en el grupo
+  remoto (projectless con `--from`/`--remote`), como `update`/`logs`/etc. El
+  `logview` local sigue necesitando proyecto (su historial va por clave de
+  proyecto). Test en `main_test.go`.
+
 - **`db-backup` fallaba con "active connections" si había usuarios conectados.**
   `RunDBBackup` corría el guard `assertNoActiveConns` —que exige terminar las
   conexiones o pasar `--force`— antes del dump. Eso es incorrecto para un

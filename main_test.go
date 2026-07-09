@@ -21,6 +21,9 @@ func TestProjectlessOneShot(t *testing.T) {
 		{"update local needs a project", "update", []string{"sale"}, false},
 		{"test --remote", "test", []string{"--remote"}, true},
 		{"test local needs a project", "test", []string{"sale"}, false},
+		{"logview --remote", "logview", []string{"--remote"}, true},
+		{"logview --from target", "logview", []string{"--from", "prod"}, true},
+		{"logview local needs a project", "logview", nil, false},
 
 		// Local-only commands never qualify.
 		{"install never projectless", "install", []string{"--remote"}, false},
