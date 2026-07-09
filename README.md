@@ -456,6 +456,8 @@ the log stream drops (a blip, or the deploy recreating the container) the
 follow recovers on its own without missing a commit. `--no-logs` keeps the
 old silent-between-cycles behavior for `tmux`/CI.
 
+<p align="center"><img src="demo/gifs/watch.gif" alt="echo watch — follows remote logs, then pauses to push+deploy on a new commit, then resumes" width="860"></p>
+
 <p align="center"><img src="demo/gifs/push.gif" alt="echo push — colored change tree per module, synced over SSH" width="860"></p>
 
 `compare` diffs a local module against the copy that's actually **inside the
@@ -550,6 +552,8 @@ module installed in the database — the `--installed` set), then lists exactly
 those modules in the picker, tinted by the resolved stage. So you can compose
 `update base web --from=prod` by browsing the remote's installed modules,
 instead of picking local addons and hoping the flags line up.
+
+<p align="center"><img src="demo/gifs/update-build.gif" alt="echo update --build — where/source selects, remote installed-module picker, composed line with --from baked" width="860"></p>
 
 ## Scripting & recipes
 
