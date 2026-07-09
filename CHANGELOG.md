@@ -93,6 +93,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   autocompletado. `parseLogviewArgs` gana `--from`/`--remote`.
 
 ### Fixed
+- **`db-backup` fallaba con "active connections" si había usuarios conectados.**
+  `RunDBBackup` corría el guard `assertNoActiveConns` —que exige terminar las
+  conexiones o pasar `--force`— antes del dump. Eso es incorrecto para un
+  backup: `pg_dump -Fc` lee un snapshot **MVCC consistente** y es seguro contra
+  una base viva con usuarios conectados (así hace backup Odoo/odoo.sh/Postgres);
+  nunca necesita acceso exclusivo. El guard pertenece solo a `db-drop`/
+  `db-restore`, que **reemplazan/borran** la DB. Se eliminó la llamada de
+  `db-backup`; ahora respalda sin sacar a nadie. `db-drop` conserva el guard.
+
 - **Comandos que no necesitan proyecto se bloqueaban con "not inside a
   project".** `projectlessOneShot` no incluía `help` (puramente informativo) ni
   `update` en modo remoto, así que `echo help` y `echo update --remote`/`--from`

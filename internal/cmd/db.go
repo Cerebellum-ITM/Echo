@@ -143,9 +143,10 @@ func RunDBBackup(ctx context.Context, opts DBOpts) error {
 		return ErrNoTargetDB
 	}
 
-	if err := assertNoActiveConns(ctx, opts, target); err != nil {
-		return err
-	}
+	// No active-connection guard here: `pg_dump` reads a consistent MVCC
+	// snapshot and is safe against a live database with users connected —
+	// that's how every Postgres/Odoo backup runs. The guard belongs only to
+	// drop/restore, which need exclusive access to replace the DB.
 
 	backupsDir := filepath.Join(opts.Root, "backups")
 	if err := os.MkdirAll(backupsDir, 0o755); err != nil {
