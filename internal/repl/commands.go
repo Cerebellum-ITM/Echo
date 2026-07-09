@@ -24,7 +24,7 @@ var commandFlags = map[string][]string{
 	"alias":         {"--list", "--rm", "--migrate"},
 	"link":          {"--show", "--rm"},
 	"install":       {"--with-demo", "--level"},
-	"update":        {"--all", "--last", "--level", "--i18n", "--installed"},
+	"update":        {"--all", "--last", "--level", "--i18n", "--installed", "--from", "--remote"},
 	"uninstall":     {"--level"},
 	"test":          {"--update", "--tags", "--from", "--remote"},
 	"modules":       {"--config"},

@@ -8,6 +8,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **`update --from <t>` / `--remote`: actualiza módulos en un destino remoto por
+  SSH.** `update <mods> --remote` (o `--from <target>`) corre `odoo -u` dentro
+  del contenedor Odoo **en ejecución** del remoto —el mismo transporte que
+  `deploy`/`shell`, con el output streameado en vivo— sin recrear contenedores
+  (eso es trabajo de `deploy`), igual que el update local in-place. Sin nombres
+  de módulo abre un picker sobre los addons propios del remoto (o, con
+  `--installed`, sobre cada módulo instalado en la BD remota), teñido por el
+  stage remoto. Como muta la BD remota, un target `prod` pide confirmación roja
+  salvo `--force`; `--i18n` y `--level` componen; `--last` queda local-only.
+  Corre desde un repo de addons puro sin `docker-compose.yml` local, como
+  `deploy`. Rama antes del gate de config local; nuevo
+  `internal/cmd/update_remote.go` (`runUpdateRemote`/`parseRemoteUpdateFlags`/
+  `remoteUpdateCandidates`) con tests; flags remotos en el autocompletado.
 - **`watch` sin rama abre un selector de ramas.** El branch pasa a ser
   opcional: `watch` (sin argumento) lista las ramas locales del repo —
   ordenadas por commit más reciente— en el picker de una sola selección y

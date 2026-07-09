@@ -25,7 +25,7 @@ Echo is a work in progress; below is what currently ships in `main`.
 |-----------|-------------------------------------------------------------------------|---------------------------------|
 | Project   | `init`, `reset`, `alias` (`-C <name>` registry), `help`, `clear`        | `version`, `stage`, `theme`, `logo` |
 | Docker    | `up`, `down`, `stop`, `restart`, `ps`, `logs` (`--copy`/`--all`/`-t`; `up`/`stop`/`restart`/`logs` also `--from`/`--remote` over SSH) | — |
-| Modules   | `install`, `update` (`--i18n`), `uninstall`, `test`, `modules` (`--config`), `modinfo`, `view` | —             |
+| Modules   | `install`, `update` (`--i18n`, `--remote`), `uninstall`, `test`, `modules` (`--config`), `modinfo`, `view` | —             |
 | Database  | `db-admin`, `db-backup` (`--with-filestore`), `db-restore` (rename + live progress), `db-pull` (clone a remote DB), `db-drop`, `db-neutralize`, `db-list`, `db-use` | — |
 | Shell     | `shell`, `bash`, `psql`                                                  | —                               |
 | i18n      | `i18n-export`, `i18n-update`, `i18n-pull` (from a remote)                | —                               |
@@ -168,6 +168,7 @@ echo restart --from staging    # ad-hoc: a different named target
 | `  --last`               | Repeat the last update for this project + DB         |
 | `  --i18n`               | Overwrite the modules' translations from their shipped `.po` (all langs) |
 | `  --installed`          | Source the picker from every installed module (e.g. `base`), not just the repo |
+| `  --from <target>` / `--remote` | Run the update on a **remote** instance over SSH (named target, or this directory's `link`) |
 | `uninstall <mod>...`     | Uninstall modules                                    |
 | `  --level <lvl>`        | Odoo `--log-level` (`debug`…`critical`) — on install/update/uninstall |
 | `test <mod>...`          | Run the modules' Odoo test suite (filters `--test-tags`) |
@@ -202,6 +203,14 @@ without typing its name. Explicit names still work too (`update base`); the flag
 only changes what the picker offers:
 
 <p align="center"><img src="demo/gifs/update-installed.gif" alt="echo update --installed — picker listing core modules like base" width="860"></p>
+
+`update` also runs against a **remote** instance: `update sale --remote` (or
+`--from <target>`) executes `odoo -u` inside the remote's running Odoo container
+over the same SSH transport as `deploy`/`shell`, streaming the log live. Without
+module names it opens a picker over the remote's own addons (or, with
+`--installed`, every module installed in the remote DB). A `prod`-stage target
+asks for a red confirmation unless `--force`; `--last` stays local-only. Like
+`deploy`, it works from a pure addons repo with no local `docker-compose.yml`.
 
 `modinfo` compares the version Odoo recorded as installed against the manifest —
 `up to date` stays INFO, a pending upgrade is flagged WARN:

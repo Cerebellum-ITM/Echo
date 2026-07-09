@@ -350,6 +350,8 @@ func helpSections() []helpSection {
 			{"  --i18n", "Overwrite the modules' translations from their .po (all langs)"},
 			{"  --installed", "Pick from all installed modules (e.g. base), not just the repo"},
 			{"  --level <lvl>", "Odoo --log-level (debug…critical; default info)"},
+			{"  --from <target>", "Update on a remote instance (named connect target)"},
+			{"  --remote", "Update on this directory's linked remote (see link)"},
 			{"uninstall <mod...>", "Uninstall modules"},
 			{"  --level <lvl>", "Odoo --log-level (debug…critical; default info)"},
 			{"test <mod...>", "Run tests for installed modules (filters to /<mod>)"},
