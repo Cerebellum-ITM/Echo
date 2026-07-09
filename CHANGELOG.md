@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Flags globales `--version`/`-v` y `--help`/`-h`.** Se resuelven al inicio de
+  `main`, **antes** de cualquier detección de proyecto, así que funcionan desde
+  cualquier directorio (incluido fuera de un proyecto compose): `--version`/`-v`
+  imprime la versión del CLI (`echo <x.y.z>`) y sale; `--help`/`-h` se normalizan
+  al comando `help` (ya projectless). El comando `version` in-REPL más rico sigue
+  siendo Unit 14.
+
 ### Changed
 - **`watch` es ahora un modo monitor: sigue los logs remotos en vivo entre
   ciclos** (Unit 87). Mientras espera commits, `watch` streamea los logs del

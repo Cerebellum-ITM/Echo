@@ -38,6 +38,21 @@ func main() {
 		os.Exit(exitUsage)
 	}
 
+	// Global flags that never need a project, handled before any project
+	// detection: `--version`/`-v` prints the CLI version and exits;
+	// `--help`/`-h` are normalized to the `help` command (which runs
+	// projectless). These must work from anywhere, including outside a
+	// compose project.
+	if len(args) > 0 {
+		switch args[0] {
+		case "--version", "-v":
+			fmt.Println("echo " + repl.FullVersion())
+			return
+		case "--help", "-h":
+			args[0] = "help"
+		}
+	}
+
 	// A `-C` value that isn't an existing directory may be a project alias
 	// (or a connect target whose remote_path is local). A real directory
 	// always wins, so this never changes the meaning of an existing path.
