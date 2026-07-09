@@ -532,6 +532,14 @@ interactive, so a non-TTY invocation (recipe, CI) fails closed with exit 2.
 `--from=<target>` into the line, and lists that remote's own modules for the
 picker.
 
+`update --build` is remote- **and** source-aware for the same reason: it first
+asks **where** (local, a named target → bakes `--from=<t>`, or this directory's
+link → bakes `--remote`) and **which source** (the project's addons, or every
+module installed in the database — the `--installed` set), then lists exactly
+those modules in the picker, tinted by the resolved stage. So you can compose
+`update base web --from=prod` by browsing the remote's installed modules,
+instead of picking local addons and hoping the flags line up.
+
 ## Scripting & recipes
 
 Every command also runs **non-interactively**, so Echo fits into scripts and CI:

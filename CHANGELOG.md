@@ -8,6 +8,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **`update --build` remote- y source-aware** (Unit 88). El builder de `update`
+  ahora resuelve **dónde** corre y **de qué fuente** salen los módulos *antes*
+  del picker, arreglando la inversión anterior (el picker listaba addons locales
+  y `--remote`/`--installed` se marcaban después, sin poder influirlo). Pregunta
+  primero **Where** (local / un connect target nombrado → bakea `--from=<t>` /
+  el `link` de este directorio → `--remote`; si no hay remotos, salta el paso) y
+  **Module source** (`project addons` / `installed in the database` =
+  `--installed`), y llena el picker desde la matriz 2×2 (local/remoto ×
+  addons/instalados) vía `resolveRemoteShell` + `listRemoteConfModules`/
+  `listRemoteModules`/`resolveModules`/`installedModules`, teñido por el stage
+  resuelto. `--installed` nunca se bakea (nombres explícitos lo vuelven no-op);
+  los flags extra se reducen a `--i18n`/`--level`. Builder dedicado
+  `runUpdateBuild` (nuevo `internal/cmd/build_update.go`) al estilo de
+  `i18n-pull`/`deploy`; helper `gatherFlags` extraído del path genérico de
+  `RunBuild`; `update` sale de `buildPositionals`. Tests del bake/compose.
 - **Flags globales `--version`/`-v` y `--help`/`-h`.** Se resuelven al inicio de
   `main`, **antes** de cualquier detección de proyecto, así que funcionan desde
   cualquier directorio (incluido fuera de un proyecto compose): `--version`/`-v`
