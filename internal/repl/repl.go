@@ -473,6 +473,7 @@ func helpSections() []helpSection {
 			{"  --remote", "Target this directory's linked remote"},
 			{"  --interval <sec>", "Poll interval in seconds (default 10, min 2)"},
 			{"  --force", "Required to watch a prod-stage target"},
+			{"  --no-logs", "Don't follow the remote logs between cycles (silent wait)"},
 		}},
 		{"Session", []helpEntry{
 			{"copy-last", "Copy the last command's output to clipboard"},

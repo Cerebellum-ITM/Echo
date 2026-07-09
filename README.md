@@ -446,6 +446,15 @@ remote's addons dir), never by the directory you run `push` from.
 | `  --from <target>` / `--remote` | Target a named connect target or this directory's linked remote  |
 | `  --interval <sec>`             | Poll interval in seconds (default `10`, min `2`)                 |
 | `  --force`                      | Required to watch a `prod`-stage target                          |
+| `  --no-logs`                    | Don't follow the remote logs between cycles (silent wait)        |
+
+`watch` is a **monitor**: while it waits for commits it follows the remote
+Odoo container's logs live (the same stream as `logs --remote`), and when the
+branch advances it pauses the follow, runs the push+deploy cycle, then resumes
+following — so one terminal shows both the running server and every deploy. If
+the log stream drops (a blip, or the deploy recreating the container) the
+follow recovers on its own without missing a commit. `--no-logs` keeps the
+old silent-between-cycles behavior for `tmux`/CI.
 
 <p align="center"><img src="demo/gifs/push.gif" alt="echo push — colored change tree per module, synced over SSH" width="860"></p>
 

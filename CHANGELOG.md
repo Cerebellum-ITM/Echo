@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **`watch` es ahora un modo monitor: sigue los logs remotos en vivo entre
+  ciclos** (Unit 87). Mientras espera commits, `watch` streamea los logs del
+  contenedor Odoo remoto (el mismo `compose logs -f` que `logs --remote`, por
+  el transporte SSH compartido, con las líneas recoloreadas por el REPL); al
+  detectar que la rama avanza **pausa** el follow, corre el ciclo push+deploy
+  intacto, y al terminar lo **reanuda**. Así una sola terminal muestra el
+  servidor corriendo y cada deploy. El follower es un goroutine lateral con
+  ctx derivado que nunca bloquea ni retrasa el poll: se detiene de forma
+  síncrona antes de cada ciclo (drena el stream SSH, así sus líneas nunca se
+  entremezclan con la salida del ciclo) y arranca fresco con `--tail 0` después
+  (el deploy ya imprimió y recreó contenedores). Si el stream cae solo (blip o
+  contenedor recreado) reintenta tras un intervalo con un WARNING, sin perder
+  ningún commit. Nuevo flag `--no-logs` para el modo silencioso anterior
+  (tmux/CI). Seam `watchLogStream` + helper `startWatchLogs` con tests.
+
 ### Added
 - **`update --from <t>` / `--remote`: actualiza módulos en un destino remoto por
   SSH.** `update <mods> --remote` (o `--from <target>`) corre `odoo -u` dentro

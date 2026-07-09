@@ -51,7 +51,7 @@ var commandFlags = map[string][]string{
 	"connect":       {"--all", "--force", "--fresh", "--new-window"},
 	"push":          {"--from", "--remote", "--dirty", "--dry-run", "--delete", "--force"},
 	"deploy":        {"--from", "--limit", "--dry-run", "--force", "--i18n", "--no-i18n", "--commits", "--modules", "--auto", "--push", "--json"},
-	"watch":         {"--from", "--remote", "--interval", "--force"},
+	"watch":         {"--from", "--remote", "--interval", "--force", "--no-logs"},
 	"copy-last":     {"--errors"},
 	"report":        {"--step", "--level", "--min-level", "--copy"},
 	"logview":       {"--list", "--last", "--clear", "--force", "--from", "--remote"},
