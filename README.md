@@ -483,9 +483,10 @@ side), not file-by-file reads.
 | `copy-last [--errors]`  | Copy the last command's output (or only its error/warn lines) |
 | `report [--step=N] [--level=lvl \| --min-level=lvl] [--copy]` | Inspect or copy the last `echo run`'s logs by step and level |
 | `logview`               | Interactive browser over every past command's saved logs     |
+| `  --from <target>` / `--remote` | Browse a **remote** target's log history over SSH instead of the local one |
 | `  --list`              | Print the run list without the interactive browser           |
 | `  --last`              | Open the most recent run directly                            |
-| `  --clear [--force]`   | Delete this project's log history (`--force` skips the confirm) |
+| `  --clear [--force]`   | Delete this project's log history (`--force` skips the confirm; local only) |
 
 `report` reads the structured record every `echo run` persists, so it works
 across invocations. `--level=warn` matches that level exactly;
@@ -498,9 +499,19 @@ alt-screen browser over that history. It opens on a **run list** (newest first:
 time · command · status · line count · db) with type-to-filter; `enter` opens a
 run's **log view**, where typing filters the lines live and `Tab` cycles a
 minimum-level threshold (`all → DEBUG+ → … → CRITICAL`) — both filters compose.
-`Ctrl+O` copies exactly the visible lines; `esc` steps back, `q` closes. Each
-line keeps the color it had when it first streamed. Retention is pruned by age
-and count (`[cmd_logs]` in `global.toml`).
+In the log view a line cursor (`❯`) moves with `↑↓`, **`Space`** marks the
+**block** under it (a leveled line plus its unleveled continuation — an entry
+and its traceback — shown with a `✓` gutter), and `Ctrl+O` copies the marked
+blocks (or, with nothing marked, everything visible). `esc` peels the text
+filter, then the selection, then steps back; `q` closes. Each line keeps the
+color it had when it first streamed. Retention is pruned by age and count
+(`[cmd_logs]` in `global.toml`).
+
+`logview --from <target>` / `--remote` browses a **remote** target's history
+instead: it reads the server's own `cmd-logs/` over SSH (read-only), so you can
+review what ran on a staging/prod box from your laptop — runs from a pure addons
+repo, no local `docker-compose.yml`. The local `logview` still needs a project
+(its history is keyed by project path).
 
 <p align="center"><img src="demo/gifs/logview.gif" alt="echo logview — run list, per-run log view, live text and level filters" width="860"></p>
 
@@ -552,6 +563,13 @@ echo -C my-shop ps                 # …or by a registered alias (see `alias`)
 
 Exit codes: `0` success, `1` execution error (or `ERROR`/`CRITICAL` lines),
 `2` usage / a prompt that can't run without a TTY, `3` cancelled.
+
+`echo --version` / `-v` prints the CLI version and `echo --help` / `-h` prints
+the command list — both work from anywhere, including outside a project. The
+remote forms of most commands (`--from <target>` / `--remote`) also run from a
+pure addons repo with no local `docker-compose.yml`: `update`, `logs`, `logview`,
+`shell`, `compare`, `sequence`, and the always-remote `deploy`/`push`/`watch`/
+`i18n-pull`.
 
 `echo run <file>` runs a **recipe** — one command per line — as an update
 routine:
