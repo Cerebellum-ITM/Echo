@@ -51,10 +51,11 @@ type watchArgs struct {
 	force    bool
 }
 
-// parseWatchArgs extracts the required branch positional plus
+// parseWatchArgs extracts the optional branch positional plus
 // --interval/--from/--remote/--force. The interval is in seconds, clamped to
 // a 2s floor; remote-mode switches are consumed so a bare `--from` value is
-// not read as the branch.
+// not read as the branch. An omitted branch is left empty for RunWatch to
+// resolve with an interactive picker.
 func parseWatchArgs(args []string) (watchArgs, error) {
 	out := watchArgs{interval: defaultWatchInterval}
 	out.from, out.remote = remoteFlagsIn(args)
@@ -100,9 +101,6 @@ func parseWatchArgs(args []string) (watchArgs, error) {
 			out.branch = a
 		}
 	}
-	if out.branch == "" {
-		return watchArgs{}, fmt.Errorf("%w: watch needs a branch name", ErrUsage)
-	}
 	return out, nil
 }
 
@@ -116,6 +114,17 @@ func RunWatch(ctx context.Context, opts WatchOpts) error {
 	p, err := parseWatchArgs(opts.Args)
 	if err != nil {
 		return err
+	}
+	// No branch given → offer a picker of the repo's local branches (most
+	// recently committed first). Runs before any SSH, so a cancel costs
+	// nothing; a non-TTY caller gets ErrNonInteractive (pass the branch as an
+	// argument instead).
+	if p.branch == "" {
+		branch, perr := pickWatchBranch(ctx, opts)
+		if perr != nil {
+			return perr
+		}
+		p.branch = branch
 	}
 	ref := "refs/heads/" + p.branch
 	tip, err := gitRevParse(ctx, opts.Root, ref)
@@ -269,6 +278,37 @@ func deployCommitsHeadless(ctx context.Context, opts WatchOpts, from string, sha
 		Log: opts.Log, StreamOut: opts.StreamOut,
 	})
 	return err
+}
+
+// pickWatchBranch lists the repo's local branches (most recently committed
+// first) and opens the single-select picker. Errors surface unchanged:
+// ErrCancelled/ErrQuit on abort, ErrNonInteractive without a TTY.
+func pickWatchBranch(ctx context.Context, opts WatchOpts) (string, error) {
+	branches, err := gitLocalBranches(ctx, opts.Root)
+	if err != nil {
+		return "", fmt.Errorf("list branches: %w", err)
+	}
+	if len(branches) == 0 {
+		return "", fmt.Errorf("%w: no local branches to watch", ErrUsage)
+	}
+	return PickOne("Branch to watch", branches, opts.Palette)
+}
+
+// gitLocalBranches returns the repo's local branch names, ordered by most
+// recent commit (the branch you're likely to want on top).
+func gitLocalBranches(ctx context.Context, root string) ([]string, error) {
+	out, err := gitOutput(ctx, root, "for-each-ref", "--sort=-committerdate",
+		"--format=%(refname:short)", "refs/heads")
+	if err != nil {
+		return nil, err
+	}
+	var branches []string
+	for _, l := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		if l = strings.TrimSpace(l); l != "" {
+			branches = append(branches, l)
+		}
+	}
+	return branches, nil
 }
 
 // gitRevParse resolves a ref to its full SHA, erroring if it doesn't exist.

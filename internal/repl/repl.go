@@ -466,7 +466,7 @@ func helpSections() []helpSection {
 			{"  --modules <names>", "Deploy these modules non-interactively (skips the picker)"},
 			{"  --auto", "Headless: deploy pending commits (ahead of upstream) + dirty modules, no picker"},
 			{"  --json", "Emit a machine-readable deploy summary to stdout (logs to stderr)"},
-			{"watch <branch>", "Auto push+deploy when new commits land on a branch (Ctrl+C to stop)"},
+			{"watch [<branch>]", "Auto push+deploy when new commits land on a branch; no branch → picker (Ctrl+C to stop)"},
 			{"  --from <target>", "Use a named connect target (default: this dir's link)"},
 			{"  --remote", "Target this directory's linked remote"},
 			{"  --interval <sec>", "Poll interval in seconds (default 10, min 2)"},

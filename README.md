@@ -433,7 +433,7 @@ remote's addons dir), never by the directory you run `push` from.
 | `  --dry-run`                    | List the changes rsync would make; transfer nothing              |
 | `  --delete`                     | Remove remote files no longer present locally                    |
 | `  --force`                      | Skip the remote `prod`-stage confirmation                        |
-| `watch <branch>`                 | Poll a branch and auto `push`+`deploy` when new commits land (`Ctrl+C` to stop) |
+| `watch [<branch>]`               | Poll a branch and auto `push`+`deploy` when new commits land (`Ctrl+C` to stop); no branch → branch picker |
 | `  --from <target>` / `--remote` | Target a named connect target or this directory's linked remote  |
 | `  --interval <sec>`             | Poll interval in seconds (default `10`, min `2`)                 |
 | `  --force`                      | Required to watch a `prod`-stage target                          |

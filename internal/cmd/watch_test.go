@@ -27,7 +27,8 @@ func TestParseWatchArgs(t *testing.T) {
 		{"interval clamped to min", []string{"dev", "--interval", "1"}, "dev", minWatchInterval, "", false, false, false},
 		{"remote + force", []string{"dev", "--remote", "--force"}, "dev", defaultWatchInterval, "", true, true, false},
 		{"from-value not the branch", []string{"--from", "prod", "dev"}, "dev", defaultWatchInterval, "prod", false, false, false},
-		{"missing branch", []string{"--from", "prod"}, "", 0, "", false, false, true},
+		{"omitted branch → picker", []string{"--from", "prod"}, "", defaultWatchInterval, "prod", false, false, false},
+		{"no args → picker", nil, "", defaultWatchInterval, "", false, false, false},
 		{"two branches", []string{"dev", "main"}, "", 0, "", false, false, true},
 		{"bad interval", []string{"dev", "--interval", "x"}, "", 0, "", false, false, true},
 		{"unknown flag", []string{"dev", "--nope"}, "", 0, "", false, false, true},
@@ -83,6 +84,46 @@ func gitScratchRepo(t *testing.T) (root string, commit func(msg string) string) 
 		return string(out[:len(out)-1])
 	}
 	return root, commit
+}
+
+func TestGitLocalBranches(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	ctx := context.Background()
+	root, commit := gitScratchRepo(t)
+	commit("[ADD] sale: base")
+	// Create a feature branch with a newer commit so it sorts before main.
+	run := func(args ...string) {
+		c := exec.Command("git", append([]string{"-C", root}, args...)...)
+		c.Env = append(os.Environ(),
+			"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t",
+			"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t")
+		if out, err := c.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	run("branch", "feature/x")
+	run("checkout", "-q", "feature/x")
+	commit("[ADD] sale: feature work")
+
+	branches, err := gitLocalBranches(ctx, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(branches) != 2 {
+		t.Fatalf("gitLocalBranches = %v, want 2 branches", branches)
+	}
+	// feature/x has the most recent commit → sorted first.
+	if branches[0] != "feature/x" {
+		t.Errorf("most recent branch first: got %v", branches)
+	}
+	want := map[string]bool{"main": true, "feature/x": true}
+	for _, b := range branches {
+		if !want[b] {
+			t.Errorf("unexpected branch %q in %v", b, branches)
+		}
+	}
 }
 
 func TestIsFastForwardAndRangeCommits(t *testing.T) {

@@ -8,6 +8,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **`watch` sin rama abre un selector de ramas.** El branch pasa a ser
+  opcional: `watch` (sin argumento) lista las ramas locales del repo —
+  ordenadas por commit más reciente— en el picker de una sola selección y
+  observa la elegida; `watch <branch>` sigue igual. El picker corre **antes**
+  de tocar SSH, así que cancelarlo no cuesta nada; sin TTY se exige la rama
+  como argumento (ErrNonInteractive). Nuevos helpers `pickWatchBranch`/
+  `gitLocalBranches`; `parseWatchArgs` ya no exige el positional.
 - **`logview`: selección de logs por bloques y copia de la selección.** La
   vista de detalle gana un cursor de línea (`❯`) y con **Espacio** marca/
   desmarca el **bloque** bajo el cursor — un bloque es una línea con nivel más
