@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **Los checkpoints con método `db` quedan ocultos para Odoo.** Como la copia es
+  una base de datos Postgres real, aparecía en el selector de bases de Odoo
+  (`habitta_prod` **y** `habitta_prod__ckpt_…`), donde alguien podía entrar o
+  borrarla a mano. Ahora, tras crear la copia, Echo le hace
+  `ALTER DATABASE … WITH ALLOW_CONNECTIONS false`: Odoo solo lista bases con
+  conexiones permitidas, así que el checkpoint **desaparece de su selector y no
+  admite login** — automático, sin configurar nada en cada instancia. El rollback
+  reactiva las conexiones (`ALLOW_CONNECTIONS true`) sobre la base restaurada tras
+  el rename. Echo sí lo sigue viendo (`checkpoint list`), medible y podable. Solo
+  aplica a checkpoints nuevos; los ya creados se limpian con `checkpoint rm`.
+
 ### Fixed
 - **El checkpoint/rollback fallaba con `service "db" is not running`.** El deploy
   hacía `compose stop` (todos los servicios) antes de tomar el checkpoint, lo que

@@ -308,6 +308,14 @@ func TestCreateCheckpointDBMethod(t *testing.T) {
 	if !strings.Contains(calls[iCreate], "TEMPLATE \"mydb\"") {
 		t.Errorf("create should template from mydb: %q", calls[iCreate])
 	}
+	// The copy must be hidden from Odoo by disabling connections, after CREATE.
+	iHide := indexOfCall(calls, "ALLOW_CONNECTIONS false")
+	if iHide < 0 {
+		t.Fatalf("checkpoint should disable connections to hide it from Odoo: %v", calls)
+	}
+	if iHide < iCreate {
+		t.Errorf("ALLOW_CONNECTIONS false must come after CREATE (hide=%d create=%d)", iHide, iCreate)
+	}
 }
 
 func TestCreateCheckpointDBMethodOldPGNoStrategy(t *testing.T) {
@@ -387,6 +395,15 @@ func TestRestoreCheckpointDBMethodOrder(t *testing.T) {
 	}
 	if iDrop > iRename {
 		t.Errorf("drop must precede rename (drop=%d rename=%d)", iDrop, iRename)
+	}
+	// After rename, the restored DB must have connections re-enabled (it
+	// inherited ALLOW_CONNECTIONS false from the hidden checkpoint).
+	iReenable := indexOfCall(calls, "ALLOW_CONNECTIONS true")
+	if iReenable < 0 {
+		t.Fatalf("restore should re-enable connections on the restored DB: %v", calls)
+	}
+	if iReenable < iRename {
+		t.Errorf("ALLOW_CONNECTIONS true must come after rename (reenable=%d rename=%d)", iReenable, iRename)
 	}
 }
 

@@ -23,6 +23,19 @@ _(siguiente: Unit 14 — meta-commands. Fix deploy-build-muting: el builder de `
 
 ## Completed
 
+- [x] Ocultar checkpoint DB de Odoo (post Unit 89/90). El usuario notó que la
+  copia `habitta_prod__ckpt_…` aparecía en el selector de bases de Odoo (es una
+  DB Postgres real). Fix automático, sin config por instancia: nuevo helper
+  `remoteSetAllowConns(rsc, db, allow)`; `createCheckpoint` (método db) hace
+  `ALTER DATABASE … WITH ALLOW_CONNECTIONS false` tras el CREATE (best-effort,
+  WARNING si falla) → Odoo lista solo bases con conexiones permitidas, así que
+  el checkpoint desaparece de su selector y no admite login. `restoreCheckpoint`
+  reactiva (`ALLOW_CONNECTIONS true`) sobre la base restaurada tras el rename
+  (ERROR con comando de remediación si falla). Echo sigue viéndolo en
+  `checkpoint list` (remoteListDatabases no filtra datallowconn). Solo aplica a
+  checkpoints nuevos. Tests ampliados (orden hide-tras-create, reenable-tras-rename).
+  CHANGELOG `### Changed`. build/vet/test verdes.
+
 - [x] Fix checkpoint `service "db" is not running` (post Unit 89/90). Bug
   encontrado por el usuario probando contra habitta_prod (staging): el deploy
   hacía `compose stop` (todo) antes del checkpoint, apagando el contenedor `db`,

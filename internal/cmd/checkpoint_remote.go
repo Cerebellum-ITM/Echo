@@ -176,6 +176,19 @@ func remoteRenameDB(ctx context.Context, rsc remoteShellContext, from, to string
 		fmt.Sprintf(`ALTER DATABASE "%s" RENAME TO "%s"`, from, to))
 }
 
+// remoteSetAllowConns toggles a database's ALLOW_CONNECTIONS. Setting it false
+// on a checkpoint copy hides it from Odoo's database selector (Odoo lists only
+// databases with connections allowed) and blocks anyone connecting to it; the
+// rollback flips it back to true on the restored database so Odoo can use it.
+func remoteSetAllowConns(ctx context.Context, rsc remoteShellContext, db string, allow bool) error {
+	v := "false"
+	if allow {
+		v = "true"
+	}
+	return remotePsqlExec(ctx, rsc, "postgres",
+		fmt.Sprintf(`ALTER DATABASE "%s" WITH ALLOW_CONNECTIONS %s`, db, v))
+}
+
 // remoteDropDB drops database db (a no-op when it doesn't exist).
 func remoteDropDB(ctx context.Context, rsc remoteShellContext, db string) error {
 	return remotePsqlExec(ctx, rsc, "postgres", fmt.Sprintf(`DROP DATABASE IF EXISTS "%s"`, db))
@@ -294,6 +307,13 @@ func createCheckpoint(ctx context.Context, rsc remoteShellContext, method string
 	if err := remoteCreateFromTemplate(ctx, rsc, db, name, fileCopy); err != nil {
 		return config.CheckpointEntry{}, CheckpointInfo{}, fmt.Errorf("checkpoint template copy: %w", err)
 	}
+	// Hide the copy from Odoo's DB selector (and block accidental logins) by
+	// disabling connections. Best-effort — the checkpoint is a valid restore
+	// point either way; a failure just leaves it visible.
+	if err := remoteSetAllowConns(ctx, rsc, name, false); err != nil {
+		ckptLog(log, "WARNING", "checkpoint", "checkpoint left visible to Odoo (could not disable connections)", db,
+			[2]string{"name", name}, [2]string{"err", err.Error()})
+	}
 	took := int(time.Since(start).Seconds())
 	entry := config.CheckpointEntry{Name: name, Method: "db", DB: db, CreatedAt: now, DeploySHAs: shas}
 	info := CheckpointInfo{Name: name, Method: "db", Size: humanBytes(size), TookSec: took}
@@ -342,6 +362,12 @@ func restoreCheckpoint(ctx context.Context, rsc remoteShellContext, entry config
 	}
 	if err := remoteRenameDB(ctx, rsc, entry.Name, db); err != nil {
 		return false, err
+	}
+	// The checkpoint had connections disabled (to hide it from Odoo); the
+	// restored database inherits that, so re-enable them or Odoo can't connect.
+	if err := remoteSetAllowConns(ctx, rsc, db, true); err != nil {
+		ckptLog(log, "ERROR", "rollback", "database restored but connections still disabled — run: ALTER DATABASE \""+db+"\" WITH ALLOW_CONNECTIONS true", db,
+			[2]string{"err", err.Error()})
 	}
 	ckptLog(log, "INFO", "rollback", "database restored", db,
 		[2]string{"took", strconv.Itoa(int(time.Since(start).Seconds())) + "s"})
