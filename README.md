@@ -376,10 +376,17 @@ Two methods: `db` (the default — `CREATE DATABASE … TEMPLATE`, a fast
 file-level copy, `STRATEGY FILE_COPY` on PostgreSQL 15+; rollback is a near-
 instant `DROP` + `RENAME`) and `dump` (`pg_dump -Fc` kept under the server's
 `backups/checkpoints/`, slower but with a low disk peak). Checkpointing is
-**on for `staging`/`prod`, off for `dev`** by default; override per run with
-`--checkpoint[=db|dump]` / `--no-checkpoint`, or set a `[checkpoint]` section
-(`mode = "auto"|"on"|"off"`, `method = "db"|"dump"`, `keep = N`) in
-`global.toml` or a project profile. Before creating a checkpoint Echo runs a
+**on for `staging`/`prod`, off for `dev`** by default.
+
+The policy — `mode = "auto"|"on"|"off"`, `method = "db"|"dump"`, `keep = N` —
+lives in a `[checkpoint]` section and is resolved **server-first**: it is read
+from the target's own Echo profile (the server's `global.toml` / project
+profile, read over SSH like `stage` and the containers), so the same target
+checkpoints the same way from any machine. The **local** `[checkpoint]` config
+is the fallback when the server doesn't declare one (and works for a purely
+local setup), and the per-run flags `--checkpoint[=db|dump]` / `--no-checkpoint`
+override everything. Precedence: flags › server profile › local config › stage
+default. Before creating a checkpoint Echo runs a
 **disk preflight** (the DB must fit alongside its copy) and aborts *before* the
 `stop` if it wouldn't — so a doomed deploy never takes the service down. The
 successful checkpoint is kept for a later `deploy --rollback`, and the retention

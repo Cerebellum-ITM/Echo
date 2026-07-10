@@ -188,13 +188,49 @@ func stageWantsCheckpoint(stage string) bool {
 	return s == "staging" || s == "prod"
 }
 
+// checkpointPolicy is the resolved mode/method/keep for a target after merging
+// the server profile over the local config (Unit 90).
+type checkpointPolicy struct {
+	mode   string // auto | on | off
+	method string // db | dump
+	keep   int
+}
+
+// resolveCheckpointPolicy merges the checkpoint policy server-first: it starts
+// from the local config (already carrying defaults) and lets each field the
+// SERVER profile declares override it. A field the server omits falls back to
+// the local value, so a partial server [checkpoint] still inherits the rest.
+func resolveCheckpointPolicy(prof config.RemoteProfile, cfg *config.Config) checkpointPolicy {
+	pol := checkpointPolicy{
+		mode:   cfg.CheckpointMode,
+		method: cfg.CheckpointMethod,
+		keep:   cfg.CheckpointKeep,
+	}
+	if prof.CheckpointMode != "" {
+		pol.mode = prof.CheckpointMode
+	}
+	if prof.CheckpointMethod != "" {
+		pol.method = prof.CheckpointMethod
+	}
+	if prof.CheckpointKeep != 0 {
+		pol.keep = prof.CheckpointKeep
+	}
+	if pol.method == "" {
+		pol.method = "db"
+	}
+	if pol.keep <= 0 {
+		pol.keep = 2
+	}
+	return pol
+}
+
 // resolveCheckpointMode decides whether a deploy takes a checkpoint and by
 // which method. Precedence: the --checkpoint/--no-checkpoint flags win, then
-// the merged [checkpoint] config mode (on/off/auto), then — under auto — the
-// resolved remote stage. The method follows --checkpoint=<m> when given, else
-// the configured method.
-func resolveCheckpointMode(p deployArgs, cfg *config.Config, stage string) (enabled bool, method string) {
-	method = cfg.CheckpointMethod
+// the resolved [checkpoint] policy mode (server-first, on/off/auto), then —
+// under auto — the resolved remote stage. The method follows --checkpoint=<m>
+// when given, else the policy method.
+func resolveCheckpointMode(p deployArgs, pol checkpointPolicy, stage string) (enabled bool, method string) {
+	method = pol.method
 	if method == "" {
 		method = "db"
 	}
@@ -207,7 +243,7 @@ func resolveCheckpointMode(p deployArgs, cfg *config.Config, stage string) (enab
 	case p.checkpointSet:
 		enabled = true
 	default:
-		switch strings.ToLower(cfg.CheckpointMode) {
+		switch strings.ToLower(pol.mode) {
 		case "on":
 			enabled = true
 		case "off":
@@ -514,7 +550,8 @@ func RunDeploy(ctx context.Context, opts DeployOpts) (DeployResult, error) {
 		sshHost: sshHost, remotePath: remotePath, fromName: fromName,
 		target: target, prof: prof, conn: conn,
 	}
-	ckptEnabled, ckptMethod := resolveCheckpointMode(p, opts.Cfg, target.stage)
+	ckptPolicy := resolveCheckpointPolicy(prof, opts.Cfg)
+	ckptEnabled, ckptMethod := resolveCheckpointMode(p, ckptPolicy, target.stage)
 
 	// Install vs update, decided by the remote instance's module states.
 	opts.log("INFO", "remote", "querying installed modules", prof.DBName)
@@ -696,7 +733,7 @@ func RunDeploy(ctx context.Context, opts DeployOpts) (DeployResult, error) {
 	// tail to the retention keep count.
 	if ckptEnabled {
 		if err := config.AddCheckpoint(projectKey, targetKey, ckptEntry); err == nil {
-			pruneCheckpoints(ctx, rsc, projectKey, targetKey, opts.Cfg.CheckpointKeep, opts.Log)
+			pruneCheckpoints(ctx, rsc, projectKey, targetKey, ckptPolicy.keep, opts.Log)
 		}
 	}
 

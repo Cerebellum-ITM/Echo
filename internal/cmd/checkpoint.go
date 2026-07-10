@@ -231,12 +231,10 @@ func runCheckpointList(ctx context.Context, opts CheckpointOpts, rsc remoteShell
 // preflight, then (db method) stop → template copy → up, or (dump method) a
 // live pg_dump. It records the checkpoint and prunes the retention tail.
 func runCheckpointCreate(ctx context.Context, opts CheckpointOpts, rsc remoteShellContext, p checkpointArgs, projectKey, targetKey string) (CheckpointResult, error) {
+	policy := resolveCheckpointPolicy(rsc.prof, opts.Cfg)
 	method := p.method
 	if method == "" {
-		method = opts.Cfg.CheckpointMethod
-		if method == "" {
-			method = "db"
-		}
+		method = policy.method
 	}
 	if err := confirmRemoteProd(opts.Palette, "checkpoint", rsc, opts.Args); err != nil {
 		return CheckpointResult{}, err
@@ -261,7 +259,7 @@ func runCheckpointCreate(ctx context.Context, opts CheckpointOpts, rsc remoteShe
 		return CheckpointResult{}, err
 	}
 	if err := config.AddCheckpoint(projectKey, targetKey, entry); err == nil {
-		pruneCheckpoints(ctx, rsc, projectKey, targetKey, opts.Cfg.CheckpointKeep, opts.Log)
+		pruneCheckpoints(ctx, rsc, projectKey, targetKey, policy.keep, opts.Log)
 	}
 	opts.stream("→ checkpoint " + info.Name)
 	return CheckpointResult{Sub: "create", DB: rsc.prof.DBName}, nil

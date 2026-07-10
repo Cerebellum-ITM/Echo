@@ -23,6 +23,24 @@ _(siguiente: Unit 14 — meta-commands. Fix deploy-build-muting: el builder de `
 
 ## Completed
 
+- [x] Unit 90 — checkpoint-policy-remote. La política de checkpoint
+  (`mode`/`method`/`keep`) se lee **server-first**, arreglando el split-brain de
+  la Unit 89 (el `stage` venía del servidor pero la política de la config local
+  del cliente). `ParseRemoteProfile` ahora decodifica el `[checkpoint]` del
+  `global.toml`/perfil de proyecto del servidor (por SSH) y expone
+  `CheckpointMode/Method/Keep` en `RemoteProfile` (sin defaults remotos, para
+  poder caer al local). Nuevo `resolveCheckpointPolicy(prof, cfg)` que fusiona
+  campo por campo: remoto gana sobre local; `resolveCheckpointMode` toma la
+  `checkpointPolicy` fusionada en vez de `*config.Config`. Precedencia: flags
+  (`--checkpoint`/`--no-checkpoint`) › `[checkpoint]` servidor › `[checkpoint]`
+  local › default por stage. La misma sección vale en ambos lados. Deploy usa
+  `pol.keep` en la retención y `runCheckpointCreate` usa `policy.method`/`keep`.
+  La metadata local (`~/.config/echo/checkpoints/`) no se mueve. Tests
+  `resolveCheckpointPolicy` (override/fallback/partial) y `ParseRemoteProfile`
+  con `[checkpoint]`; README + CHANGELOG `### Changed`. build/vet/test verdes.
+  Motivado por prueba real del usuario contra muutrade-dev: en dev con `auto` no
+  se activaba (correcto) y la política vivía solo en el cliente (inconsistente).
+
 - [x] Unit 89 — deploy-checkpoint-rollback. `deploy` toma un checkpoint
   server-side de la DB tras el `stop` (cuando no hay sesiones) y, si el
   `odoo -i/-u` falla, restaura: pregunta en interactivo, auto en headless/

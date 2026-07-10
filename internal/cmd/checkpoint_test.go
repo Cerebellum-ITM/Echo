@@ -133,34 +133,65 @@ func TestParseDeployCheckpointFlags(t *testing.T) {
 }
 
 func TestResolveCheckpointMode(t *testing.T) {
-	cfg := func(mode, method string) *config.Config {
-		return &config.Config{CheckpointMode: mode, CheckpointMethod: method, CheckpointKeep: 2}
+	pol := func(mode, method string) checkpointPolicy {
+		return checkpointPolicy{mode: mode, method: method, keep: 2}
 	}
 	cases := []struct {
 		name        string
 		p           deployArgs
-		cfg         *config.Config
+		pol         checkpointPolicy
 		stage       string
 		wantEnabled bool
 		wantMethod  string
 	}{
-		{"auto staging on", deployArgs{}, cfg("auto", "db"), "staging", true, "db"},
-		{"auto prod on", deployArgs{}, cfg("auto", "db"), "prod", true, "db"},
-		{"auto dev off", deployArgs{}, cfg("auto", "db"), "dev", false, "db"},
-		{"config on wins over dev", deployArgs{}, cfg("on", "db"), "dev", true, "db"},
-		{"config off wins over prod", deployArgs{}, cfg("off", "db"), "prod", false, "db"},
-		{"flag on overrides dev", deployArgs{checkpointSet: true}, cfg("auto", "db"), "dev", true, "db"},
-		{"flag off overrides prod", deployArgs{noCheckpoint: true}, cfg("on", "db"), "prod", false, "db"},
-		{"flag method overrides config", deployArgs{checkpointSet: true, checkpoint: "dump"}, cfg("auto", "db"), "staging", true, "dump"},
+		{"auto staging on", deployArgs{}, pol("auto", "db"), "staging", true, "db"},
+		{"auto prod on", deployArgs{}, pol("auto", "db"), "prod", true, "db"},
+		{"auto dev off", deployArgs{}, pol("auto", "db"), "dev", false, "db"},
+		{"policy on wins over dev", deployArgs{}, pol("on", "db"), "dev", true, "db"},
+		{"policy off wins over prod", deployArgs{}, pol("off", "db"), "prod", false, "db"},
+		{"flag on overrides dev", deployArgs{checkpointSet: true}, pol("auto", "db"), "dev", true, "db"},
+		{"flag off overrides prod", deployArgs{noCheckpoint: true}, pol("on", "db"), "prod", false, "db"},
+		{"flag method overrides policy", deployArgs{checkpointSet: true, checkpoint: "dump"}, pol("auto", "db"), "staging", true, "dump"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			enabled, method := resolveCheckpointMode(tc.p, tc.cfg, tc.stage)
+			enabled, method := resolveCheckpointMode(tc.p, tc.pol, tc.stage)
 			if enabled != tc.wantEnabled || method != tc.wantMethod {
 				t.Errorf("got (%v,%q), want (%v,%q)", enabled, method, tc.wantEnabled, tc.wantMethod)
 			}
 		})
 	}
+}
+
+func TestResolveCheckpointPolicy(t *testing.T) {
+	local := &config.Config{CheckpointMode: "auto", CheckpointMethod: "db", CheckpointKeep: 2}
+
+	t.Run("no remote → local values", func(t *testing.T) {
+		got := resolveCheckpointPolicy(config.RemoteProfile{}, local)
+		if got.mode != "auto" || got.method != "db" || got.keep != 2 {
+			t.Errorf("got %+v", got)
+		}
+	})
+	t.Run("remote overrides every field", func(t *testing.T) {
+		prof := config.RemoteProfile{CheckpointMode: "on", CheckpointMethod: "dump", CheckpointKeep: 5}
+		got := resolveCheckpointPolicy(prof, local)
+		if got.mode != "on" || got.method != "dump" || got.keep != 5 {
+			t.Errorf("got %+v", got)
+		}
+	})
+	t.Run("partial remote falls back to local per field", func(t *testing.T) {
+		prof := config.RemoteProfile{CheckpointMode: "on"} // method/keep empty
+		got := resolveCheckpointPolicy(prof, local)
+		if got.mode != "on" || got.method != "db" || got.keep != 2 {
+			t.Errorf("got %+v (method/keep should fall back to local)", got)
+		}
+	})
+	t.Run("empty local + empty remote → safe defaults", func(t *testing.T) {
+		got := resolveCheckpointPolicy(config.RemoteProfile{}, &config.Config{})
+		if got.method != "db" || got.keep != 2 {
+			t.Errorf("got %+v, want method db keep 2", got)
+		}
+	})
 }
 
 func TestRunFailureScanner(t *testing.T) {

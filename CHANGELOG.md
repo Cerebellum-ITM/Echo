@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **La política de checkpoint se lee del perfil del servidor (server-first)**
+  (Unit 90). En la Unit 89 el `stage` que activa el modo `auto` venía del
+  servidor pero la política (`mode`/`method`/`keep`) se leía solo de la config
+  local del cliente — un split-brain: desplegar al mismo servidor desde otra
+  laptop podía comportarse distinto. Ahora `ParseRemoteProfile` lee la sección
+  `[checkpoint]` del `global.toml`/perfil de proyecto **del servidor** (por SSH,
+  como `stage`/`db`/contenedores), y `resolveCheckpointPolicy(prof, cfg)` la
+  fusiona campo por campo sobre la config local. Precedencia: flags por corrida
+  (`--checkpoint`/`--no-checkpoint`) › `[checkpoint]` del servidor › `[checkpoint]`
+  local (fallback) › default por stage. La misma sección `[checkpoint]` vale en
+  ambos lados; el servidor gana. La metadata local (`~/.config/echo/checkpoints/`)
+  sigue siendo del cliente. Tests de `resolveCheckpointPolicy` y del parseo del
+  `[checkpoint]` remoto.
+
 ### Added
 - **Checkpoint y rollback de base de datos en `deploy`** (Unit 89). Antes del
   `odoo -i/-u` —justo tras el `stop`, cuando la DB no tiene sesiones— `deploy`

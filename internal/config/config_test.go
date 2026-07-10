@@ -140,6 +140,28 @@ func TestParseRemoteProfile(t *testing.T) {
 	if got := ParseRemoteProfile(nil, project).ComposeCmd; got != "docker compose" {
 		t.Errorf("fallback ComposeCmd = %q", got)
 	}
+	// No [checkpoint] on the server → the policy fields stay empty/zero so the
+	// client can fall back to its own local config (Unit 90).
+	if prof.CheckpointMode != "" || prof.CheckpointMethod != "" || prof.CheckpointKeep != 0 {
+		t.Errorf("absent server [checkpoint] should be empty, got %q/%q/%d",
+			prof.CheckpointMode, prof.CheckpointMethod, prof.CheckpointKeep)
+	}
+}
+
+func TestParseRemoteProfileCheckpoint(t *testing.T) {
+	// Server [checkpoint]: global sets mode+keep, project overrides method.
+	global := []byte("[checkpoint]\nmode = \"on\"\nkeep = 5\n")
+	project := []byte("db_name = \"erp\"\n[checkpoint]\nmethod = \"dump\"\n")
+	prof := ParseRemoteProfile(global, project)
+	if prof.CheckpointMode != "on" {
+		t.Errorf("CheckpointMode = %q, want on", prof.CheckpointMode)
+	}
+	if prof.CheckpointMethod != "dump" {
+		t.Errorf("CheckpointMethod = %q, want dump (project override)", prof.CheckpointMethod)
+	}
+	if prof.CheckpointKeep != 5 {
+		t.Errorf("CheckpointKeep = %d, want 5 (from global)", prof.CheckpointKeep)
+	}
 }
 
 func TestConnectSectionAbsentByDefault(t *testing.T) {

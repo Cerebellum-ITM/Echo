@@ -315,6 +315,14 @@ type RemoteProfile struct {
 	AddonsMode  string
 	AddonsPaths []string
 	ConfPath    string
+
+	// Checkpoint policy declared on the SERVER ([checkpoint] in the remote
+	// global.toml + project profile, project wins). Empty/zero when the
+	// server doesn't declare it — the client then falls back to its own
+	// local [checkpoint] (Unit 90). No defaults are applied here.
+	CheckpointMode   string
+	CheckpointMethod string
+	CheckpointKeep   int
 }
 
 // ParseRemoteProfile decodes a remote host's `global.toml` and
@@ -334,16 +342,37 @@ func ParseRemoteProfile(globalTOML, projectTOML []byte) RemoteProfile {
 	if compose == "" {
 		compose = "docker compose"
 	}
+	// Server-side [checkpoint] policy: global table, then project override
+	// field-by-field. No defaults — an absent section stays empty/zero so the
+	// client falls back to its own local config.
+	var cp checkpointConfig
+	if g.Checkpoint != nil {
+		cp = *g.Checkpoint
+	}
+	if p.Checkpoint != nil {
+		if p.Checkpoint.Mode != "" {
+			cp.Mode = p.Checkpoint.Mode
+		}
+		if p.Checkpoint.Method != "" {
+			cp.Method = p.Checkpoint.Method
+		}
+		if p.Checkpoint.Keep != 0 {
+			cp.Keep = p.Checkpoint.Keep
+		}
+	}
 	return RemoteProfile{
-		ComposeCmd:    compose,
-		OdooContainer: p.OdooContainer,
-		DBContainer:   p.DBContainer,
-		DBName:        p.DBName,
-		Stage:         p.Stage,
-		OdooVersion:   p.OdooVersion,
-		AddonsMode:    p.AddonsMode,
-		AddonsPaths:   p.AddonsPaths,
-		ConfPath:      p.ConfPath,
+		ComposeCmd:       compose,
+		OdooContainer:    p.OdooContainer,
+		DBContainer:      p.DBContainer,
+		DBName:           p.DBName,
+		Stage:            p.Stage,
+		OdooVersion:      p.OdooVersion,
+		AddonsMode:       p.AddonsMode,
+		AddonsPaths:      p.AddonsPaths,
+		ConfPath:         p.ConfPath,
+		CheckpointMode:   cp.Mode,
+		CheckpointMethod: cp.Method,
+		CheckpointKeep:   cp.Keep,
 	}
 }
 
