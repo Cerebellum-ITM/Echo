@@ -44,12 +44,13 @@ const (
 
 // watchArgs is the parsed shape of the watch input.
 type watchArgs struct {
-	branch   string
-	interval time.Duration
-	from     string
-	remote   bool
-	force    bool
-	noLogs   bool
+	branch       string
+	interval     time.Duration
+	from         string
+	remote       bool
+	force        bool
+	noLogs       bool
+	noCheckpoint bool
 }
 
 // parseWatchArgs extracts the optional branch positional plus
@@ -80,6 +81,8 @@ func parseWatchArgs(args []string) (watchArgs, error) {
 			out.force = true
 		case a == "--no-logs":
 			out.noLogs = true
+		case a == "--no-checkpoint":
+			out.noCheckpoint = true
 		case a == "--interval":
 			if i+1 >= len(args) {
 				return watchArgs{}, fmt.Errorf("%w: --interval requires a number", ErrUsage)
@@ -189,7 +192,7 @@ func RunWatch(ctx context.Context, opts WatchOpts) error {
 	startLogs("20")
 
 	baseline := tip
-	cycles, deployed := 0, 0
+	cycles, deployed, rollbacks := 0, 0, 0
 	ticker := time.NewTicker(p.interval)
 	defer ticker.Stop()
 	for {
@@ -198,7 +201,8 @@ func RunWatch(ctx context.Context, opts WatchOpts) error {
 			pauseLogs()
 			opts.log("INFO", "", "watch stopped", rsc.prof.DBName,
 				[2]string{"cycles", strconv.Itoa(cycles)},
-				[2]string{"deployed", strconv.Itoa(deployed)})
+				[2]string{"deployed", strconv.Itoa(deployed)},
+				[2]string{"rollbacks", strconv.Itoa(rollbacks)})
 			return nil
 		case <-ticker.C:
 			newTip, err := gitRevParse(ctx, opts.Root, ref)
@@ -211,8 +215,11 @@ func RunWatch(ctx context.Context, opts WatchOpts) error {
 				continue
 			}
 			pauseLogs() // stop the follow before any cycle output
-			n, cerr := watchCycle(ctx, opts, rsc, p.from, baseline, newTip)
+			n, rolledBack, cerr := watchCycle(ctx, opts, rsc, p.from, p.noCheckpoint, baseline, newTip)
 			baseline = newTip // always re-baseline, even on failure
+			if rolledBack {
+				rollbacks++
+			}
 			if cerr != nil {
 				opts.log("ERROR", "cycle", "cycle failed", rsc.prof.DBName,
 					[2]string{"err", cerr.Error()})
@@ -274,18 +281,18 @@ func startWatchLogs(ctx context.Context, opts WatchOpts, rsc remoteShellContext,
 // push committed content → headless deploy. Returns the number of commits
 // deployed (0 when the range had nothing deployable or the branch was
 // rewritten).
-func watchCycle(ctx context.Context, opts WatchOpts, rsc remoteShellContext, from, old, new string) (int, error) {
+func watchCycle(ctx context.Context, opts WatchOpts, rsc remoteShellContext, from string, noCheckpoint bool, old, new string) (int, bool, error) {
 	if !isFastForward(ctx, opts.Root, old, new) {
 		opts.log("WARNING", "cycle", "branch rewritten — re-baselining, nothing deployed", rsc.prof.DBName,
 			[2]string{"from", shortSHA(old)}, [2]string{"to", shortSHA(new)})
-		return 0, nil
+		return 0, false, nil
 	}
 	commits, err := rangeCommits(ctx, opts.Root, old, new)
 	if err != nil {
-		return 0, err
+		return 0, false, err
 	}
 	if len(commits) == 0 {
-		return 0, nil
+		return 0, false, nil
 	}
 
 	seen := map[string]bool{}
@@ -306,7 +313,7 @@ func watchCycle(ctx context.Context, opts WatchOpts, rsc remoteShellContext, fro
 	if len(modules) == 0 {
 		opts.log("WARNING", "cycle", "no deployable modules in range", rsc.prof.DBName,
 			[2]string{"commits", strconv.Itoa(len(commits))})
-		return 0, nil
+		return 0, false, nil
 	}
 	opts.log("INFO", "cycle", "commits detected", rsc.prof.DBName,
 		[2]string{"commits", strconv.Itoa(len(commits))},
@@ -316,7 +323,7 @@ func watchCycle(ctx context.Context, opts WatchOpts, rsc remoteShellContext, fro
 	// may sit on a different branch/worktree.
 	srcRoot, cleanup, err := archiveModules(ctx, opts.Cfg, opts.Root, new, modules)
 	if err != nil {
-		return 0, fmt.Errorf("archive: %w", err)
+		return 0, false, fmt.Errorf("archive: %w", err)
 	}
 	defer cleanup()
 
@@ -325,31 +332,35 @@ func watchCycle(ctx context.Context, opts WatchOpts, rsc remoteShellContext, fro
 		Log: opts.Log, StreamOut: opts.StreamOut, OnSync: opts.OnSync,
 	}
 	if _, err := pushModuleSet(ctx, rsc, pushOpts, modules, srcRoot, false, false); err != nil {
-		return 0, fmt.Errorf("push: %w", err)
+		return 0, false, fmt.Errorf("push: %w", err)
 	}
 
-	if err := deployCommitsHeadless(ctx, opts, from, shas); err != nil {
-		return 0, fmt.Errorf("deploy: %w", err)
+	rolledBack, derr := deployCommitsHeadless(ctx, opts, from, noCheckpoint, shas)
+	if derr != nil {
+		return 0, rolledBack, fmt.Errorf("deploy: %w", derr)
 	}
 	opts.log("INFO", "cycle", "cycle ok", rsc.prof.DBName,
 		[2]string{"modules", strconv.Itoa(len(modules))},
 		[2]string{"commits", strconv.Itoa(len(shas))})
-	return len(shas), nil
+	return len(shas), rolledBack, nil
 }
 
 // deployCommitsHeadless runs the Unit 78 non-interactive deploy for the given
 // SHAs against the same target, with --force (the watcher already gated prod
 // at startup). Deploy's history marks the SHAs, so re-runs never redeploy.
-func deployCommitsHeadless(ctx context.Context, opts WatchOpts, from string, shas []string) error {
+func deployCommitsHeadless(ctx context.Context, opts WatchOpts, from string, noCheckpoint bool, shas []string) (rolledBack bool, err error) {
 	args := []string{"--commits", strings.Join(shas, ","), "--force"}
 	if from != "" {
 		args = append(args, "--from", from)
 	}
-	_, err := RunDeploy(ctx, DeployOpts{
+	if noCheckpoint {
+		args = append(args, "--no-checkpoint")
+	}
+	res, err := RunDeploy(ctx, DeployOpts{
 		Cfg: opts.Cfg, Root: opts.Root, Args: args, Palette: opts.Palette,
 		Log: opts.Log, StreamOut: opts.StreamOut,
 	})
-	return err
+	return res.RolledBack, err
 }
 
 // pickWatchBranch lists the repo's local branches (most recently committed

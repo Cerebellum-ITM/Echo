@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/pascualchavez/echo/internal/config"
 	"github.com/pascualchavez/echo/internal/odoo"
@@ -70,6 +71,17 @@ type deployArgs struct {
 	// push syncs the resolved modules to the remote addons dir (Unit 83)
 	// right before the stop → up → -u run, so a deploy also ships the code.
 	push bool
+	// checkpoint / noCheckpoint / checkpointSet control the DB checkpoint
+	// (Unit 89). checkpointSet is true when --checkpoint was passed (turning
+	// it on regardless of stage); checkpoint holds the requested method
+	// ("db"/"dump"/"" = configured default). noCheckpoint forces it off.
+	// The two flags are mutually exclusive.
+	checkpoint    string
+	checkpointSet bool
+	noCheckpoint  bool
+	// rollback restores the target's most recent checkpoint instead of
+	// deploying (deploy --rollback). Mutually exclusive with any selection.
+	rollback bool
 }
 
 // parseDeployArgs extracts --from/--limit/--dry-run/--force/--i18n/--no-i18n
@@ -129,6 +141,19 @@ func parseDeployArgs(args []string) (deployArgs, error) {
 			out.auto = true
 		case a == "--push":
 			out.push = true
+		case a == "--checkpoint":
+			out.checkpointSet = true
+		case strings.HasPrefix(a, "--checkpoint="):
+			v := strings.TrimPrefix(a, "--checkpoint=")
+			if v != "db" && v != "dump" {
+				return out, fmt.Errorf("%w: --checkpoint takes db or dump, got %q", ErrUsage, v)
+			}
+			out.checkpointSet = true
+			out.checkpoint = v
+		case a == "--no-checkpoint":
+			out.noCheckpoint = true
+		case a == "--rollback":
+			out.rollback = true
 		case a == "--json":
 			out.jsonOut = true
 		case a == "--dry-run":
@@ -147,7 +172,72 @@ func parseDeployArgs(args []string) (deployArgs, error) {
 	if out.auto && (len(out.commits) > 0 || len(out.modules) > 0) {
 		return out, fmt.Errorf("%w: --auto cannot be combined with --commits/--modules", ErrUsage)
 	}
+	if out.checkpointSet && out.noCheckpoint {
+		return out, fmt.Errorf("%w: --checkpoint and --no-checkpoint are mutually exclusive", ErrUsage)
+	}
+	if out.rollback && (out.auto || len(out.commits) > 0 || len(out.modules) > 0 || out.push) {
+		return out, fmt.Errorf("%w: --rollback cannot be combined with --commits/--modules/--auto/--push", ErrUsage)
+	}
 	return out, nil
+}
+
+// stageWantsCheckpoint reports whether a stage is checkpoint-worthy under the
+// "auto" mode: staging and prod are, dev is not.
+func stageWantsCheckpoint(stage string) bool {
+	s := strings.ToLower(strings.TrimSpace(stage))
+	return s == "staging" || s == "prod"
+}
+
+// resolveCheckpointMode decides whether a deploy takes a checkpoint and by
+// which method. Precedence: the --checkpoint/--no-checkpoint flags win, then
+// the merged [checkpoint] config mode (on/off/auto), then — under auto — the
+// resolved remote stage. The method follows --checkpoint=<m> when given, else
+// the configured method.
+func resolveCheckpointMode(p deployArgs, cfg *config.Config, stage string) (enabled bool, method string) {
+	method = cfg.CheckpointMethod
+	if method == "" {
+		method = "db"
+	}
+	if p.checkpoint == "db" || p.checkpoint == "dump" {
+		method = p.checkpoint
+	}
+	switch {
+	case p.noCheckpoint:
+		enabled = false
+	case p.checkpointSet:
+		enabled = true
+	default:
+		switch strings.ToLower(cfg.CheckpointMode) {
+		case "on":
+			enabled = true
+		case "off":
+			enabled = false
+		default: // "auto" (or unset)
+			enabled = stageWantsCheckpoint(stage)
+		}
+	}
+	return enabled, method
+}
+
+// deployFailureRe matches the streamed Odoo output patterns that mean the
+// module run left the DB in a bad state even when the process exits 0:
+// a CRITICAL log line, a Python traceback header, or a registry-load failure.
+var deployFailureRe = regexp.MustCompile(`\bCRITICAL\b|Traceback \(most recent call last\)|Failed to load registry`)
+
+// runFailureScanner wraps the odoo-run StreamOut, counting lines that signal
+// a failed migration/update so a zero-exit run can still be treated as failed.
+type runFailureScanner struct {
+	inner func(string)
+	hits  int
+}
+
+func (s *runFailureScanner) scan(line string) {
+	if deployFailureRe.MatchString(line) {
+		s.hits++
+	}
+	if s.inner != nil {
+		s.inner(line)
+	}
 }
 
 // DeployModule is one module in a deploy summary: its resolved name, the
@@ -170,6 +260,11 @@ type DeployResult struct {
 	// Planned is true for a --dry-run: the plan resolved but nothing ran, so
 	// every module's OK stays false.
 	Planned bool `json:"planned,omitempty"`
+	// Checkpoint summarizes the DB checkpoint taken before the run (nil when
+	// checkpointing was off). RolledBack is true when the run failed and the
+	// database was restored from that checkpoint.
+	Checkpoint *CheckpointInfo `json:"checkpoint,omitempty"`
+	RolledBack bool            `json:"rolled_back,omitempty"`
 	// JSON echoes whether the caller asked for --json, so the REPL wrapper can
 	// route output without re-parsing the args.
 	JSON bool `json:"-"`
@@ -211,6 +306,12 @@ func RunDeploy(ctx context.Context, opts DeployOpts) (DeployResult, error) {
 	p, err := parseDeployArgs(opts.Args)
 	if err != nil {
 		return DeployResult{}, err
+	}
+
+	// deploy --rollback is a standalone operation: restore the target's most
+	// recent checkpoint instead of deploying anything.
+	if p.rollback {
+		return runDeployRollback(ctx, opts, p)
 	}
 
 	// Validate an explicit --modules list against the local repo before any
@@ -407,6 +508,14 @@ func RunDeploy(ctx context.Context, opts DeployOpts) (DeployResult, error) {
 	conn.User = pg["POSTGRES_USER"]
 	conn.Password = pg["POSTGRES_PASSWORD"]
 
+	// Assemble the remote context the checkpoint helpers work against and
+	// resolve whether this deploy checkpoints its DB (and by which method).
+	rsc := remoteShellContext{
+		sshHost: sshHost, remotePath: remotePath, fromName: fromName,
+		target: target, prof: prof, conn: conn,
+	}
+	ckptEnabled, ckptMethod := resolveCheckpointMode(p, opts.Cfg, target.stage)
+
 	// Install vs update, decided by the remote instance's module states.
 	opts.log("INFO", "remote", "querying installed modules", prof.DBName)
 	states, err := remoteModuleStates(ctx, sshHost, remotePath, target, conn.User, target.dbName)
@@ -489,6 +598,9 @@ func RunDeploy(ctx context.Context, opts DeployOpts) (DeployResult, error) {
 		if err := runPush(true); err != nil {
 			return DeployResult{}, err
 		}
+		if ckptEnabled {
+			opts.log("INFO", "plan", "checkpoint enabled", prof.DBName, [2]string{"method", ckptMethod})
+		}
 		opts.log("INFO", "", "dry-run — nothing executed", prof.DBName)
 		return result, nil
 	}
@@ -499,6 +611,15 @@ func RunDeploy(ctx context.Context, opts DeployOpts) (DeployResult, error) {
 	}
 	if err := runPush(false); err != nil {
 		return DeployResult{}, fmt.Errorf("push failed: %w", err)
+	}
+
+	// Disk preflight runs before any container stop, so a doomed deploy never
+	// takes the service down: if the DB won't fit alongside its checkpoint,
+	// abort now with both numbers named.
+	if ckptEnabled {
+		if err := checkpointPreflight(ctx, rsc, ckptMethod, opts.Log); err != nil {
+			return DeployResult{}, err
+		}
 	}
 
 	// The three remote steps, each streamed live. Fail-fast with the step
@@ -513,6 +634,19 @@ func RunDeploy(ctx context.Context, opts DeployOpts) (DeployResult, error) {
 	if err := step("stop", remoteComposeCmd(remotePath, target.composeCmd, "stop")); err != nil {
 		return DeployResult{}, err
 	}
+
+	// Checkpoint the DB with the containers down (no sessions on the source).
+	// A creation failure aborts before the run so nothing is half-migrated.
+	var ckptEntry config.CheckpointEntry
+	if ckptEnabled {
+		entry, info, cerr := createCheckpoint(ctx, rsc, ckptMethod, deployedShas, opts.StreamOut, opts.Log)
+		if cerr != nil {
+			return DeployResult{}, cerr
+		}
+		ckptEntry = entry
+		result.Checkpoint = &info
+	}
+
 	if err := step("up -d", remoteComposeCmd(remotePath, target.composeCmd, "up", "-d")); err != nil {
 		return DeployResult{}, err
 	}
@@ -530,8 +664,20 @@ func RunDeploy(ctx context.Context, opts DeployOpts) (DeployResult, error) {
 	}
 	opts.log("INFO", "odoo", "running module install/update", prof.DBName, runFields...)
 	argv := odoo.WithI18nOverwrite(odoo.InstallUpdate(conn, install, update), overwrite)
-	if err := runSSHStream(ctx, sshHost, remoteContainerCmd(remotePath, target, argv), nil, opts.StreamOut); err != nil {
-		return DeployResult{}, fmt.Errorf("odoo run failed: %w", err)
+	scanner := &runFailureScanner{inner: opts.StreamOut}
+	runErr := runSSHStream(ctx, sshHost, remoteContainerCmd(remotePath, target, argv), nil, scanner.scan)
+
+	// Verify: a non-zero exit OR failure patterns in the stream (a run can
+	// exit 0 while leaving modules broken) both fail the deploy.
+	if runErr != nil || scanner.hits > 0 {
+		if runErr == nil {
+			opts.log("ERROR", "verify", "run reported errors — treating as failed", prof.DBName,
+				[2]string{"hits", strconv.Itoa(scanner.hits)})
+		}
+		if ckptEnabled {
+			return handleDeployFailure(ctx, opts, rsc, p, ckptEntry, result, projectKey, targetKey, runErr)
+		}
+		return DeployResult{}, deployRunError(runErr)
 	}
 	// The remote run landed: every resolved module deployed OK.
 	for i := range result.Modules {
@@ -546,11 +692,149 @@ func RunDeploy(ctx context.Context, opts DeployOpts) (DeployResult, error) {
 			[2]string{"n", strconv.Itoa(len(deployedShas))})
 	}
 
+	// Record the checkpoint (kept for a later deploy --rollback) and prune the
+	// tail to the retention keep count.
+	if ckptEnabled {
+		if err := config.AddCheckpoint(projectKey, targetKey, ckptEntry); err == nil {
+			pruneCheckpoints(ctx, rsc, projectKey, targetKey, opts.Cfg.CheckpointKeep, opts.Log)
+		}
+	}
+
 	opts.log("INFO", "", "deploy complete", prof.DBName,
 		[2]string{"update", strconv.Itoa(len(update))},
 		[2]string{"install", strconv.Itoa(len(install))},
 		[2]string{"skipped", strconv.Itoa(skipped)})
 	return result, nil
+}
+
+// deployRunError wraps the odoo-run outcome into a deploy error: the SSH
+// error when the process failed, or a synthetic one when the run exited 0 but
+// its stream carried failure patterns.
+func deployRunError(runErr error) error {
+	if runErr != nil {
+		return fmt.Errorf("odoo run failed: %w", runErr)
+	}
+	return fmt.Errorf("odoo run reported errors in its output")
+}
+
+// handleDeployFailure is the checkpoint-on failure path. In an interactive
+// session it asks before restoring (so the operator can inspect the broken
+// DB); headless (--force or no TTY) it rolls back automatically. Either way
+// the deploy's commits are never marked deployed. It returns the populated
+// result (RolledBack set when restored) alongside the deploy error, so a
+// headless caller like watch can read the outcome.
+func handleDeployFailure(ctx context.Context, opts DeployOpts, rsc remoteShellContext, p deployArgs, entry config.CheckpointEntry, result DeployResult, projectKey, targetKey string, runErr error) (DeployResult, error) {
+	// Interactive: offer to inspect instead of restoring. A decline keeps the
+	// broken DB and the checkpoint (recorded so `deploy --rollback` finds it).
+	if !p.force && stdinIsTTY() {
+		if !confirmRollback(opts.Palette, rsc.prof.DBName, entry) {
+			_ = config.AddCheckpoint(projectKey, targetKey, entry)
+			opts.log("WARNING", "rollback", "skipped — restore later with deploy --rollback", rsc.prof.DBName,
+				[2]string{"checkpoint", entry.Name})
+			return result, deployRunError(runErr)
+		}
+	}
+
+	// Bring the stack down for a clean restore (the run left it up).
+	opts.log("INFO", "rollback", "stopping stack before restore", rsc.prof.DBName)
+	_ = runSSHStream(ctx, rsc.sshHost, remoteComposeCmd(rsc.remotePath, rsc.target.composeCmd, "stop"), nil, opts.StreamOut)
+
+	consumed, rerr := restoreCheckpoint(ctx, rsc, entry, opts.StreamOut, opts.Log)
+	if rerr != nil {
+		// The rollback itself failed: keep the checkpoint recorded for a manual
+		// retry and surface both failures.
+		_ = config.AddCheckpoint(projectKey, targetKey, entry)
+		opts.log("ERROR", "rollback", "rollback failed — checkpoint preserved", rsc.prof.DBName,
+			[2]string{"checkpoint", entry.Name}, [2]string{"err", rerr.Error()})
+		return result, fmt.Errorf("odoo run failed and rollback failed: %v (run error: %w)", rerr, runErrOrSynthetic(runErr))
+	}
+	_ = runSSHStream(ctx, rsc.sshHost, remoteComposeCmd(rsc.remotePath, rsc.target.composeCmd, "up", "-d"), nil, opts.StreamOut)
+
+	// A dump survives its own restore, so keep it recorded for a possible
+	// re-rollback; a db-method copy was consumed by the rename.
+	if !consumed {
+		_ = config.AddCheckpoint(projectKey, targetKey, entry)
+	}
+	result.RolledBack = true
+	opts.log("INFO", "rollback", "rolled back — commits not marked deployed", rsc.prof.DBName)
+	return result, deployRunError(runErr)
+}
+
+// runErrOrSynthetic returns runErr, or a synthetic "reported errors" error
+// when the run exited 0 but its stream flagged a failure.
+func runErrOrSynthetic(runErr error) error {
+	if runErr != nil {
+		return runErr
+	}
+	return fmt.Errorf("run reported errors in its output")
+}
+
+// runDeployRollback restores a target's checkpoint outside a deploy
+// (deploy --rollback): resolve the target, pick a checkpoint (newest headless,
+// picker when >1 and interactive), red-confirm with an age warning, stop →
+// restore → up, then un-mark the checkpoint's commits so they can be
+// redeployed.
+func runDeployRollback(ctx context.Context, opts DeployOpts, p deployArgs) (DeployResult, error) {
+	logFn := func(level, sub, msg, db string, fields ...[2]string) { opts.log(level, sub, msg, db, fields...) }
+	rsc, err := resolveRemoteShell(ctx, opts.Cfg, opts.Palette, opts.Root, p.from, logFn)
+	if err != nil {
+		return DeployResult{}, err
+	}
+	projectKey := config.ProjectKey(opts.Root)
+	targetKey := config.DeployTargetKey(rsc.sshHost, rsc.remotePath)
+	entries := config.LoadCheckpoints(projectKey, targetKey)
+	if len(entries) == 0 {
+		return DeployResult{}, fmt.Errorf("%w: no checkpoints recorded for this target", ErrUsage)
+	}
+
+	chosen := entries[0] // newest
+	if len(entries) > 1 && stdinIsTTY() {
+		labels := make([]string, len(entries))
+		byLabel := make(map[string]config.CheckpointEntry, len(entries))
+		for i, e := range entries {
+			lbl := e.Name + "  ·  " + e.Method + ", " + humanAge(time.Since(e.CreatedAt)) + " ago"
+			labels[i] = lbl
+			byLabel[lbl] = e
+		}
+		pick, perr := PickOne("Checkpoint to restore", labels, opts.Palette)
+		if perr != nil {
+			return DeployResult{}, perr
+		}
+		chosen = byLabel[pick]
+	}
+
+	if !p.force {
+		if err := confirmRollbackAged(opts.Palette, rsc.prof.DBName, chosen); err != nil {
+			return DeployResult{}, err
+		}
+	}
+
+	opts.log("INFO", "rollback", "stopping stack before restore", rsc.prof.DBName)
+	if err := runSSHStream(ctx, rsc.sshHost, remoteComposeCmd(rsc.remotePath, rsc.target.composeCmd, "stop"), nil, opts.StreamOut); err != nil {
+		return DeployResult{}, fmt.Errorf("stop failed: %w", err)
+	}
+	consumed, rerr := restoreCheckpoint(ctx, rsc, chosen, opts.StreamOut, opts.Log)
+	if rerr != nil {
+		return DeployResult{}, fmt.Errorf("restore failed: %w", rerr)
+	}
+	if err := runSSHStream(ctx, rsc.sshHost, remoteComposeCmd(rsc.remotePath, rsc.target.composeCmd, "up", "-d"), nil, opts.StreamOut); err != nil {
+		return DeployResult{}, fmt.Errorf("up -d failed: %w", err)
+	}
+
+	// Un-mark the checkpoint's commits so they can be corrected and redeployed;
+	// drop a consumed (db-method) checkpoint from the store.
+	_ = config.UnmarkDeployed(projectKey, targetKey, chosen.DeploySHAs)
+	if consumed {
+		_ = config.RemoveCheckpoint(projectKey, targetKey, chosen.Name)
+	}
+	opts.log("INFO", "", "rollback complete", rsc.prof.DBName,
+		[2]string{"checkpoint", chosen.Name}, [2]string{"unmarked", strconv.Itoa(len(chosen.DeploySHAs))})
+	return DeployResult{
+		Target:     rsc.fromName,
+		DB:         rsc.prof.DBName,
+		RolledBack: true,
+		JSON:       p.jsonOut,
+	}, nil
 }
 
 // splitCSV splits a comma-separated flag value into trimmed, non-empty

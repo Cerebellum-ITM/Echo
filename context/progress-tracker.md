@@ -23,6 +23,33 @@ _(siguiente: Unit 14 — meta-commands. Fix deploy-build-muting: el builder de `
 
 ## Completed
 
+- [x] Unit 89 — deploy-checkpoint-rollback. `deploy` toma un checkpoint
+  server-side de la DB tras el `stop` (cuando no hay sesiones) y, si el
+  `odoo -i/-u` falla, restaura: pregunta en interactivo, auto en headless/
+  `watch`. Verify = exit code + scan del stream (`CRITICAL`/`Traceback`/
+  `Failed to load registry`, `runFailureScanner` + `deployFailureRe`). Dos
+  métodos: `db` (`CREATE DATABASE … TEMPLATE`, `STRATEGY FILE_COPY` en PG≥15;
+  rollback = drop+rename, `restoreCheckpoint` devuelve `consumed`) y `dump`
+  (`pg_dump -Fc` en `backups/checkpoints/` del server). Default por stage
+  (`stageWantsCheckpoint`: on staging/prod, off dev), override con
+  `--checkpoint[=db|dump]`/`--no-checkpoint` y `[checkpoint]` (`mode`/`method`/
+  `keep`) global+proyecto (`applyCheckpoint`, `resolveCheckpointMode`). Preflight
+  de disco antes del `stop` (`checkpointPreflight`, 1.2×/0.5×); retención
+  `pruneCheckpoints`; métricas `size=`/`took=`. `deploy --rollback` restaura
+  fuera de un deploy (picker si >1 en TTY, `confirmRollbackAged` con aviso de
+  antigüedad >1h, des-marca SHAs). Nuevo comando `checkpoint` (`list` con
+  reconciliación stale/orphan + footer db-size/disk-free + `--json`, `create`,
+  `rm`/`--all`). `watch --no-checkpoint` + `rollbacks=N` en el resumen. Store
+  `internal/config/checkpoints.go` (keyed por `DeployTargetKey`), primitivas
+  `internal/cmd/checkpoint_remote.go` (seams `ckptRunSSH`/`ckptRunSSHStream`),
+  comando `internal/cmd/checkpoint.go`, wrapper `internal/repl/checkpoint.go`.
+  Registro completo (Registry/dispatch/commandFlags/help/projectlessOneShot).
+  Tests de parse/resolveMode/scanner/ckptDBName/humanAge/create+restore (orden
+  + shapes vía seams)/store+retención; README + CHANGELOG `[Unreleased]`.
+  build/vet/test verdes. Filestore snapshot = fase 2 (documentado). Pendiente
+  verificación EN VIVO contra un remoto real por el usuario (sin docker/SSH en
+  el entorno de dev).
+
 - [x] Unit 88 — update-build-remote. `update --build` gana un builder dedicado
   (`runUpdateBuild`, `internal/cmd/build_update.go`) al estilo de
   `i18n-pull`/`deploy`: resuelve **Where** (select local / target nombrado →

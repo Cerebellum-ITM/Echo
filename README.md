@@ -30,7 +30,7 @@ Echo is a work in progress; below is what currently ships in `main`.
 | Shell     | `shell`, `bash`, `psql`                                                  | —                               |
 | i18n      | `i18n-export`, `i18n-update`, `i18n-pull` (from a remote)                | —                               |
 | Connect   | `connect` — open Chrome logged in as any user, no password              | —                               |
-| Deploy    | `link` — bind a local repo to a remote target; `deploy` — commit- and dirty-module-driven remote update/install over SSH | — |
+| Deploy    | `link` — bind a local repo to a remote target; `deploy` — commit- and dirty-module-driven remote update/install over SSH, with a DB checkpoint + auto-rollback on failure; `checkpoint` — list/create/remove those checkpoints | — |
 | Sync      | `push` — rsync local modules to the remote addons dir; `watch` — auto push+deploy on new commits; `compare` — diff a module against its Docker copy (`--all` for a whole-module status table) | — |
 | Build     | `<cmd> --build` / `-b` — compose any command interactively, then run/copy | —                             |
 | Scripting | `echo <cmd>` one-shot, `echo run <file>` recipes, `sequence` (interactive multi-command), `report`, `logview` (interactive log history) | —              |
@@ -356,6 +356,57 @@ the code there — that's for the tool you use to sync the working tree.
 | `  --force`        | Skip the prod-stage confirmation                         |
 | `  --commits <shas>` | Deploy these commits non-interactively (skips the picker) |
 | `  --modules <names>` | Deploy these (dirty) modules non-interactively (skips the picker) |
+| `  --checkpoint[=db\|dump]` | Force a DB checkpoint before the run (default: auto on `staging`/`prod`) |
+| `  --no-checkpoint` | Skip the DB checkpoint even on `staging`/`prod`          |
+| `  --rollback`     | Restore the target's most recent checkpoint (no deploy)  |
+
+#### DB checkpoint & rollback
+
+The dangerous step of a deploy is the `odoo -i/-u` run: a failed migration can
+leave the database half-updated. So — after the `stop`, while the DB has no
+sessions — `deploy` takes a **server-side checkpoint** of it, runs the update,
+**verifies** the outcome (a non-zero exit *or* a `CRITICAL`/`Traceback`/registry
+failure in the streamed log both count as failure), and on failure **rolls the
+database back** to that checkpoint. In an interactive session it asks first (so
+you can inspect the broken DB); headless — under `--force` or `watch` — it
+restores automatically. A rolled-back deploy never marks its commits as
+deployed, so `deploy --auto` re-offers them once you've fixed the module.
+
+Two methods: `db` (the default — `CREATE DATABASE … TEMPLATE`, a fast
+file-level copy, `STRATEGY FILE_COPY` on PostgreSQL 15+; rollback is a near-
+instant `DROP` + `RENAME`) and `dump` (`pg_dump -Fc` kept under the server's
+`backups/checkpoints/`, slower but with a low disk peak). Checkpointing is
+**on for `staging`/`prod`, off for `dev`** by default; override per run with
+`--checkpoint[=db|dump]` / `--no-checkpoint`, or set a `[checkpoint]` section
+(`mode = "auto"|"on"|"off"`, `method = "db"|"dump"`, `keep = N`) in
+`global.toml` or a project profile. Before creating a checkpoint Echo runs a
+**disk preflight** (the DB must fit alongside its copy) and aborts *before* the
+`stop` if it wouldn't — so a doomed deploy never takes the service down. The
+successful checkpoint is kept for a later `deploy --rollback`, and the retention
+`keep` count prunes older ones.
+
+`deploy --rollback` restores a checkpoint outside a deploy — the escape hatch
+for "it passed, but I found the bug 20 minutes later". It picks the most recent
+checkpoint (a picker when there are several on a TTY), red-confirms with an
+explicit **age warning** when the checkpoint is over an hour old (that's how
+much captured data a restore would discard), restores, and un-marks the
+commits so they can be redeployed.
+
+The `checkpoint` command inspects and cleans them:
+
+| Command                          | Description                                                       |
+|----------------------------------|-------------------------------------------------------------------|
+| `checkpoint [list]`              | Table of a target's checkpoints (method, size, age) + the live DB size and free disk |
+| `  --from <target>` / `--remote` | Named connect target, or this directory's `link` binding         |
+| `  --json`                       | Emit the list as JSON to stdout (logs to stderr)                 |
+| `checkpoint create`              | Take a manual checkpoint (before a risky change)                 |
+| `  --method db\|dump`            | Checkpoint method (default: configured, else `db`)               |
+| `checkpoint rm [<name>]`         | Delete a checkpoint (picker when no name); `--all` for every one |
+| `  --force`                      | Skip the confirmation                                            |
+
+`checkpoint list` reconciles the stored metadata against the server: a
+checkpoint whose object was deleted by hand shows as `stale` (and is pruned
+from the store), and an untracked `…__ckpt_…` database shows as `orphan`.
 
 `deploy --build` opens the commit/dirty picker up front and bakes the choice
 into `--commits`/`--modules`, so the selection can be reviewed, copied, or
@@ -447,8 +498,12 @@ remote's addons dir), never by the directory you run `push` from.
 | `  --interval <sec>`             | Poll interval in seconds (default `10`, min `2`)                 |
 | `  --force`                      | Required to watch a `prod`-stage target                          |
 | `  --no-logs`                    | Don't follow the remote logs between cycles (silent wait)        |
+| `  --no-checkpoint`              | Skip the DB checkpoint on each cycle's deploy                    |
 
-`watch` is a **monitor**: while it waits for commits it follows the remote
+`watch` inherits the checkpoint/rollback behavior: each cycle's deploy
+checkpoints the DB and auto-restores it if the commit broke the update, logging
+the failure and continuing to poll (the `watch stopped` summary reports
+`rollbacks=N`). `watch` is a **monitor**: while it waits for commits it follows the remote
 Odoo container's logs live (the same stream as `logs --remote`), and when the
 branch advances it pauses the follow, runs the push+deploy cycle, then resumes
 following — so one terminal shows both the running server and every deploy. If

@@ -86,22 +86,26 @@ func (sess *session) finishDeployJSON(res cmd.DeployResult, stats *runStats, err
 	}
 
 	type deployJSON struct {
-		Target   string             `json:"target"`
-		DB       string             `json:"db"`
-		Modules  []cmd.DeployModule `json:"modules"`
-		Skipped  int                `json:"skipped"`
-		Errors   int                `json:"errors"`
-		Warnings int                `json:"warnings"`
-		Planned  bool               `json:"planned,omitempty"`
+		Target     string              `json:"target"`
+		DB         string              `json:"db"`
+		Modules    []cmd.DeployModule  `json:"modules"`
+		Skipped    int                 `json:"skipped"`
+		Errors     int                 `json:"errors"`
+		Warnings   int                 `json:"warnings"`
+		Planned    bool                `json:"planned,omitempty"`
+		Checkpoint *cmd.CheckpointInfo `json:"checkpoint,omitempty"`
+		RolledBack bool                `json:"rolled_back,omitempty"`
 	}
 	out := deployJSON{
-		Target:   res.Target,
-		DB:       res.DB,
-		Modules:  res.Modules,
-		Skipped:  res.Skipped,
-		Errors:   stats.errors,
-		Warnings: stats.warnings,
-		Planned:  res.Planned,
+		Target:     res.Target,
+		DB:         res.DB,
+		Modules:    res.Modules,
+		Skipped:    res.Skipped,
+		Errors:     stats.errors,
+		Warnings:   stats.warnings,
+		Planned:    res.Planned,
+		Checkpoint: res.Checkpoint,
+		RolledBack: res.RolledBack,
 	}
 	if out.Modules == nil {
 		out.Modules = []cmd.DeployModule{}
