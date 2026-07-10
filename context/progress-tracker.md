@@ -23,6 +23,18 @@ _(siguiente: Unit 14 — meta-commands. Fix deploy-build-muting: el builder de `
 
 ## Completed
 
+- [x] Fix checkpoint `service "db" is not running` (post Unit 89/90). Bug
+  encontrado por el usuario probando contra habitta_prod (staging): el deploy
+  hacía `compose stop` (todo) antes del checkpoint, apagando el contenedor `db`,
+  pero el checkpoint corre `psql`/`pg_dump` DENTRO de ese contenedor → fallaba con
+  `checkpoint terminate connections: exit status 1: service "db" is not running`.
+  Mismo bug en el restore (handleDeployFailure + runDeployRollback) y en
+  `checkpoint create`. Fix: nuevo helper `remoteStopApp(rsc)` que hace
+  `compose stop <odooContainer>` (solo la app), dejando `db` arriba; la DB origen
+  queda sin sesiones de Odoo pero consultable. Deploy con checkpoint para solo
+  Odoo (sin checkpoint sigue parando todo); los dos paths de rollback y
+  `checkpoint create` idem. Test `TestRemoteStopApp`. build/vet/test verdes.
+
 - [x] Unit 90 — checkpoint-policy-remote. La política de checkpoint
   (`mode`/`method`/`keep`) se lee **server-first**, arreglando el split-brain de
   la Unit 89 (el `stage` venía del servidor pero la política de la config local

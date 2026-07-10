@@ -36,6 +36,16 @@ var (
 // keeps its dumps in (created on demand), mirroring the local ./backups/.
 const checkpointDir = "backups/checkpoints"
 
+// remoteStopApp stops ONLY the Odoo app service, leaving the Postgres
+// container running. The checkpoint and rollback commands (psql, pg_dump,
+// pg_restore) execute inside the DB container, so a full `compose stop` — which
+// takes the DB container down too — makes them fail with "service db is not
+// running". Stopping just the app clears the source DB's sessions while keeping
+// it queryable for the copy/restore.
+func remoteStopApp(rsc remoteShellContext) string {
+	return remoteComposeCmd(rsc.remotePath, rsc.target.composeCmd, "stop", rsc.target.odooContainer)
+}
+
 // ckptLog invokes log only when it is set.
 func ckptLog(log logFn, level, sub, msg, db string, fields ...[2]string) {
 	if log != nil {

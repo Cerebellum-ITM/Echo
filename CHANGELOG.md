@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **El checkpoint/rollback fallaba con `service "db" is not running`.** El deploy
+  hacía `compose stop` (todos los servicios) antes de tomar el checkpoint, lo que
+  también apagaba el contenedor de Postgres — pero el checkpoint corre `psql`/
+  `pg_dump` **dentro** de ese contenedor, así que fallaba de inmediato
+  (`checkpoint terminate connections: service "db" is not running`). Mismo bug en
+  el restore (rollback) y en `checkpoint create`. Ahora, cuando hay checkpoint, se
+  detiene **solo el servicio de Odoo** (`compose stop <odoo>`), dejando el
+  contenedor `db` arriba: la DB origen queda sin sesiones de la app pero
+  consultable para la copia/restore. Nuevo helper `remoteStopApp`; el `up -d`
+  posterior recrea todo. Sin checkpoint, el deploy sigue parando todo como antes.
+
 ### Changed
 - **La política de checkpoint se lee del perfil del servidor (server-first)**
   (Unit 90). En la Unit 89 el `stage` que activa el modo `auto` venía del

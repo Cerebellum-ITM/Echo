@@ -668,12 +668,22 @@ func RunDeploy(ctx context.Context, opts DeployOpts) (DeployResult, error) {
 		}
 		return nil
 	}
-	if err := step("stop", remoteComposeCmd(remotePath, target.composeCmd, "stop")); err != nil {
+	// Stop before the run. With a checkpoint we stop ONLY the Odoo app service
+	// so the Postgres container stays up for the copy (the source DB then has no
+	// app sessions but is still queryable); without one, stop everything as
+	// before. A full stop would take the DB container down and the checkpoint's
+	// psql/pg_dump could not run.
+	stopCmd := remoteComposeCmd(remotePath, target.composeCmd, "stop")
+	if ckptEnabled {
+		stopCmd = remoteStopApp(rsc)
+	}
+	if err := step("stop", stopCmd); err != nil {
 		return DeployResult{}, err
 	}
 
-	// Checkpoint the DB with the containers down (no sessions on the source).
-	// A creation failure aborts before the run so nothing is half-migrated.
+	// Checkpoint the DB with the app stopped (no sessions on the source) but the
+	// DB container still up. A creation failure aborts before the run so nothing
+	// is half-migrated.
 	var ckptEntry config.CheckpointEntry
 	if ckptEnabled {
 		entry, info, cerr := createCheckpoint(ctx, rsc, ckptMethod, deployedShas, opts.StreamOut, opts.Log)
@@ -772,9 +782,10 @@ func handleDeployFailure(ctx context.Context, opts DeployOpts, rsc remoteShellCo
 		}
 	}
 
-	// Bring the stack down for a clean restore (the run left it up).
-	opts.log("INFO", "rollback", "stopping stack before restore", rsc.prof.DBName)
-	_ = runSSHStream(ctx, rsc.sshHost, remoteComposeCmd(rsc.remotePath, rsc.target.composeCmd, "stop"), nil, opts.StreamOut)
+	// Stop the app for a clean restore (the run left it up), keeping the DB
+	// container up so the restore's psql/pg_restore can run.
+	opts.log("INFO", "rollback", "stopping app before restore", rsc.prof.DBName)
+	_ = runSSHStream(ctx, rsc.sshHost, remoteStopApp(rsc), nil, opts.StreamOut)
 
 	consumed, rerr := restoreCheckpoint(ctx, rsc, entry, opts.StreamOut, opts.Log)
 	if rerr != nil {
@@ -846,8 +857,8 @@ func runDeployRollback(ctx context.Context, opts DeployOpts, p deployArgs) (Depl
 		}
 	}
 
-	opts.log("INFO", "rollback", "stopping stack before restore", rsc.prof.DBName)
-	if err := runSSHStream(ctx, rsc.sshHost, remoteComposeCmd(rsc.remotePath, rsc.target.composeCmd, "stop"), nil, opts.StreamOut); err != nil {
+	opts.log("INFO", "rollback", "stopping app before restore", rsc.prof.DBName)
+	if err := runSSHStream(ctx, rsc.sshHost, remoteStopApp(rsc), nil, opts.StreamOut); err != nil {
 		return DeployResult{}, fmt.Errorf("stop failed: %w", err)
 	}
 	consumed, rerr := restoreCheckpoint(ctx, rsc, chosen, opts.StreamOut, opts.Log)

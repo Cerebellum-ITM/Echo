@@ -245,8 +245,10 @@ func runCheckpointCreate(ctx context.Context, opts CheckpointOpts, rsc remoteShe
 
 	stopStack := method != "dump" // a template copy needs exclusive DB access
 	if stopStack {
-		opts.log("INFO", "checkpoint", "stopping stack for template copy", rsc.prof.DBName)
-		if err := runSSHStream(ctx, rsc.sshHost, remoteComposeCmd(rsc.remotePath, rsc.target.composeCmd, "stop"), nil, opts.StreamOut); err != nil {
+		// Stop only the app service: the template copy needs the source DB free
+		// of sessions, but the DB container must stay up to run the CREATE.
+		opts.log("INFO", "checkpoint", "stopping app for template copy", rsc.prof.DBName)
+		if err := runSSHStream(ctx, rsc.sshHost, remoteStopApp(rsc), nil, opts.StreamOut); err != nil {
 			return CheckpointResult{}, fmt.Errorf("stop failed: %w", err)
 		}
 	}

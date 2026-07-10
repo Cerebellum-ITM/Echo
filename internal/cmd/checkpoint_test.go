@@ -225,6 +225,20 @@ func TestRunFailureScanner(t *testing.T) {
 	})
 }
 
+func TestRemoteStopApp(t *testing.T) {
+	// The checkpoint stop must target ONLY the Odoo app service, leaving the DB
+	// container up so the copy's psql/pg_dump can run.
+	got := remoteStopApp(testRSC())
+	// Must name the app service after `stop` (odoo = testRSC's odooContainer),
+	// not stop everything.
+	if !strings.Contains(got, "stop") || !strings.Contains(got, "odoo") {
+		t.Errorf("remoteStopApp = %q, want a `compose stop odoo` (app-only)", got)
+	}
+	if strings.HasSuffix(strings.TrimSpace(got), "stop") || strings.HasSuffix(strings.TrimSpace(got), "'stop'") {
+		t.Errorf("remoteStopApp must name the app service, not stop everything: %q", got)
+	}
+}
+
 func TestCkptDBName(t *testing.T) {
 	short := ckptDBName("mydb", "20260710_100000")
 	if !strings.HasPrefix(short, "mydb__ckpt_") {
