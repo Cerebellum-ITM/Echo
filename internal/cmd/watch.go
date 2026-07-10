@@ -49,12 +49,15 @@ type watchArgs struct {
 	from     string
 	remote   bool
 	force    bool
+	noLogs   bool
 }
 
-// parseWatchArgs extracts the required branch positional plus
-// --interval/--from/--remote/--force. The interval is in seconds, clamped to
-// a 2s floor; remote-mode switches are consumed so a bare `--from` value is
-// not read as the branch.
+// parseWatchArgs extracts the optional branch positional plus
+// --interval/--from/--remote/--force/--no-logs. The interval is in seconds,
+// clamped to a 2s floor; remote-mode switches are consumed so a bare `--from`
+// value is not read as the branch. An omitted branch is left empty for
+// RunWatch to resolve with an interactive picker. `--no-logs` opts out of the
+// monitor-mode log follow between cycles.
 func parseWatchArgs(args []string) (watchArgs, error) {
 	out := watchArgs{interval: defaultWatchInterval}
 	out.from, out.remote = remoteFlagsIn(args)
@@ -75,6 +78,8 @@ func parseWatchArgs(args []string) (watchArgs, error) {
 		switch {
 		case a == "--force":
 			out.force = true
+		case a == "--no-logs":
+			out.noLogs = true
 		case a == "--interval":
 			if i+1 >= len(args) {
 				return watchArgs{}, fmt.Errorf("%w: --interval requires a number", ErrUsage)
@@ -100,9 +105,6 @@ func parseWatchArgs(args []string) (watchArgs, error) {
 			out.branch = a
 		}
 	}
-	if out.branch == "" {
-		return watchArgs{}, fmt.Errorf("%w: watch needs a branch name", ErrUsage)
-	}
 	return out, nil
 }
 
@@ -116,6 +118,17 @@ func RunWatch(ctx context.Context, opts WatchOpts) error {
 	p, err := parseWatchArgs(opts.Args)
 	if err != nil {
 		return err
+	}
+	// No branch given → offer a picker of the repo's local branches (most
+	// recently committed first). Runs before any SSH, so a cancel costs
+	// nothing; a non-TTY caller gets ErrNonInteractive (pass the branch as an
+	// argument instead).
+	if p.branch == "" {
+		branch, perr := pickWatchBranch(ctx, opts)
+		if perr != nil {
+			return perr
+		}
+		p.branch = branch
 	}
 	ref := "refs/heads/" + p.branch
 	tip, err := gitRevParse(ctx, opts.Root, ref)
@@ -154,6 +167,27 @@ func RunWatch(ctx context.Context, opts WatchOpts) error {
 		[2]string{"branch", p.branch}, [2]string{"tip", shortSHA(tip)},
 		[2]string{"target", targetLabel(rsc)}, [2]string{"interval", p.interval.String()})
 
+	// Monitor mode: follow the remote logs while idle (unless --no-logs). The
+	// follower is a side goroutine that never blocks the poll loop; it is
+	// paused synchronously around each cycle so its lines never interleave with
+	// the cycle output. A screenful of context on startup, then only new lines
+	// after each cycle (the deploy just printed, and it recreated containers).
+	var stopLogs func()
+	startLogs := func(tail string) {
+		if p.noLogs {
+			return
+		}
+		stopLogs = startWatchLogs(ctx, opts, rsc, p.interval, tail)
+	}
+	pauseLogs := func() {
+		if stopLogs != nil {
+			stopLogs()
+			stopLogs = nil
+			opts.log("INFO", "logs", "follow paused — running cycle", rsc.prof.DBName)
+		}
+	}
+	startLogs("20")
+
 	baseline := tip
 	cycles, deployed := 0, 0
 	ticker := time.NewTicker(p.interval)
@@ -161,6 +195,7 @@ func RunWatch(ctx context.Context, opts WatchOpts) error {
 	for {
 		select {
 		case <-ctx.Done():
+			pauseLogs()
 			opts.log("INFO", "", "watch stopped", rsc.prof.DBName,
 				[2]string{"cycles", strconv.Itoa(cycles)},
 				[2]string{"deployed", strconv.Itoa(deployed)})
@@ -169,23 +204,69 @@ func RunWatch(ctx context.Context, opts WatchOpts) error {
 			newTip, err := gitRevParse(ctx, opts.Root, ref)
 			if err != nil {
 				// The branch vanished (deleted/renamed) — unrecoverable.
+				pauseLogs()
 				return fmt.Errorf("branch %q is gone: %w", p.branch, err)
 			}
 			if newTip == baseline {
 				continue
 			}
+			pauseLogs() // stop the follow before any cycle output
 			n, cerr := watchCycle(ctx, opts, rsc, p.from, baseline, newTip)
 			baseline = newTip // always re-baseline, even on failure
 			if cerr != nil {
 				opts.log("ERROR", "cycle", "cycle failed", rsc.prof.DBName,
 					[2]string{"err", cerr.Error()})
-				continue
-			}
-			if n > 0 {
+			} else if n > 0 {
 				cycles++
 				deployed += n
 			}
+			startLogs("0") // resume the follow after the cycle (success or fail)
 		}
+	}
+}
+
+// watchLogStream is the SSH log-follow transport, a package-level seam so
+// tests can substitute a scripted stream in place of the real `compose logs`.
+var watchLogStream = runSSHStream
+
+// startWatchLogs launches a background goroutine that follows the remote Odoo
+// container's logs, streaming lines through opts.StreamOut with the same
+// renderer as `logs --remote`. It returns a stop func that cancels the follow
+// and BLOCKS until the SSH process is dead and its scanner drained — so the
+// caller can guarantee no log line interleaves with the output that follows.
+// On an unexpected stream end (network blip, container recreated) it re-opens
+// with `--tail 0` after one poll interval, logging a WARNING; a cancelled
+// context (pause/shutdown) ends it silently. tail is the initial `--tail`
+// value ("20" on startup, "0" on resume — the cycle output already scrolled).
+func startWatchLogs(ctx context.Context, opts WatchOpts, rsc remoteShellContext, interval time.Duration, tail string) func() {
+	fctx, cancel := context.WithCancel(ctx)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		curTail := tail
+		opts.log("INFO", "logs", "following logs", rsc.prof.DBName,
+			[2]string{"service", rsc.target.odooContainer})
+		for {
+			args := []string{"logs", "--no-log-prefix", "-f", "--tail", curTail, rsc.target.odooContainer}
+			remoteCmd := remoteComposeCmd(rsc.remotePath, rsc.target.composeCmd, args...)
+			_ = watchLogStream(fctx, rsc.sshHost, remoteCmd, nil, opts.StreamOut)
+			if fctx.Err() != nil {
+				return // cancelled: a pause or shutdown, end silently
+			}
+			// The stream ended on its own — a blip or a container recreation.
+			// Warn, wait one interval, and re-open tailing only new lines.
+			opts.log("WARNING", "logs", "log stream ended — retrying", rsc.prof.DBName)
+			curTail = "0"
+			select {
+			case <-fctx.Done():
+				return
+			case <-time.After(interval):
+			}
+		}
+	}()
+	return func() {
+		cancel()
+		<-done
 	}
 }
 
@@ -269,6 +350,37 @@ func deployCommitsHeadless(ctx context.Context, opts WatchOpts, from string, sha
 		Log: opts.Log, StreamOut: opts.StreamOut,
 	})
 	return err
+}
+
+// pickWatchBranch lists the repo's local branches (most recently committed
+// first) and opens the single-select picker. Errors surface unchanged:
+// ErrCancelled/ErrQuit on abort, ErrNonInteractive without a TTY.
+func pickWatchBranch(ctx context.Context, opts WatchOpts) (string, error) {
+	branches, err := gitLocalBranches(ctx, opts.Root)
+	if err != nil {
+		return "", fmt.Errorf("list branches: %w", err)
+	}
+	if len(branches) == 0 {
+		return "", fmt.Errorf("%w: no local branches to watch", ErrUsage)
+	}
+	return PickOne("Branch to watch", branches, opts.Palette)
+}
+
+// gitLocalBranches returns the repo's local branch names, ordered by most
+// recent commit (the branch you're likely to want on top).
+func gitLocalBranches(ctx context.Context, root string) ([]string, error) {
+	out, err := gitOutput(ctx, root, "for-each-ref", "--sort=-committerdate",
+		"--format=%(refname:short)", "refs/heads")
+	if err != nil {
+		return nil, err
+	}
+	var branches []string
+	for _, l := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		if l = strings.TrimSpace(l); l != "" {
+			branches = append(branches, l)
+		}
+	}
+	return branches, nil
 }
 
 // gitRevParse resolves a ref to its full SHA, erroring if it doesn't exist.

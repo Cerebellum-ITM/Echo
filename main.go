@@ -38,6 +38,21 @@ func main() {
 		os.Exit(exitUsage)
 	}
 
+	// Global flags that never need a project, handled before any project
+	// detection: `--version`/`-v` prints the CLI version and exits;
+	// `--help`/`-h` are normalized to the `help` command (which runs
+	// projectless). These must work from anywhere, including outside a
+	// compose project.
+	if len(args) > 0 {
+		switch args[0] {
+		case "--version", "-v":
+			fmt.Println("echo " + repl.FullVersion())
+			return
+		case "--help", "-h":
+			args[0] = "help"
+		}
+	}
+
 	// A `-C` value that isn't an existing directory may be a project alias
 	// (or a connect target whose remote_path is local). A real directory
 	// always wins, so this never changes the meaning of an existing path.
@@ -181,13 +196,14 @@ func isDir(path string) bool {
 // compose project (using cwd as the working directory). These commands
 // reach a remote instance and only read/write local files — they never
 // drive a local docker stack, so a missing docker-compose.yml is fine.
-// `shell`/`shell-run`/`sequence` qualify only in their remote mode
-// (`--from` / `--remote`); locally they need the compose project as always.
+// `help` is purely informational and needs nothing; the remote-mode group
+// (`shell`/`shell-run`/`update`/`sequence`/…) qualifies only with
+// `--from`/`--remote` — locally they need the compose project as always.
 func projectlessOneShot(name string, args []string) bool {
 	switch name {
-	case "i18n-pull", "link", "deploy", "push", "watch":
+	case "help", "i18n-pull", "link", "deploy", "push", "watch":
 		return true
-	case "shell", "shell-run", "up", "stop", "restart", "logs", "sequence", "test", "view", "compare":
+	case "shell", "shell-run", "up", "stop", "restart", "logs", "logview", "sequence", "update", "test", "view", "compare":
 		return hasRemoteFlag(args)
 	}
 	return false

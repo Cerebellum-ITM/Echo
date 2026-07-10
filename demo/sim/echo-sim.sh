@@ -71,6 +71,10 @@ _logcolor() {
     echo.db-pull.filestore)             printf '255;214;165';;  # peach
     echo.compare)                       printf '189;178;255';;  # lavender
     echo.logview)                       printf '189;178;255';;  # lavender
+    echo.watch)                         printf '189;178;255';;  # lavender
+    echo.watch.logs)                    printf '202;255;191';;  # mint
+    echo.watch.cycle)                   printf '189;178;255';;  # lavender
+    odoo.addons.base.models.ir_cron)    printf '202;255;191';;  # mint
     werkzeug)                           printf '160;196;255';;  # sky
     *)                                  printf '202;255;191';;
   esac
@@ -207,6 +211,7 @@ up() {
 
 update() {
   if [ "$1" = "--installed" ]; then _update_installed; return; fi
+  if [ "$1" = "--build" ]; then _update_build; return; fi
   _log INFO "$EPID" echo.update.module.sale.start "update" "modules=sale" "flags=--i18n"
   sleep 0.25
   _log INFO "$OPID" odoo.modules.loading              "loading 1 modules...";                       sleep 0.22
@@ -526,46 +531,87 @@ _cmprow() {
 logview() {
   local bar; bar="$(_c "$SUCCESS" '│ ')"
 
-  # 1) run list — time · cmd · status · line count · db.
+  # 1) run list — time · cmd · status · line count · db. Cursor sits on the
+  #    failed `test` run (the one worth opening).
   printf '%s%s%s\n' "$bar" "$(_c "$DIM" 'logview — 6 runs')" "$(_c "$FAINT" '  (7d retention)')"
   printf '%s%s%s\n'  "$bar" "$(_c "$FAINT" 'filter › ')" "$(_c "$FAINT" 'type to filter…')"
   printf '%s\n' "$bar"
-  _lvrun "$bar" 1 '17:41:12' 'update sale --i18n'              ok  9  my_shop
+  _lvrun "$bar" 0 '17:41:12' 'update sale --i18n'              ok  9  my_shop
   _lvrun "$bar" 0 '17:39:50' 'deploy'                          ok  14 my_shop
   _lvrun "$bar" 0 '17:38:02' 'db-pull --from prod --filestore' ok  22 muutrade_prod_prod
-  _lvrun "$bar" 0 '17:35:20' 'test sale --tags=/sale'          err 31 my_shop
+  _lvrun "$bar" 1 '17:35:20' 'test sale --tags=/sale'          err 31 my_shop
   _lvrun "$bar" 0 '17:31:07' 'compare sale_extra --all'        ok  6  my_shop
   _lvrun "$bar" 0 '17:28:44' 'db-backup --with-filestore'      ok  8  my_shop
   printf '%s\n' "$bar"
   printf '%s%s\n' "$bar" "$(_c "$FAINT" '↑↓ move · enter open · type filter · esc close · ctrl+x quit')"
   sleep 2.4
 
-  # 2) open the top run (enter): its stored log lines, colored as they ran.
+  # 2) open the failed run (enter): stored lines colored as they ran, with a
+  #    line cursor (❯). An ERROR entry carries an unleveled traceback under it.
   clear
-  _lvhead "$bar" '' all
-  LOGPREFIX="$bar"
-  _log INFO "$EPID" echo.update.module.sale.start     "update" "modules=sale" "flags=--i18n"
-  _log INFO "$OPID" odoo.modules.loading              "loading 1 modules..."
-  _log INFO "$OPID" odoo.modules.loading              "Loading module sale (1/1)"
-  _log INFO "$OPID" odoo.addons.base.models.ir_module "module sale: loading translation es_MX"
-  _log INFO "$OPID" odoo.tools.translate              "module sale: overwriting es_MX translation"
-  _log INFO "$OPID" odoo.modules.loading              "Module sale loaded in 0.42s, 318 queries"
-  _log INFO "$OPID" odoo.modules.loading              "1 modules loaded in 0.44s, 318 queries"
-  _log INFO "$EPID" echo.update.module.sale           "update completed"
-  LOGPREFIX=""
+  _lvhead2 "$bar" 'test sale --tags=/sale — 17:35:20 · err · my_shop' '' all
+  _lvd 0 0 INFO  "$OPID" odoo.modules.loading "loading 1 modules..."
+  _lvd 0 0 INFO  "$OPID" odoo.tests.common    "Starting TestSaleOrder.test_tax_rounding"
+  _lvd 1 0 ERROR "$OPID" odoo.tests.common    "FAIL: TestSaleOrder.test_tax_rounding"
+  _lvraw 0 0 'Traceback (most recent call last):'
+  _lvraw 0 0 '  File "/odoo/addons/sale/tests/test_sale.py", line 88, in test_tax_rounding'
+  _lvraw 0 0 '    self.assertEqual(order.amount_tax, 16.00)'
+  _lvraw 0 0 'AssertionError: 15.99 != 16.00'
+  _lvd 0 0 INFO  "$OPID" odoo.tests.result   "1 failed, 0 error(s) of 42 tests"
   printf '%s\n' "$bar"
-  printf '%s%s\n' "$bar" "$(_c "$FAINT" '↑↓ scroll · tab level · type filter · ctrl+o copy · esc back · ctrl+x quit')"
-  sleep 2.0
+  printf '%s%s\n' "$bar" "$(_c "$FAINT" '↑↓ move · space select · tab level · type filter · ctrl+o copy all · esc back · ctrl+x quit')"
+  sleep 2.2
 
-  # 3) live text filter: typing narrows the lines in place (AND with level).
+  # 3) space marks the BLOCK under the cursor — the ERROR entry plus its
+  #    unleveled traceback lines, tied together with a ✓ gutter.
   clear
-  _lvhead "$bar" 'translation' all
-  LOGPREFIX="$bar"
-  _log INFO "$OPID" odoo.addons.base.models.ir_module "module sale: loading translation es_MX"
-  _log INFO "$OPID" odoo.tools.translate              "module sale: overwriting es_MX translation"
-  LOGPREFIX=""
+  _lvhead2 "$bar" 'test sale --tags=/sale — 17:35:20 · err · my_shop' '' all
+  _lvd 0 0 INFO  "$OPID" odoo.modules.loading "loading 1 modules..."
+  _lvd 0 0 INFO  "$OPID" odoo.tests.common    "Starting TestSaleOrder.test_tax_rounding"
+  _lvd 1 1 ERROR "$OPID" odoo.tests.common    "FAIL: TestSaleOrder.test_tax_rounding"
+  _lvraw 0 1 'Traceback (most recent call last):'
+  _lvraw 0 1 '  File "/odoo/addons/sale/tests/test_sale.py", line 88, in test_tax_rounding'
+  _lvraw 0 1 '    self.assertEqual(order.amount_tax, 16.00)'
+  _lvraw 0 1 'AssertionError: 15.99 != 16.00'
+  _lvd 0 0 INFO  "$OPID" odoo.tests.result   "1 failed, 0 error(s) of 42 tests"
   printf '%s\n' "$bar"
-  printf '%s%s\n' "$bar" "$(_c "$FAINT" '↑↓ scroll · tab level · type filter · ctrl+o copy · esc back · ctrl+x quit')"
+  printf '%s%s\n' "$bar" "$(_c "$FAINT" '↑↓ move · space select · ctrl+o copy selection · esc clear · ctrl+x quit')"
+  sleep 2.2
+
+  # 4) ctrl+o copies exactly the marked block; the browser closes.
+  clear
+  _log INFO "$EPID" echo.logview "run viewed" "run=test sale --tags=/sale" "lines=5/31" "copied=5"
+}
+
+# _lvhead2 BAR HEAD TFILTER LEVEL — detail header for an arbitrary run.
+_lvhead2() {
+  local bar="$1" head="$2" tf="$3" lvl="$4" tfr
+  printf '%s%s\n' "$bar" "$(_c "$DIM" "$head")"
+  if [ -n "$tf" ]; then tfr="$(_c "$FG" "$tf")"; else tfr="$(_c "$FAINT" 'type to filter…')"; fi
+  printf '%s%s%s%s%s\n' "$bar" "$(_c "$FAINT" 'filter › ')" "$tfr" \
+    "$(_c "$FAINT" '   level › ')" "$(_c "$FAINT" "$lvl")"
+  printf '%s\n' "$bar"
+}
+
+# _lvd CUR SEL LEVEL PID LOGGER MSG [fields...] — one detail log line with the
+# 3-col gutter: ❯ cursor (CUR=1) and ✓ selection (SEL=1), both stage-green.
+_lvd() {
+  local cur sel; cur=' '; sel=' '
+  [ "$1" = 1 ] && cur="$(_cb "$SUCCESS" '❯')"
+  [ "$2" = 1 ] && sel="$(_c "$SUCCESS" '✓')"
+  shift 2
+  LOGPREFIX="${bar}${cur}${sel} "
+  _log "$@"
+  LOGPREFIX=""
+}
+
+# _lvraw CUR SEL TEXT — an unleveled continuation line (traceback): plain fg,
+# no ts/pid/chip, same 3-col gutter.
+_lvraw() {
+  local cur sel; cur=' '; sel=' '
+  [ "$1" = 1 ] && cur="$(_cb "$SUCCESS" '❯')"
+  [ "$2" = 1 ] && sel="$(_c "$SUCCESS" '✓')"
+  printf '%s%s%s %s\n' "$bar" "$cur" "$sel" "$(_c "$FG" "$3")"
 }
 
 # _lvrun BAR SELECTED TIME CMD STATUS NLINES DB — one run-list row.
@@ -589,4 +635,82 @@ _lvhead() {
   printf '%s%s%s%s%s\n' "$bar" "$(_c "$FAINT" 'filter › ')" "$tfr" \
     "$(_c "$FAINT" '   level › ')" "$(_c "$FAINT" "$lvl")"
   printf '%s\n' "$bar"
+}
+
+# watch: monitor mode (Unit 87). Follows the remote Odoo logs while idle; on a
+# new commit it pauses the follow, runs the push+deploy cycle, then resumes.
+watch() {
+  local DB='muutrade'
+  _log INFO "$EPID" echo.watch "watching branch" "branch=develop" "tip=a1b2c3d" "target=develop" "interval=10s"
+  sleep 0.30
+  _log INFO "$EPID" echo.watch.logs "following logs" "service=odoo"
+  sleep 0.25
+  # idle: streaming the remote server's logs live
+  _log INFO "$OPID" werkzeug                        "127.0.0.1 - - [09/Jul/2026 17:02:11] \"GET /web HTTP/1.1\" 200 -"; sleep 0.30
+  _log INFO "$OPID" odoo.addons.base.models.ir_cron "Job 'Mail: Email Queue Manager' done";                            sleep 0.35
+  _log INFO "$OPID" werkzeug                        "127.0.0.1 - - [09/Jul/2026 17:02:14] \"POST /web/dataset/call_kw HTTP/1.1\" 200 -"; sleep 0.40
+  # a commit lands on develop → pause, run the cycle
+  _log INFO "$EPID" echo.watch.logs  "follow paused — running cycle"; sleep 0.30
+  _log INFO "$EPID" echo.watch.cycle "commits detected" "commits=1" "modules=sale_extra"; sleep 0.28
+  _log INFO "$EPID" echo.push.module "syncing" "module=sale_extra" "dest=/srv/odoo/muutrade/addons/sale_extra"; sleep 0.22
+  _treed '└─ '   'models/'
+  _treef '     ' changed "$GI_PY" 'sale_order.py'
+  sleep 0.28
+  _log INFO "$EPID" echo.push.module "synced" "module=sale_extra" "new=0" "changed=1"; sleep 0.25
+  _log INFO "$EPID" echo.deploy.compose "stop";  sleep 0.22
+  _log INFO "$EPID" echo.deploy.compose "up -d"; sleep 0.26
+  _log INFO "$EPID" echo.deploy.odoo    "running module install/update"; sleep 0.24
+  _log INFO "$OPID" odoo.modules.loading "Module sale_extra loaded in 0.38s"; sleep 0.22
+  _log INFO "$OPID" odoo.modules.loading "Modules loaded.";                   sleep 0.22
+  _log INFO "$EPID" echo.watch.cycle "cycle ok" "modules=1" "commits=1"; sleep 0.30
+  # resume the follow on a fresh stream
+  _log INFO "$EPID" echo.watch.logs "following logs" "service=odoo"; sleep 0.25
+  _log INFO "$OPID" werkzeug "127.0.0.1 - - [09/Jul/2026 17:02:31] \"GET /web HTTP/1.1\" 200 -"
+}
+
+# _update_build: `update --build` remote- and source-aware (Unit 88). Asks
+# WHERE (local / target → --from / link → --remote) and the module SOURCE
+# (addons / installed) up front, lists the remote's modules in the picker, then
+# composes the line. Reproduced as the huh selects + fuzzy picker + action.
+_update_build() {
+  # 1) Where to update? — a huh select; develop (a remote target) chosen.
+  printf '\n  %s\n' "$(_cb "$FG" 'Where to update?')"
+  printf '    %s\n'   "$(_c "$DIM" 'local')"
+  printf '  %s %s\n'  "$(_c "$SUCCESS" '❯')" "$(_c "$FG"  'develop  (remote)')"
+  printf '    %s\n'   "$(_c "$DIM" 'habitta_prod  (remote)')"
+  printf '\n'; sleep 1.0
+
+  # 2) Module source? — installed in the DB (so core modules are pickable).
+  printf '  %s\n'    "$(_cb "$FG" 'Module source')"
+  printf '    %s\n'  "$(_c "$DIM" 'project addons')"
+  printf '  %s %s\n' "$(_c "$SUCCESS" '❯')" "$(_c "$FG" 'installed in the database (--installed)')"
+  printf '\n'; sleep 1.0
+
+  # 3) resolve the remote, list its installed modules
+  local DB='muutrade'
+  _log INFO "$EPID" echo.build "target resolved" "host=erp-develop" "path=/srv/odoo/muutrade"; sleep 0.30
+  _log INFO "$EPID" echo.build "listing modules" "source=installed" "count=214"; sleep 0.30
+
+  # 4) fuzzy picker over the REMOTE's installed modules — base is picked.
+  printf '\n  %s\n' "$(_cb "$WARNING" 'Modules to update  (214)')"
+  printf '  %s %s  %s\n' "$(_c "$ACCENT" '▸')" "$(_c "$SUCCESS" '☑')" "$(_c "$FG"  'base')"
+  printf '    %s  %s\n'  "$(_c "$FAINT" '☐')"                         "$(_c "$DIM" 'web')"
+  printf '    %s  %s\n'  "$(_c "$FAINT" '☐')"                         "$(_c "$DIM" 'mail')"
+  printf '    %s  %s\n'  "$(_c "$FAINT" '☐')"                         "$(_c "$DIM" 'account')"
+  printf '    %s  %s\n'  "$(_c "$FAINT" '☐')"                         "$(_c "$DIM" 'sale_extra')"
+  printf '\n'; sleep 0.9
+
+  # 5) flags — only --i18n / --level; --i18n toggled.
+  printf '  %s\n' "$(_cb "$WARNING" 'Flags for update (Tab to toggle, Enter to confirm)')"
+  printf '  %s %s  %s\n' "$(_c "$ACCENT" '▸')" "$(_c "$SUCCESS" '☑')" "$(_c "$FG"  '--i18n')"
+  printf '    %s  %s\n'  "$(_c "$FAINT" '☐')"                         "$(_c "$DIM" '--level')"
+  printf '\n'; sleep 0.8
+
+  # 6) composed line + action — --from=develop baked, --installed NOT (explicit).
+  printf '  %s %s\n' "$(_c "$DIM" 'Composed:')" \
+    "$(_cb "$ACCENT" 'update') $(_c "$FG" 'base') $(_c "$INFO" '--from')$(_c "$DIM" '=develop') $(_c "$INFO" '--i18n')"
+  printf '\n  %s\n'  "$(_cb "$FG" 'Apply?')"
+  printf '  %s %s\n' "$(_c "$ACCENT" '❯')" "$(_cb "$FG" 'Run it now')"
+  printf '    %s\n'  "$(_c "$DIM" 'Copy to clipboard')"
+  printf '    %s\n'  "$(_c "$DIM" 'Cancel')"
 }

@@ -29,6 +29,8 @@ func (sess *session) runWatch(ctx context.Context, args []string) {
 	})
 
 	switch {
+	case errors.Is(err, cmd.ErrQuit):
+		sess.handleQuit(err)
 	case errors.Is(err, cmd.ErrCancelled), errors.Is(err, huh.ErrUserAborted),
 		errors.Is(err, cmd.ErrNonInteractive), errors.Is(err, cmd.ErrUsage):
 		sess.finalize("watch", stats.errors, stats.warnings, err)

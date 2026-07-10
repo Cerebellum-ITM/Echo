@@ -24,7 +24,7 @@ var commandFlags = map[string][]string{
 	"alias":         {"--list", "--rm", "--migrate"},
 	"link":          {"--show", "--rm"},
 	"install":       {"--with-demo", "--level"},
-	"update":        {"--all", "--last", "--level", "--i18n", "--installed"},
+	"update":        {"--all", "--last", "--level", "--i18n", "--installed", "--from", "--remote"},
 	"uninstall":     {"--level"},
 	"test":          {"--update", "--tags", "--from", "--remote"},
 	"modules":       {"--config"},
@@ -51,10 +51,10 @@ var commandFlags = map[string][]string{
 	"connect":       {"--all", "--force", "--fresh", "--new-window"},
 	"push":          {"--from", "--remote", "--dirty", "--dry-run", "--delete", "--force"},
 	"deploy":        {"--from", "--limit", "--dry-run", "--force", "--i18n", "--no-i18n", "--commits", "--modules", "--auto", "--push", "--json"},
-	"watch":         {"--from", "--remote", "--interval", "--force"},
+	"watch":         {"--from", "--remote", "--interval", "--force", "--no-logs"},
 	"copy-last":     {"--errors"},
 	"report":        {"--step", "--level", "--min-level", "--copy"},
-	"logview":       {"--list", "--last", "--clear", "--force"},
+	"logview":       {"--list", "--last", "--clear", "--force", "--from", "--remote"},
 	"sequence":      {"--remote", "--from", "--last", "--continue-on-error"},
 }
 

@@ -173,6 +173,12 @@ func RunInstall(ctx context.Context, opts ModulesOpts) ([]string, error) {
 // With --all the slice is the sentinel []string{"--all"} so the caller
 // can render "all modules" in the summary.
 func RunUpdate(ctx context.Context, opts ModulesOpts) ([]string, error) {
+	// Remote mode runs the update on a connect target over SSH — it needs no
+	// local Odoo container (works from a pure addons repo, like `deploy`), so
+	// it branches before the local-config gate.
+	if from, remote := remoteFlagsIn(opts.Args); from != "" || remote {
+		return runUpdateRemote(ctx, opts, from)
+	}
 	if err := requireOdooConfig(opts.Cfg); err != nil {
 		return nil, err
 	}

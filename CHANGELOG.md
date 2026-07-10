@@ -7,6 +7,133 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **`update --build` remote- y source-aware** (Unit 88). El builder de `update`
+  ahora resuelve **dónde** corre y **de qué fuente** salen los módulos *antes*
+  del picker, arreglando la inversión anterior (el picker listaba addons locales
+  y `--remote`/`--installed` se marcaban después, sin poder influirlo). Pregunta
+  primero **Where** (local / un connect target nombrado → bakea `--from=<t>` /
+  el `link` de este directorio → `--remote`; si no hay remotos, salta el paso) y
+  **Module source** (`project addons` / `installed in the database` =
+  `--installed`), y llena el picker desde la matriz 2×2 (local/remoto ×
+  addons/instalados) vía `resolveRemoteShell` + `listRemoteConfModules`/
+  `listRemoteModules`/`resolveModules`/`installedModules`, teñido por el stage
+  resuelto. `--installed` nunca se bakea (nombres explícitos lo vuelven no-op);
+  los flags extra se reducen a `--i18n`/`--level`. Builder dedicado
+  `runUpdateBuild` (nuevo `internal/cmd/build_update.go`) al estilo de
+  `i18n-pull`/`deploy`; helper `gatherFlags` extraído del path genérico de
+  `RunBuild`; `update` sale de `buildPositionals`. Tests del bake/compose.
+- **Flags globales `--version`/`-v` y `--help`/`-h`.** Se resuelven al inicio de
+  `main`, **antes** de cualquier detección de proyecto, así que funcionan desde
+  cualquier directorio (incluido fuera de un proyecto compose): `--version`/`-v`
+  imprime la versión del CLI (`echo <x.y.z>`) y sale; `--help`/`-h` se normalizan
+  al comando `help` (ya projectless). El comando `version` in-REPL más rico sigue
+  siendo Unit 14.
+
+### Changed
+- **`watch` es ahora un modo monitor: sigue los logs remotos en vivo entre
+  ciclos** (Unit 87). Mientras espera commits, `watch` streamea los logs del
+  contenedor Odoo remoto (el mismo `compose logs -f` que `logs --remote`, por
+  el transporte SSH compartido, con las líneas recoloreadas por el REPL); al
+  detectar que la rama avanza **pausa** el follow, corre el ciclo push+deploy
+  intacto, y al terminar lo **reanuda**. Así una sola terminal muestra el
+  servidor corriendo y cada deploy. El follower es un goroutine lateral con
+  ctx derivado que nunca bloquea ni retrasa el poll: se detiene de forma
+  síncrona antes de cada ciclo (drena el stream SSH, así sus líneas nunca se
+  entremezclan con la salida del ciclo) y arranca fresco con `--tail 0` después
+  (el deploy ya imprimió y recreó contenedores). Si el stream cae solo (blip o
+  contenedor recreado) reintenta tras un intervalo con un WARNING, sin perder
+  ningún commit. Nuevo flag `--no-logs` para el modo silencioso anterior
+  (tmux/CI). Seam `watchLogStream` + helper `startWatchLogs` con tests.
+
+### Added
+- **`update --from <t>` / `--remote`: actualiza módulos en un destino remoto por
+  SSH.** `update <mods> --remote` (o `--from <target>`) corre `odoo -u` dentro
+  del contenedor Odoo **en ejecución** del remoto —el mismo transporte que
+  `deploy`/`shell`, con el output streameado en vivo— sin recrear contenedores
+  (eso es trabajo de `deploy`), igual que el update local in-place. Sin nombres
+  de módulo abre un picker sobre los addons propios del remoto (o, con
+  `--installed`, sobre cada módulo instalado en la BD remota), teñido por el
+  stage remoto. Como muta la BD remota, un target `prod` pide confirmación roja
+  salvo `--force`; `--i18n` y `--level` componen; `--last` queda local-only.
+  Corre desde un repo de addons puro sin `docker-compose.yml` local, como
+  `deploy`. Rama antes del gate de config local; nuevo
+  `internal/cmd/update_remote.go` (`runUpdateRemote`/`parseRemoteUpdateFlags`/
+  `remoteUpdateCandidates`) con tests; flags remotos en el autocompletado.
+- **`watch` sin rama abre un selector de ramas.** El branch pasa a ser
+  opcional: `watch` (sin argumento) lista las ramas locales del repo —
+  ordenadas por commit más reciente— en el picker de una sola selección y
+  observa la elegida; `watch <branch>` sigue igual. El picker corre **antes**
+  de tocar SSH, así que cancelarlo no cuesta nada; sin TTY se exige la rama
+  como argumento (ErrNonInteractive). Nuevos helpers `pickWatchBranch`/
+  `gitLocalBranches`; `parseWatchArgs` ya no exige el positional.
+- **`logview`: selección de logs por bloques y copia de la selección.** La
+  vista de detalle gana un cursor de línea (`❯`) y con **Espacio** marca/
+  desmarca el **bloque** bajo el cursor — un bloque es una línea con nivel más
+  sus líneas sin nivel siguientes (una entrada de log y su continuación, p. ej.
+  un `ERROR` con su traceback, que ya heredan su color) hasta el siguiente
+  nivel. Las líneas seleccionadas muestran `✓` en un gutter y `Ctrl+O` copia
+  **solo los bloques marcados** (o, si no hay ninguno, todo lo visible, como
+  antes). `esc` limpia primero el filtro de texto, luego la selección, y
+  después vuelve a la lista; editar el filtro o cambiar de nivel re-ancla la
+  selección (va por posición). Helpers puros `blockStartOf`/`blockEndOf`/
+  `selectedLines` con tests.
+- **`logview --from <t>` / `--remote`: navega el historial de logs de un
+  destino remoto por SSH.** Antes `logview` solo abría el `cmd-logs/` local y
+  cualquier flag remoto caía en "unknown flag". Ahora acepta `--from <target>`
+  (destino de connect nombrado) y `--remote` (el `link` de este directorio) y
+  lee el historial del servidor de solo lectura: resuelve el target, deriva su
+  directorio `cmd-logs/` del **`ProjectKey` determinista** del `remote_path`
+  (la misma clave con la que Echo guardó los registros allá) y streamea todos
+  los records en una sola pasada SSH. El navegador es idéntico al local; el
+  título muestra el destino y la vista de detalle carga cada corrida desde el
+  mapa precargado (loader inyectado en el modelo). `--clear` sigue siendo
+  local. Nuevo `internal/cmd/logview_remote.go`
+  (`FetchRemoteCmdLogs`/`parseRemoteCmdLogs`, con tests) y flags remotos en el
+  autocompletado. `parseLogviewArgs` gana `--from`/`--remote`.
+
+### Fixed
+- **`logview --remote`/`--from` se bloqueaba con "not inside a project".** Al
+  agregar el modo remoto de `logview` faltó sumarlo a `projectlessOneShot`, así
+  que navegar el historial de logs de un remoto desde un repo sin
+  `docker-compose.yml` fallaba en el gate. Ahora `logview` está en el grupo
+  remoto (projectless con `--from`/`--remote`), como `update`/`logs`/etc. El
+  `logview` local sigue necesitando proyecto (su historial va por clave de
+  proyecto). Test en `main_test.go`.
+
+- **`db-backup` fallaba con "active connections" si había usuarios conectados.**
+  `RunDBBackup` corría el guard `assertNoActiveConns` —que exige terminar las
+  conexiones o pasar `--force`— antes del dump. Eso es incorrecto para un
+  backup: `pg_dump -Fc` lee un snapshot **MVCC consistente** y es seguro contra
+  una base viva con usuarios conectados (así hace backup Odoo/odoo.sh/Postgres);
+  nunca necesita acceso exclusivo. El guard pertenece solo a `db-drop`/
+  `db-restore`, que **reemplazan/borran** la DB. Se eliminó la llamada de
+  `db-backup`; ahora respalda sin sacar a nadie. `db-drop` conserva el guard.
+
+- **Comandos que no necesitan proyecto se bloqueaban con "not inside a
+  project".** `projectlessOneShot` no incluía `help` (puramente informativo) ni
+  `update` en modo remoto, así que `echo help` y `echo update --remote`/`--from`
+  desde un repo de addons puro (sin `docker-compose.yml`) fallaban en el gate de
+  proyecto en vez de ejecutarse — pese a que `update --remote` está diseñado
+  para correr desde ahí, como `deploy`/`push`. Ahora `help` es projectless
+  incondicional y `update` se suma al grupo remoto (`--from`/`--remote`). Tests
+  en `main_test.go`.
+
+- **`logview`: la vista de detalle rebasaba la altura del terminal y empujaba
+  el header (con el filtro) fuera de vista.** El cálculo de la ventana de
+  scroll (a) contaba solo 4 líneas de chrome cuando el detalle dibuja 5
+  (head, filtro, blank, blank, footer) y no reservaba las filas de los
+  indicadores `↑/↓ N more`, y (b) medía cada log-line como **una** fila
+  aunque las líneas largas se **envuelven** a varias filas visuales — así el
+  cuerpo desbordaba y el terminal scrolleaba el header hacia arriba. Ahora el
+  modelo captura también el `Width` del `WindowSizeMsg` y el llenado es
+  *wrap-aware*: `visualRows` mide las filas envueltas de cada línea (ignorando
+  ANSI vía `lipgloss.Width`), `bodyWindow` llena la ventana por filas visuales,
+  `maxTopOffset` mantiene la última línea alcanzable y `pageBack` pagina
+  correctamente; `logviewChrome` pasa a 5 y `maxRows` reserva 2 filas para los
+  indicadores. `cmdBudget` de la lista ahora escala con el ancho real. Helpers
+  puros con tests en `logview_test.go`.
+
 ### Changed
 - **README: documentados los comandos del 0.21.0 y añadidos sus GIFs de demo.**
   El `README.md` no cubría los comandos entrados en el último release; ahora

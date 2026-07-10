@@ -25,7 +25,7 @@ Echo is a work in progress; below is what currently ships in `main`.
 |-----------|-------------------------------------------------------------------------|---------------------------------|
 | Project   | `init`, `reset`, `alias` (`-C <name>` registry), `help`, `clear`        | `version`, `stage`, `theme`, `logo` |
 | Docker    | `up`, `down`, `stop`, `restart`, `ps`, `logs` (`--copy`/`--all`/`-t`; `up`/`stop`/`restart`/`logs` also `--from`/`--remote` over SSH) | — |
-| Modules   | `install`, `update` (`--i18n`), `uninstall`, `test`, `modules` (`--config`), `modinfo`, `view` | —             |
+| Modules   | `install`, `update` (`--i18n`, `--remote`), `uninstall`, `test`, `modules` (`--config`), `modinfo`, `view` | —             |
 | Database  | `db-admin`, `db-backup` (`--with-filestore`), `db-restore` (rename + live progress), `db-pull` (clone a remote DB), `db-drop`, `db-neutralize`, `db-list`, `db-use` | — |
 | Shell     | `shell`, `bash`, `psql`                                                  | —                               |
 | i18n      | `i18n-export`, `i18n-update`, `i18n-pull` (from a remote)                | —                               |
@@ -168,6 +168,7 @@ echo restart --from staging    # ad-hoc: a different named target
 | `  --last`               | Repeat the last update for this project + DB         |
 | `  --i18n`               | Overwrite the modules' translations from their shipped `.po` (all langs) |
 | `  --installed`          | Source the picker from every installed module (e.g. `base`), not just the repo |
+| `  --from <target>` / `--remote` | Run the update on a **remote** instance over SSH (named target, or this directory's `link`) |
 | `uninstall <mod>...`     | Uninstall modules                                    |
 | `  --level <lvl>`        | Odoo `--log-level` (`debug`…`critical`) — on install/update/uninstall |
 | `test <mod>...`          | Run the modules' Odoo test suite (filters `--test-tags`) |
@@ -202,6 +203,14 @@ without typing its name. Explicit names still work too (`update base`); the flag
 only changes what the picker offers:
 
 <p align="center"><img src="demo/gifs/update-installed.gif" alt="echo update --installed — picker listing core modules like base" width="860"></p>
+
+`update` also runs against a **remote** instance: `update sale --remote` (or
+`--from <target>`) executes `odoo -u` inside the remote's running Odoo container
+over the same SSH transport as `deploy`/`shell`, streaming the log live. Without
+module names it opens a picker over the remote's own addons (or, with
+`--installed`, every module installed in the remote DB). A `prod`-stage target
+asks for a red confirmation unless `--force`; `--last` stays local-only. Like
+`deploy`, it works from a pure addons repo with no local `docker-compose.yml`.
 
 `modinfo` compares the version Odoo recorded as installed against the manifest —
 `up to date` stays INFO, a pending upgrade is flagged WARN:
@@ -433,10 +442,21 @@ remote's addons dir), never by the directory you run `push` from.
 | `  --dry-run`                    | List the changes rsync would make; transfer nothing              |
 | `  --delete`                     | Remove remote files no longer present locally                    |
 | `  --force`                      | Skip the remote `prod`-stage confirmation                        |
-| `watch <branch>`                 | Poll a branch and auto `push`+`deploy` when new commits land (`Ctrl+C` to stop) |
+| `watch [<branch>]`               | Poll a branch and auto `push`+`deploy` when new commits land (`Ctrl+C` to stop); no branch → branch picker |
 | `  --from <target>` / `--remote` | Target a named connect target or this directory's linked remote  |
 | `  --interval <sec>`             | Poll interval in seconds (default `10`, min `2`)                 |
 | `  --force`                      | Required to watch a `prod`-stage target                          |
+| `  --no-logs`                    | Don't follow the remote logs between cycles (silent wait)        |
+
+`watch` is a **monitor**: while it waits for commits it follows the remote
+Odoo container's logs live (the same stream as `logs --remote`), and when the
+branch advances it pauses the follow, runs the push+deploy cycle, then resumes
+following — so one terminal shows both the running server and every deploy. If
+the log stream drops (a blip, or the deploy recreating the container) the
+follow recovers on its own without missing a commit. `--no-logs` keeps the
+old silent-between-cycles behavior for `tmux`/CI.
+
+<p align="center"><img src="demo/gifs/watch.gif" alt="echo watch — follows remote logs, then pauses to push+deploy on a new commit, then resumes" width="860"></p>
 
 <p align="center"><img src="demo/gifs/push.gif" alt="echo push — colored change tree per module, synced over SSH" width="860"></p>
 
@@ -465,9 +485,10 @@ side), not file-by-file reads.
 | `copy-last [--errors]`  | Copy the last command's output (or only its error/warn lines) |
 | `report [--step=N] [--level=lvl \| --min-level=lvl] [--copy]` | Inspect or copy the last `echo run`'s logs by step and level |
 | `logview`               | Interactive browser over every past command's saved logs     |
+| `  --from <target>` / `--remote` | Browse a **remote** target's log history over SSH instead of the local one |
 | `  --list`              | Print the run list without the interactive browser           |
 | `  --last`              | Open the most recent run directly                            |
-| `  --clear [--force]`   | Delete this project's log history (`--force` skips the confirm) |
+| `  --clear [--force]`   | Delete this project's log history (`--force` skips the confirm; local only) |
 
 `report` reads the structured record every `echo run` persists, so it works
 across invocations. `--level=warn` matches that level exactly;
@@ -480,9 +501,19 @@ alt-screen browser over that history. It opens on a **run list** (newest first:
 time · command · status · line count · db) with type-to-filter; `enter` opens a
 run's **log view**, where typing filters the lines live and `Tab` cycles a
 minimum-level threshold (`all → DEBUG+ → … → CRITICAL`) — both filters compose.
-`Ctrl+O` copies exactly the visible lines; `esc` steps back, `q` closes. Each
-line keeps the color it had when it first streamed. Retention is pruned by age
-and count (`[cmd_logs]` in `global.toml`).
+In the log view a line cursor (`❯`) moves with `↑↓`, **`Space`** marks the
+**block** under it (a leveled line plus its unleveled continuation — an entry
+and its traceback — shown with a `✓` gutter), and `Ctrl+O` copies the marked
+blocks (or, with nothing marked, everything visible). `esc` peels the text
+filter, then the selection, then steps back; `q` closes. Each line keeps the
+color it had when it first streamed. Retention is pruned by age and count
+(`[cmd_logs]` in `global.toml`).
+
+`logview --from <target>` / `--remote` browses a **remote** target's history
+instead: it reads the server's own `cmd-logs/` over SSH (read-only), so you can
+review what ran on a staging/prod box from your laptop — runs from a pure addons
+repo, no local `docker-compose.yml`. The local `logview` still needs a project
+(its history is keyed by project path).
 
 <p align="center"><img src="demo/gifs/logview.gif" alt="echo logview — run list, per-run log view, live text and level filters" width="860"></p>
 
@@ -514,6 +545,16 @@ interactive, so a non-TTY invocation (recipe, CI) fails closed with exit 2.
 `--from=<target>` into the line, and lists that remote's own modules for the
 picker.
 
+`update --build` is remote- **and** source-aware for the same reason: it first
+asks **where** (local, a named target → bakes `--from=<t>`, or this directory's
+link → bakes `--remote`) and **which source** (the project's addons, or every
+module installed in the database — the `--installed` set), then lists exactly
+those modules in the picker, tinted by the resolved stage. So you can compose
+`update base web --from=prod` by browsing the remote's installed modules,
+instead of picking local addons and hoping the flags line up.
+
+<p align="center"><img src="demo/gifs/update-build.gif" alt="echo update --build — where/source selects, remote installed-module picker, composed line with --from baked" width="860"></p>
+
 ## Scripting & recipes
 
 Every command also runs **non-interactively**, so Echo fits into scripts and CI:
@@ -526,6 +567,13 @@ echo -C my-shop ps                 # …or by a registered alias (see `alias`)
 
 Exit codes: `0` success, `1` execution error (or `ERROR`/`CRITICAL` lines),
 `2` usage / a prompt that can't run without a TTY, `3` cancelled.
+
+`echo --version` / `-v` prints the CLI version and `echo --help` / `-h` prints
+the command list — both work from anywhere, including outside a project. The
+remote forms of most commands (`--from <target>` / `--remote`) also run from a
+pure addons repo with no local `docker-compose.yml`: `update`, `logs`, `logview`,
+`shell`, `compare`, `sequence`, and the always-remote `deploy`/`push`/`watch`/
+`i18n-pull`.
 
 `echo run <file>` runs a **recipe** — one command per line — as an update
 routine:

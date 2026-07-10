@@ -23,6 +23,47 @@ _(siguiente: Unit 14 — meta-commands. Fix deploy-build-muting: el builder de `
 
 ## Completed
 
+- [x] Unit 88 — update-build-remote. `update --build` gana un builder dedicado
+  (`runUpdateBuild`, `internal/cmd/build_update.go`) al estilo de
+  `i18n-pull`/`deploy`: resuelve **Where** (select local / target nombrado →
+  bake `--from=<t>` / link → `--remote`; salta el paso si no hay remotos ni
+  link; `opts.From` de un sequence lo pre-selecciona) y **Module source**
+  (`project addons` / `installed --installed`) ANTES del picker, arreglando la
+  inversión (antes el picker listaba addons locales y `--remote`/`--installed`
+  se marcaban después). Picker desde la matriz 2×2 (local/remoto ×
+  addons/instalados) vía `resolveRemoteShell` + `listRemoteConfModules`/
+  `listRemoteModules`/`resolveModules`/`installedModules`, teñido por el stage
+  resuelto; SSH no silencioso vía adapter `updateBuildLog`. `--installed` nunca
+  se bakea (no-op con nombres explícitos); flags extra reducidos a
+  `--i18n`/`--level`. Helper `gatherFlags` extraído del path genérico de
+  `RunBuild`; `update` sale de `buildPositionals` (special-case en `RunBuild`).
+  README (Build mode) + CHANGELOG `### Added`. Tests `build_update_test.go`
+  (`updateBuildRemoteFlag` + línea compuesta por modo). **Verificado EN VIVO**
+  con tui-probe el flujo local completo (where→source→picker→flags→`update
+  sale_extra --i18n`→Copy); el camino remoto reusa transporte ya probado
+  (pendiente prueba contra remoto real por el usuario).
+
+- [x] Unit 87 — watch-follow-logs. `watch` pasa a modo monitor: entre polls
+  sigue en vivo los logs del contenedor Odoo remoto (mismo `compose logs
+  --no-log-prefix -f` + `runSSHStream` que `logs --remote`, líneas por
+  `opts.StreamOut` → el REPL las recolorea). El follower es un goroutine lateral
+  (`startWatchLogs` con ctx derivado + canal `done`, seam `watchLogStream` para
+  tests) que NUNCA bloquea el poll: `startLogs("20")` al arrancar; en cada
+  avance `pauseLogs()` lo detiene de forma **síncrona** (cancela + drena el
+  stream SSH antes de imprimir nada del ciclo, así no hay interleaving), corre
+  `watchCycle` intacto, y `startLogs("0")` reanuda con stream fresco (el deploy
+  ya imprimió y recreó contenedores). Muerte inesperada del stream con ctx vivo
+  → WARNING `log stream ended — retrying` + reintento tras un intervalo con
+  `--tail 0`; ctx cancelado → fin silencioso. `Ctrl+C` → `pauseLogs()` y luego
+  el summary `watch stopped` como última línea. Nuevo flag `--no-logs` (modo
+  silencioso anterior, tmux/CI): con él `startLogs`/`pauseLogs` son no-ops.
+  Frames bajo sub-logger `logs` (`following logs`/`follow paused …`). Registro:
+  help + `commandFlags["watch"]` + README (fila + prosa de monitor) + CHANGELOG
+  `### Changed`. Tests `watch_test.go`: `--no-logs` parse, lifecycle del follower
+  (stop() cancela y bloquea hasta que el goroutine sale — garantía de
+  no-interleaving), retry con `--tail 0`, cancel sin retry; `go test -race`
+  limpio. **Pendiente verificación EN VIVO** (remoto real con SSH).
+
 - [x] Unit 86 — compare --all. Extiende el `compare` de la Unit 80 con modo de
   módulo completo: `compare <mod> --all [--from <t>|--remote] [--copy]` hashea
   todo el módulo local (crypto/md5 in-process) y su copia en Docker (un

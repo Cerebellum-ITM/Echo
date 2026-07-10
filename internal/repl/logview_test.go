@@ -1,10 +1,13 @@
 package repl
 
 import (
+	"strings"
 	"testing"
 	"time"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/pascualchavez/echo/internal/config"
+	"github.com/pascualchavez/echo/internal/theme"
 )
 
 func lvLines() []config.ReportLine {
@@ -137,11 +140,214 @@ func TestLogviewTimeLabel(t *testing.T) {
 }
 
 func TestParseLogviewArgs(t *testing.T) {
-	list, last, clear, force, unknown := parseLogviewArgs([]string{"--clear", "--force"})
-	if !clear || !force || list || last || unknown != "" {
-		t.Fatalf("parse --clear --force wrong: %v %v %v %v %q", list, last, clear, force, unknown)
+	list, last, clear, force, remote, from, unknown := parseLogviewArgs([]string{"--clear", "--force"})
+	if !clear || !force || list || last || remote || from != "" || unknown != "" {
+		t.Fatalf("parse --clear --force wrong: %v %v %v %v %v %q %q", list, last, clear, force, remote, from, unknown)
 	}
-	if _, _, _, _, u := parseLogviewArgs([]string{"--bogus"}); u != "--bogus" {
+	if _, _, _, _, _, _, u := parseLogviewArgs([]string{"--bogus"}); u != "--bogus" {
 		t.Fatalf("unknown flag not surfaced: %q", u)
+	}
+	// --from consumes its value token; --remote is a bare switch.
+	if _, _, _, _, _, f, u := parseLogviewArgs([]string{"--from", "prod"}); f != "prod" || u != "" {
+		t.Fatalf("--from prod → from=%q unknown=%q", f, u)
+	}
+	if _, _, _, _, _, f, _ := parseLogviewArgs([]string{"--from=staging"}); f != "staging" {
+		t.Fatalf("--from=staging → from=%q", f)
+	}
+	if _, _, _, _, r, _, _ := parseLogviewArgs([]string{"--remote"}); !r {
+		t.Fatalf("--remote not parsed")
+	}
+}
+
+func TestVisualRows(t *testing.T) {
+	if got := visualRows("short", 0); got != 1 {
+		t.Fatalf("unknown width should be 1 row, got %d", got)
+	}
+	if got := visualRows("abcdef", 80); got != 1 {
+		t.Fatalf("fits in width = 1 row, got %d", got)
+	}
+	// 100 visible cols at width 40 → ceil(100/40) = 3 rows.
+	if got := visualRows(strings.Repeat("x", 100), 40); got != 3 {
+		t.Fatalf("wrap count = %d, want 3", got)
+	}
+	// ANSI escapes don't count toward width.
+	styled := "\x1b[38;2;1;2;3m" + strings.Repeat("y", 20) + "\x1b[0m"
+	if got := visualRows(styled, 40); got != 1 {
+		t.Fatalf("ANSI-styled 20-col line = %d rows, want 1", got)
+	}
+}
+
+func TestBodyWindow(t *testing.T) {
+	rows := []int{1, 2, 3, 1, 1} // visual heights
+	// budget 4 from offset 0: 1+2 fit (3), +3 overflows → 2 lines.
+	if got := bodyWindow(rows, 0, 4); got != 2 {
+		t.Fatalf("bodyWindow(0,4) = %d, want 2", got)
+	}
+	// budget smaller than the top line still shows it (never zero).
+	if got := bodyWindow([]int{5, 1}, 0, 3); got != 1 {
+		t.Fatalf("oversized top line should still show 1, got %d", got)
+	}
+	// from an inner offset, fills forward.
+	if got := bodyWindow(rows, 3, 2); got != 2 {
+		t.Fatalf("bodyWindow(3,2) = %d, want 2", got)
+	}
+}
+
+func TestMaxTopOffset(t *testing.T) {
+	rows := []int{1, 1, 1, 1, 1}
+	// budget 2 → last two lines fit → top offset 3.
+	if got := maxTopOffset(rows, 2); got != 3 {
+		t.Fatalf("maxTopOffset budget 2 = %d, want 3", got)
+	}
+	// budget ≥ total → offset 0 (everything fits).
+	if got := maxTopOffset(rows, 10); got != 0 {
+		t.Fatalf("maxTopOffset budget 10 = %d, want 0", got)
+	}
+	// a final line taller than the budget is still reachable (offset = last).
+	if got := maxTopOffset([]int{1, 1, 5}, 2); got != 2 {
+		t.Fatalf("oversized last line offset = %d, want 2", got)
+	}
+}
+
+func TestPageBack(t *testing.T) {
+	rows := []int{1, 1, 1, 1, 1}
+	if got := pageBack(rows, 4, 2); got != 2 {
+		t.Fatalf("pageBack(4,2) = %d, want 2", got)
+	}
+	if got := pageBack(rows, 0, 3); got != 0 {
+		t.Fatalf("pageBack at top = %d, want 0", got)
+	}
+}
+
+func blockLines() []config.ReportLine {
+	// An INFO entry with no continuation, an ERROR entry with a 2-line
+	// traceback (unleveled), then a WARNING entry.
+	return []config.ReportLine{
+		{Level: "INFO", Text: "starting"},      // 0 block 0
+		{Level: "ERROR", Text: "boom"},         // 1 block 1
+		{Text: "  File x.py line 3"},           // 2 block 1 (continuation)
+		{Text: "  ValueError: nope"},           // 3 block 1 (continuation)
+		{Level: "WARNING", Text: "slow query"}, // 4 block 4
+	}
+}
+
+func TestBlockStartEnd(t *testing.T) {
+	l := blockLines()
+	for i, want := range []int{0, 1, 1, 1, 4} {
+		if got := blockStartOf(l, i); got != want {
+			t.Fatalf("blockStartOf(%d) = %d, want %d", i, got, want)
+		}
+	}
+	if got := blockEndOf(l, 1); got != 4 {
+		t.Fatalf("blockEndOf(1) = %d, want 4 (ERROR + 2 traceback lines)", got)
+	}
+	if got := blockEndOf(l, 4); got != 5 {
+		t.Fatalf("blockEndOf(4) = %d, want 5", got)
+	}
+}
+
+func TestBlockLeadingUnleveled(t *testing.T) {
+	l := []config.ReportLine{
+		{Text: "preamble a"}, {Text: "preamble b"}, {Level: "INFO", Text: "go"},
+	}
+	// Leading unleveled lines anchor to block 0.
+	if blockStartOf(l, 0) != 0 || blockStartOf(l, 1) != 0 {
+		t.Fatal("leading unleveled lines should anchor to block 0")
+	}
+	if blockStartOf(l, 2) != 2 {
+		t.Fatal("the INFO line starts its own block")
+	}
+	if got := blockEndOf(l, 0); got != 2 {
+		t.Fatalf("leading block end = %d, want 2", got)
+	}
+}
+
+func TestSelectedLines(t *testing.T) {
+	l := blockLines()
+	// Select the ERROR block (start index 1) → its 3 lines come back in order.
+	got := selectedLines(l, map[int]bool{1: true})
+	if len(got) != 3 || got[0].Text != "boom" || got[2].Text != "  ValueError: nope" {
+		t.Fatalf("selected ERROR block wrong: %#v", got)
+	}
+	// No selection → nil (caller falls back to copying everything).
+	if selectedLines(l, nil) != nil {
+		t.Fatal("empty selection should return nil")
+	}
+}
+
+func TestDetailSpaceTogglesBlock(t *testing.T) {
+	m := logviewModel{
+		mode:     logviewDetail,
+		record:   config.CmdLogRecord{Lines: blockLines()},
+		selected: map[int]bool{},
+		height:   40,
+		width:    100,
+	}
+	// Cursor on the traceback line (index 2) — its block is the ERROR at 1.
+	m.detailCursor = 2
+	updated, _ := m.updateDetail(tea.KeyMsg{Type: tea.KeySpace})
+	m2 := updated.(logviewModel)
+	if !m2.selected[1] {
+		t.Fatalf("space should select the cursor's block (start 1); selected=%v", m2.selected)
+	}
+	// Space again clears it.
+	updated, _ = m2.updateDetail(tea.KeyMsg{Type: tea.KeySpace})
+	if updated.(logviewModel).selected[1] {
+		t.Fatal("second space should deselect the block")
+	}
+}
+
+func TestDetailFilterResetsSelection(t *testing.T) {
+	m := logviewModel{
+		mode:     logviewDetail,
+		record:   config.CmdLogRecord{Lines: blockLines()},
+		selected: map[int]bool{1: true},
+		height:   40, width: 100,
+		detailCursor: 3,
+	}
+	// Typing into the filter changes the line set → selection + cursor reset.
+	updated, _ := m.updateDetail(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("x")})
+	m2 := updated.(logviewModel)
+	if len(m2.selected) != 0 || m2.detailCursor != 0 || m2.textFilter != "x" {
+		t.Fatalf("filter edit should reset selection/cursor: sel=%v cur=%d f=%q",
+			m2.selected, m2.detailCursor, m2.textFilter)
+	}
+}
+
+// TestDetailViewFitsHeight is the regression guard for the overflow bug: the
+// detail view, rendered at a known width/height with long (wrapping) lines,
+// must never produce more visual rows than the terminal height — otherwise the
+// terminal scrolls and the header (with the filter) leaves the viewport.
+func TestDetailViewFitsHeight(t *testing.T) {
+	lines := make([]config.ReportLine, 40)
+	for i := range lines {
+		lines[i] = config.ReportLine{
+			Level: "INFO",
+			Text:  "2026-07-08 10:00:00 7 INFO db odoo.modules.loading: " + strings.Repeat("word ", 25),
+		}
+	}
+	// Realistic terminal sizes: the body area holds at least one (wrapping)
+	// log line. A degenerate case where a single line is taller than the whole
+	// body area can't fit by definition and isn't the reported bug.
+	p := theme.PaletteByName("")
+	for _, dim := range []struct{ w, h int }{{80, 24}, {100, 30}, {120, 40}, {70, 20}} {
+		m := logviewModel{
+			mode:    logviewDetail,
+			record:  config.CmdLogRecord{Cmd: "update", DB: "db", Lines: lines},
+			palette: p,
+			accent:  p.PromptColor(theme.StageDev),
+			styles:  theme.New(p, theme.StageDev),
+			width:   dim.w,
+			height:  dim.h,
+		}
+		out := m.viewDetail()
+		visual := 0
+		for _, ln := range strings.Split(out, "\n") {
+			visual += visualRows(ln, dim.w)
+		}
+		if visual > dim.h {
+			t.Fatalf("detail view at %dx%d rendered %d visual rows > height %d",
+				dim.w, dim.h, visual, dim.h)
+		}
 	}
 }

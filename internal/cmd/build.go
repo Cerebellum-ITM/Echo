@@ -98,7 +98,6 @@ type flagValueSpec struct {
 // absent here skip the positional step (they only assemble flags).
 var buildPositionals = map[string]positionalSpec{
 	"install":       {title: "Modules", multi: true, list: listModules},
-	"update":        {title: "Modules", multi: true, list: listModules},
 	"uninstall":     {title: "Modules", multi: true, list: listModules},
 	"test":          {title: "Modules", multi: true, list: listModules},
 	"modinfo":       {title: "Module", multi: false, list: listModules},
@@ -203,6 +202,12 @@ func RunBuild(ctx context.Context, opts BuildOpts) (BuildResult, error) {
 	if opts.Command == "deploy" {
 		return runDeployBuild(ctx, opts)
 	}
+	// update resolves where (local/remote) and the module source
+	// (addons/installed) BEFORE the picker, so those choices govern what it
+	// offers instead of being toggled after a local-only pick.
+	if opts.Command == "update" {
+		return runUpdateBuild(ctx, opts)
+	}
 
 	spec, hasPos := buildPositionals[opts.Command]
 	if !hasPos && len(opts.Flags) == 0 {
@@ -229,42 +234,10 @@ func RunBuild(ctx context.Context, opts BuildOpts) (BuildResult, error) {
 		}
 	}
 
-	// Step 2 — flag multi-select, then Step 3 — value per selected flag.
-	var flags []chosenFlag
-	if len(opts.Flags) > 0 {
-		picked, _, canceled, err := runFuzzyPickerCore(
-			"Flags for "+opts.Command+" (Tab to toggle, Enter to confirm)",
-			opts.Flags, nil, nil, nil, opts.Palette, opts.Cfg.Stage)
-		if err != nil {
-			return BuildResult{}, err
-		}
-		if canceled {
-			return BuildResult{}, ErrCancelled
-		}
-		chosen := make(map[string]bool, len(picked))
-		for _, f := range picked {
-			chosen[f] = true
-		}
-		// Iterate opts.Flags to preserve help order regardless of pick order.
-		for _, f := range opts.Flags {
-			if !chosen[f] {
-				continue
-			}
-			vspec, takesValue := buildFlagValues[opts.Command][f]
-			if !takesValue {
-				flags = append(flags, chosenFlag{name: f})
-				continue
-			}
-			val, ok, err := promptFlagValue(f, vspec, opts)
-			if err != nil {
-				return BuildResult{}, err
-			}
-			if !ok {
-				warn(opts, "flag "+f+" skipped (no value)")
-				continue
-			}
-			flags = append(flags, chosenFlag{name: f, value: val, sep: vspec.sep})
-		}
+	// Step 2 — flag multi-select + value per selected flag.
+	flags, err := gatherFlags(opts, opts.Flags, opts.Cfg.Stage)
+	if err != nil {
+		return BuildResult{}, err
 	}
 
 	// Step 4 — compose, show, decide.
@@ -277,6 +250,52 @@ func RunBuild(ctx context.Context, opts BuildOpts) (BuildResult, error) {
 		return BuildResult{}, err
 	}
 	return BuildResult{Args: args, Action: action}, nil
+}
+
+// gatherFlags runs the flag multi-select over `flags` (Tab to toggle), then
+// prompts for a value on each selected flag that takes one (per
+// buildFlagValues[opts.Command]). Results keep the `flags` order regardless of
+// pick order; a flag whose value prompt is skipped is dropped with a warning.
+// The picker is tinted by `stage`. Shared by the generic RunBuild path and the
+// bespoke builders (update).
+func gatherFlags(opts BuildOpts, flags []string, stage string) ([]chosenFlag, error) {
+	if len(flags) == 0 {
+		return nil, nil
+	}
+	picked, _, canceled, err := runFuzzyPickerCore(
+		"Flags for "+opts.Command+" (Tab to toggle, Enter to confirm)",
+		flags, nil, nil, nil, opts.Palette, stage)
+	if err != nil {
+		return nil, err
+	}
+	if canceled {
+		return nil, ErrCancelled
+	}
+	chosen := make(map[string]bool, len(picked))
+	for _, f := range picked {
+		chosen[f] = true
+	}
+	var out []chosenFlag
+	for _, f := range flags {
+		if !chosen[f] {
+			continue
+		}
+		vspec, takesValue := buildFlagValues[opts.Command][f]
+		if !takesValue {
+			out = append(out, chosenFlag{name: f})
+			continue
+		}
+		val, ok, err := promptFlagValue(f, vspec, opts)
+		if err != nil {
+			return nil, err
+		}
+		if !ok {
+			warn(opts, "flag "+f+" skipped (no value)")
+			continue
+		}
+		out = append(out, chosenFlag{name: f, value: val, sep: vspec.sep})
+	}
+	return out, nil
 }
 
 // pickPositionals runs the multi- or single-select picker for the spec.
