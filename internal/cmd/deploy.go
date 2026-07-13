@@ -85,6 +85,12 @@ type deployArgs struct {
 	// noActions skips all declared deploy actions (Unit 92) for this run —
 	// the escape hatch when a server-declared action is broken.
 	noActions bool
+	// noPush forces the code push off even when `[deploy] push` makes it the
+	// configured default (Unit 95). Mutually exclusive with --push.
+	noPush bool
+	// setPush, when non-nil, is a config-only request to persist `[deploy]
+	// push` locally and exit (deploy --set-push[=true|false]).
+	setPush *bool
 }
 
 // parseDeployArgs extracts --from/--limit/--dry-run/--force/--i18n/--no-i18n
@@ -144,6 +150,18 @@ func parseDeployArgs(args []string) (deployArgs, error) {
 			out.auto = true
 		case a == "--push":
 			out.push = true
+		case a == "--no-push":
+			out.noPush = true
+		case a == "--set-push":
+			t := true
+			out.setPush = &t
+		case strings.HasPrefix(a, "--set-push="):
+			v := strings.TrimPrefix(a, "--set-push=")
+			b, berr := strconv.ParseBool(v)
+			if berr != nil {
+				return out, fmt.Errorf("%w: --set-push takes true or false, got %q", ErrUsage, v)
+			}
+			out.setPush = &b
 		case a == "--checkpoint":
 			out.checkpointSet = true
 		case strings.HasPrefix(a, "--checkpoint="):
@@ -180,10 +198,30 @@ func parseDeployArgs(args []string) (deployArgs, error) {
 	if out.checkpointSet && out.noCheckpoint {
 		return out, fmt.Errorf("%w: --checkpoint and --no-checkpoint are mutually exclusive", ErrUsage)
 	}
+	if out.push && out.noPush {
+		return out, fmt.Errorf("%w: --push and --no-push are mutually exclusive", ErrUsage)
+	}
 	if out.rollback && (out.auto || len(out.commits) > 0 || len(out.modules) > 0 || out.push) {
 		return out, fmt.Errorf("%w: --rollback cannot be combined with --commits/--modules/--auto/--push", ErrUsage)
 	}
 	return out, nil
+}
+
+// resolveDeployPush computes whether this deploy ships code: an explicit
+// --push/--no-push wins; otherwise the server [deploy] push, then the local
+// one, then false (Unit 95).
+func resolveDeployPush(p deployArgs, prof config.RemoteProfile, cfg *config.Config) bool {
+	switch {
+	case p.noPush:
+		return false
+	case p.push:
+		return true
+	case prof.DeployPush != nil:
+		return *prof.DeployPush
+	case cfg != nil && cfg.DeployPush != nil:
+		return *cfg.DeployPush
+	}
+	return false
 }
 
 // stageWantsCheckpoint reports whether a stage is checkpoint-worthy under the
@@ -347,6 +385,20 @@ func RunDeploy(ctx context.Context, opts DeployOpts) (DeployResult, error) {
 	p, err := parseDeployArgs(opts.Args)
 	if err != nil {
 		return DeployResult{}, err
+	}
+
+	// deploy --set-push is config-only: persist the local [deploy] push
+	// default and exit — no remote resolution, no deploy.
+	if p.setPush != nil {
+		cfgCopy := *opts.Cfg
+		cfgCopy.DeployPush = p.setPush
+		if serr := config.SaveProject(&cfgCopy); serr != nil {
+			return DeployResult{}, fmt.Errorf("save deploy push default: %w", serr)
+		}
+		opts.Cfg.DeployPush = p.setPush
+		opts.log("INFO", "", "deploy push default set", opts.Cfg.DBName,
+			[2]string{"push", strconv.FormatBool(*p.setPush)})
+		return DeployResult{}, nil
 	}
 
 	// deploy --rollback is a standalone operation: restore the target's most
@@ -543,6 +595,12 @@ func RunDeploy(ctx context.Context, opts DeployOpts) (DeployResult, error) {
 		statusFields(target.odooVersion, prof.Stage,
 			statusProjectName(opts.Cfg, true, remotePath, fromName),
 			prof.DBName)...)
+
+	// Resolve the effective push default (Unit 95): explicit flags win, then
+	// the server [deploy] push, then the local one, then off. Setting p.push
+	// here lets every downstream check read it unchanged.
+	p.push = resolveDeployPush(p, prof, opts.Cfg)
+
 	conn := odoo.Conn{DB: target.dbName, Host: target.dbContainer}
 	pg := remotePullEnv(ctx, sshHost, remotePath)
 	conn.Port = pg["POSTGRES_PORT"]

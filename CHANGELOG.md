@@ -8,6 +8,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **`deploy` puede empujar por default (`[deploy] push`).** Para remotos que
+  construyen la imagen (donde un deploy siempre manda código), ya no hace falta
+  teclear `--push` cada vez: `[deploy] push = true` lo prende por default, resuelto
+  **server-first con fallback local** (el servidor sabe que construye imagen). Se
+  configura desde CLI sin editar TOML con `deploy --set-push` (escribe la config
+  local y sale, sin deploy ni SSH; `--set-push=false` lo apaga). `--no-push` lo
+  salta puntualmente aunque sea el default; `--push`/`--no-push` son mutuamente
+  excluyentes. `watch` siempre empuja desde su propio git archive, así que el
+  default nunca causa doble push ahí (su deploy interno pasa `--no-push`).
 - **`push --set-dest` — fijar el destino de push sin empujar nada.** El paso
   natural de configuración para remotos que construyen la imagen: resuelve el
   target, abre el picker del FS remoto (o toma `--dest <path>` headless), guarda

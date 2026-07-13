@@ -125,6 +125,11 @@ type Config struct {
 	// The list is wholesale: a non-empty project list replaces the global
 	// one (order across machines must stay predictable).
 	DeployActions []DeployAction
+
+	// DeployPush ([deploy] push, global + per-project, project wins) — when
+	// set, makes `deploy` ship code by default without `--push` (Unit 95).
+	// Pointer to distinguish unset (fall through) from an explicit false.
+	DeployPush *bool
 }
 
 // DeployAction is one declared step in the deploy lifecycle. Phase is
@@ -205,10 +210,12 @@ type pushConfig struct {
 	Mkdir *bool  `toml:"mkdir"`
 }
 
-// deployFile is the [deploy] table; its `actions` array of tables carries
-// the declared deploy-lifecycle steps. A nil pointer (section absent) means
-// no actions on that side of the merge.
+// deployFile is the [deploy] table: its `actions` array of tables carries
+// the declared deploy-lifecycle steps, and `push` sets whether `deploy`
+// ships code by default. A nil pointer (section absent) means neither is
+// declared on that side of the merge.
 type deployFile struct {
+	Push    *bool              `toml:"push,omitempty"`
 	Actions []deployActionFile `toml:"actions"`
 }
 
@@ -434,6 +441,13 @@ func Load(projectPath string) (*Config, error) {
 	}
 	// Deploy actions: wholesale — a project list replaces the global one.
 	cfg.DeployActions = mergeDeployActions(deployActionsFrom(g.Deploy), deployActionsFrom(p.Deploy))
+	// [deploy] push default: project overrides global (nil stays nil).
+	if g.Deploy != nil && g.Deploy.Push != nil {
+		cfg.DeployPush = g.Deploy.Push
+	}
+	if p.Deploy != nil && p.Deploy.Push != nil {
+		cfg.DeployPush = p.Deploy.Push
+	}
 	if p.Connect != nil {
 		cfg.ConnectSSHHost = p.Connect.SSHHost
 		cfg.ConnectRemotePath = p.Connect.RemotePath
@@ -495,6 +509,11 @@ type RemoteProfile struct {
 	// wins over the client's local list (Unit 92); empty when the server
 	// declares none.
 	DeployActions []DeployAction
+
+	// DeployPush declared on the SERVER ([deploy] push). When set, wins over
+	// the client's local [deploy] push for the effective default (Unit 95);
+	// nil when the server doesn't declare it.
+	DeployPush *bool
 }
 
 // ParseRemoteProfile decodes a remote host's `global.toml` and
@@ -563,7 +582,20 @@ func ParseRemoteProfile(globalTOML, projectTOML []byte) RemoteProfile {
 		PushPath:         push.Path,
 		PushMkdir:        push.Mkdir,
 		DeployActions:    mergeDeployActions(deployActionsFrom(g.Deploy), deployActionsFrom(p.Deploy)),
+		DeployPush:       mergeDeployPush(g.Deploy, p.Deploy),
 	}
+}
+
+// mergeDeployPush resolves the server-side [deploy] push: project over
+// global, nil when neither declares it.
+func mergeDeployPush(global, project *deployFile) *bool {
+	if project != nil && project.Push != nil {
+		return project.Push
+	}
+	if global != nil && global.Push != nil {
+		return global.Push
+	}
+	return nil
 }
 
 // WithDeployActions returns the TOML bytes of a project profile with its
@@ -676,10 +708,10 @@ func SaveProject(cfg *Config) error {
 	if cfg.PushPath != "" || cfg.PushMkdir != nil {
 		p.Push = &pushConfig{Path: cfg.PushPath, Mkdir: cfg.PushMkdir}
 	}
-	// Persist declared deploy actions (managed by the `actions` command);
-	// an empty list leaves the section out.
-	if len(cfg.DeployActions) > 0 {
-		p.Deploy = &deployFile{Actions: deployActionsToFile(cfg.DeployActions)}
+	// Persist the [deploy] section when either the actions list or the push
+	// default is set; a pure-default config leaves it out.
+	if len(cfg.DeployActions) > 0 || cfg.DeployPush != nil {
+		p.Deploy = &deployFile{Push: cfg.DeployPush, Actions: deployActionsToFile(cfg.DeployActions)}
 	}
 	var buf bytes.Buffer
 	if err := toml.NewEncoder(&buf).Encode(p); err != nil {

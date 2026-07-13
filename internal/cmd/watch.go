@@ -372,6 +372,10 @@ func deployCommitsHeadless(ctx context.Context, opts WatchOpts, from string, noC
 	if noActions {
 		args = append(args, "--no-actions")
 	}
+	// watch already pushed the committed content from the git archive; tell the
+	// deploy not to push again even when [deploy] push is the configured
+	// default (Unit 95), so a cycle never double-pushes.
+	args = append(args, "--no-push")
 	res, err := RunDeploy(ctx, DeployOpts{
 		Cfg: opts.Cfg, Root: opts.Root, Args: args, Palette: opts.Palette,
 		Log: opts.Log, StreamOut: opts.StreamOut,

@@ -359,7 +359,17 @@ the code there — that's for the tool you use to sync the working tree.
 | `  --checkpoint[=db\|dump]` | Force a DB checkpoint before the run (default: auto on `staging`/`prod`) |
 | `  --no-checkpoint` | Skip the DB checkpoint even on `staging`/`prod`          |
 | `  --no-actions`   | Skip declared `[[deploy.actions]]` for this run          |
+| `  --push` / `--no-push` | Push the resolved modules before the run / skip it even when it's the default |
+| `  --set-push[=bool]` | Set `deploy` to push by default and exit (no deploy)  |
 | `  --rollback`     | Restore the target's most recent checkpoint (no deploy)  |
+
+**Push by default.** For an image-built remote where a deploy always ships
+code, make `--push` the default instead of typing it every time: `deploy
+--set-push` writes `[deploy] push = true` to the local profile (headless, no
+deploy), or declare it in the server profile (server wins, local falls back).
+Then `deploy` pushes on its own; `deploy --no-push` skips it for one run.
+`watch` always pushes from its own git archive, so the default never
+double-pushes there.
 
 #### DB checkpoint & rollback
 

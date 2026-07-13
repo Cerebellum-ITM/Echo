@@ -467,6 +467,8 @@ func helpSections() []helpSection {
 			{"deploy", "Deploy picked commits + dirty modules to a remote (stop, up, -i/-u)"},
 			{"  --from <target>", "Use a named connect target (default: this dir's link)"},
 			{"  --push", "Rsync the resolved modules to the remote before the run"},
+			{"  --no-push", "Skip the push even when [deploy] push is the default"},
+			{"  --set-push[=bool]", "Set deploy to push by default and exit (no deploy)"},
 			{"  --limit <N>", "Commits offered in the picker (default 20)"},
 			{"  --dry-run", "Resolve modules and show the plan; execute nothing"},
 			{"  --force", "Skip the prod-stage confirmation prompt"},

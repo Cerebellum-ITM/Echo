@@ -265,6 +265,47 @@ func TestDeployActionsExecPathRoundTrip(t *testing.T) {
 	}
 }
 
+func TestDeployPushConfig(t *testing.T) {
+	// Server [deploy] push: project overrides global.
+	prof := ParseRemoteProfile([]byte("[deploy]\npush = false\n"), []byte("db_name = \"erp\"\n[deploy]\npush = true\n"))
+	if prof.DeployPush == nil || !*prof.DeployPush {
+		t.Errorf("server DeployPush = %v, want true (project override)", prof.DeployPush)
+	}
+	// Absent → nil so the client falls back.
+	if bare := ParseRemoteProfile(nil, []byte("db_name = \"erp\"\n")); bare.DeployPush != nil {
+		t.Errorf("absent [deploy] push should be nil, got %v", bare.DeployPush)
+	}
+}
+
+func TestDeployPushRoundTrip(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
+
+	cfg, _ := Load("/test/project")
+	cfg.Stage = "dev"
+	tru := true
+	cfg.DeployPush = &tru
+	if err := SaveProject(cfg); err != nil {
+		t.Fatal(err)
+	}
+	reloaded, err := Load("/test/project")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reloaded.DeployPush == nil || !*reloaded.DeployPush {
+		t.Errorf("DeployPush after round-trip = %v, want true", reloaded.DeployPush)
+	}
+	// Absent → stays nil.
+	cfg2, _ := Load("/test/other")
+	cfg2.Stage = "dev"
+	if err := SaveProject(cfg2); err != nil {
+		t.Fatal(err)
+	}
+	if r2, _ := Load("/test/other"); r2.DeployPush != nil {
+		t.Errorf("absent [deploy] push should stay nil, got %v", r2.DeployPush)
+	}
+}
+
 func TestWithDeployActions(t *testing.T) {
 	// Splicing actions into an existing profile preserves other keys.
 	existing := []byte("db_name = \"erp\"\nstage = \"prod\"\n[connect]\nssh_host = \"h\"\n")

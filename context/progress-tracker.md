@@ -23,6 +23,25 @@ _(siguiente: Unit 14 — meta-commands. Fix deploy-build-muting: el builder de `
 
 ## Completed
 
+- [x] Unit 95 — deploy-push-default. `deploy --push` puede ser el default vía
+  config `[deploy] push` (bool), resuelto **server-first con fallback local**
+  (`resolveDeployPush`: `--no-push` › `--push` › server › local › false, seteado en
+  `p.push` tras leer el perfil). `--no-push` lo salta puntualmente; `--push`+`--no-push`
+  mutuamente excluyentes. Setup desde CLI con `deploy --set-push[=true|false]`:
+  config-only, persiste `[deploy] push` al perfil local (`SaveProject`) y sale — sin
+  SSH, sin deploy, headless (short-circuit al inicio de `RunDeploy`). `watch` siempre
+  empuja desde su git archive, así que su deploy interno pasa `--no-push` para no
+  duplicar el push cuando el default está prendido. Config: `deployFile.Push *bool`
+  (`toml:"push"`), `Config.DeployPush`+`RemoteProfile.DeployPush`, merge en `Load`
+  (project>global) y `ParseRemoteProfile` (`mergeDeployPush`), serialización en
+  `SaveProject` (emite `[deploy]` si hay actions O push). `deployArgs.noPush`/`setPush`,
+  `parseDeployArgs` `--no-push`/`--set-push[=bool]`. Registro commandFlags+help+
+  README (bloque "Push by default") + CHANGELOG. Tests `deploy_test.go`
+  (`parseDeployArgs` push flags + exclusión, `resolveDeployPush` matriz) y
+  `config_test.go` (`ParseRemoteProfile` `[deploy] push` + round-trip). build/vet/test
+  verdes; **verificado EN VIVO** `deploy --set-push`/`=false` escribe el perfil local
+  headless. Pendiente prueba real del default contra remoto con SSH.
+
 - [x] Unit 94 — push-set-dest. `push --set-dest`: fija el `[push] path` local
   **sin empujar nada** — resuelve el target, abre el picker del FS remoto (o toma
   `--dest <path>` headless), guarda el destino y sale. Sin módulos, sin rsync, sin
