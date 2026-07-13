@@ -23,6 +23,22 @@ _(siguiente: Unit 14 — meta-commands. Fix deploy-build-muting: el builder de `
 
 ## Completed
 
+- [x] Unit 94 — push-set-dest. `push --set-dest`: fija el `[push] path` local
+  **sin empujar nada** — resuelve el target, abre el picker del FS remoto (o toma
+  `--dest <path>` headless), guarda el destino y sale. Sin módulos, sin rsync, sin
+  prod gate (no cambia nada en el server). Quita la fricción de tener que elegir un
+  módulo solo para configurar la carpeta (el problema que reportó el usuario con
+  `push --pick-dest`). `RunPush` corta temprano tras `parsePushArgs` (antes de
+  `requireRsync`) a `runSetDest` (nuevo en `push_dest.go`): `resolveRemoteShell` →
+  `prepareExplicitDest` (con `--dest`) o `pickRemoteDir` → normaliza a relativo si
+  cae bajo `remotePath` (`underPath`) → `SaveProject` (con `PushMkdir` si `--mkdir`)
+  → log `push destination set`. `pushArgs.setDest`+`--set-dest`; registro
+  commandFlags+help+CHANGELOG+README (bloque config-only). Tests `push_dest_test.go`
+  (parse `--set-dest` solo y con `--dest`). build/vet/test verdes; verificado el
+  short-circuit (error de target sin pedir módulo). Contexto de build persiste (seed
+  una vez con el multiselect, luego `deploy --push` incremental); el usuario NO pidió
+  `push --all`/`deploy --push-all`. Pendiente prueba real contra remoto con SSH.
+
 - [x] Unit 93 — deploy-actions-interactive. (1) Campo `exec_path` en cada
   `DeployAction`: el dir donde corre el `run` — vacío→raíz (compose remoto / proyecto
   local), relativo→colgado de la raíz, absoluto→tal cual (`resolveActionDir` con par

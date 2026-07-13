@@ -49,6 +49,7 @@ type pushArgs struct {
 	remote   bool
 	dest     string
 	pickDest bool
+	setDest  bool
 	mkdir    bool
 }
 
@@ -76,6 +77,8 @@ func parsePushArgs(args []string) (pushArgs, error) {
 			out.mkdir = true
 		case a == "--pick-dest":
 			out.pickDest = true
+		case a == "--set-dest":
+			out.setDest = true
 		case a == "--dest":
 			if i+1 >= len(args) || strings.TrimSpace(args[i+1]) == "" {
 				return pushArgs{}, fmt.Errorf("%w: --dest needs a path", ErrUsage)
@@ -107,11 +110,16 @@ func parsePushArgs(args []string) (pushArgs, error) {
 // directory over SSH: resolve the target, gate prod, then sync each module
 // in place (existing remote location) or mirrored at the local subpath.
 func RunPush(ctx context.Context, opts PushOpts) error {
-	if err := requireRsync(); err != nil {
-		return err
-	}
 	p, err := parsePushArgs(opts.Args)
 	if err != nil {
+		return err
+	}
+	// --set-dest is config-only: resolve the target, pick/take the
+	// destination, persist it, and return — no modules, no rsync.
+	if p.setDest {
+		return runSetDest(ctx, opts, p)
+	}
+	if err := requireRsync(); err != nil {
 		return err
 	}
 

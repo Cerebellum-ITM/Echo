@@ -8,6 +8,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **`push --set-dest` — fijar el destino de push sin empujar nada.** El paso
+  natural de configuración para remotos que construyen la imagen: resuelve el
+  target, abre el picker del FS remoto (o toma `--dest <path>` headless), guarda
+  el `[push] path` local y sale — **sin pedir módulo, sin rsync, sin gate de
+  prod**. Quita la fricción de tener que elegir un módulo solo para configurar la
+  carpeta. `--mkdir` compone (persiste `[push] mkdir = true`); un path bajo el dir
+  del proyecto se guarda relativo, fuera de él absoluto. Después, `deploy --push`/
+  `watch` usan el destino guardado sin volver a preguntar.
 - **Comando `actions` — gestión interactiva de `[[deploy.actions]]`.** En vez de
   editar el TOML a mano: `actions` (tabla estilizada de las actions efectivas —
   local, o del servidor con `--from`/`--remote`), `actions add` (wizard

@@ -49,7 +49,7 @@ var commandFlags = map[string][]string{
 	"shell":         {"--from", "--remote", "--force"},
 	"shell-run":     {"--no-copy", "--force", "--from", "--remote"},
 	"connect":       {"--all", "--force", "--fresh", "--new-window"},
-	"push":          {"--from", "--remote", "--dirty", "--dry-run", "--delete", "--force", "--dest", "--pick-dest", "--mkdir"},
+	"push":          {"--from", "--remote", "--dirty", "--dry-run", "--delete", "--force", "--dest", "--pick-dest", "--set-dest", "--mkdir"},
 	"deploy":        {"--from", "--limit", "--dry-run", "--force", "--i18n", "--no-i18n", "--commits", "--modules", "--auto", "--push", "--json", "--checkpoint", "--no-checkpoint", "--rollback", "--no-actions"},
 	"watch":         {"--from", "--remote", "--interval", "--force", "--no-logs", "--no-checkpoint", "--no-actions"},
 	"checkpoint":    {"--from", "--remote", "--method", "--all", "--force", "--json"},

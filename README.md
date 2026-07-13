@@ -503,6 +503,15 @@ browses the remote filesystem level by level and offers to save the choice;
 if auto-detect finds nowhere to write and you're on a terminal, the picker
 opens automatically. `--mkdir` (or `[push] mkdir = true`) creates the dir.
 
+To set the destination **without pushing anything** (the usual first step),
+use `push --set-dest`: it resolves the target, opens the picker (or takes
+`--dest <path>`), saves the `[push] path`, and exits — no module needed.
+
+```bash
+echo_cli push --set-dest --from prod                 # pick the dir interactively
+echo_cli push --set-dest --dest docker/addons --from prod   # or set it headlessly
+```
+
 ```toml
 # In the SERVER's projects/<key>.toml (wins) or your local one:
 [push]

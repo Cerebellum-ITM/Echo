@@ -461,6 +461,7 @@ func helpSections() []helpSection {
 			{"  --delete", "Remove remote files no longer present locally"},
 			{"  --dest <path>", "Push to an explicit remote dir (skips auto-detect)"},
 			{"  --pick-dest", "Browse the remote filesystem to choose the destination"},
+			{"  --set-dest", "Set the remote push destination and exit (no push)"},
 			{"  --mkdir", "Create the destination dir if it doesn't exist"},
 			{"  --force", "Skip the prod-stage confirmation prompt"},
 			{"deploy", "Deploy picked commits + dirty modules to a remote (stop, up, -i/-u)"},

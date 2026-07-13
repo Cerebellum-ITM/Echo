@@ -18,6 +18,46 @@ const (
 	dirPickerUp  = ".. (up)"
 )
 
+// runSetDest implements `push --set-dest`: resolve the remote target, pick
+// (or take via --dest) the destination directory, and persist it to the
+// local [push] path — no modules, no rsync, no prod gate. Storing the path
+// relative when it falls under remotePath keeps the profile portable.
+func runSetDest(ctx context.Context, opts PushOpts, p pushArgs) error {
+	rsc, err := resolveRemoteShell(ctx, opts.Cfg, opts.Palette, opts.Root, p.from, opts.Log)
+	if err != nil {
+		return err
+	}
+	var dest string
+	if p.dest != "" {
+		dest, err = prepareExplicitDest(ctx, rsc, p.dest, p.mkdir, false)
+	} else {
+		dest, err = pickRemoteDir(ctx, rsc, opts, rsc.remotePath)
+	}
+	if err != nil {
+		return err
+	}
+	stored := dest
+	if rel, ok := underPath(rsc.remotePath, dest); ok {
+		stored = rel
+	}
+	cfgCopy := *opts.Cfg
+	cfgCopy.PushPath = stored
+	if p.mkdir {
+		t := true
+		cfgCopy.PushMkdir = &t
+	}
+	if serr := config.SaveProject(&cfgCopy); serr != nil {
+		return fmt.Errorf("save push destination: %w", serr)
+	}
+	opts.Cfg.PushPath = stored
+	if p.mkdir {
+		opts.Cfg.PushMkdir = cfgCopy.PushMkdir
+	}
+	opts.log("INFO", "", "push destination set", rsc.prof.DBName,
+		[2]string{"path", stored}, [2]string{"source", "set-dest"})
+	return nil
+}
+
 // resolvePushDest applies the destination precedence — `--dest` flag ›
 // server `[push] path` › local `[push] path` › none — and returns the
 // winning path (still un-joined/un-validated), the source label for the

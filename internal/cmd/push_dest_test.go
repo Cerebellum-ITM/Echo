@@ -43,6 +43,18 @@ func TestParsePushArgsDest(t *testing.T) {
 			t.Errorf("err = %v, want ErrUsage", err)
 		}
 	})
+	t.Run("set-dest", func(t *testing.T) {
+		p, err := parsePushArgs([]string{"--set-dest", "--from", "prod"})
+		if err != nil || !p.setDest || p.from != "prod" {
+			t.Fatalf("got setDest=%v from=%q err=%v", p.setDest, p.from, err)
+		}
+	})
+	t.Run("set-dest with dest", func(t *testing.T) {
+		p, err := parsePushArgs([]string{"--set-dest", "--dest", "build/addons"})
+		if err != nil || !p.setDest || p.dest != "build/addons" {
+			t.Fatalf("got setDest=%v dest=%q err=%v", p.setDest, p.dest, err)
+		}
+	})
 }
 
 func TestResolvePushDest(t *testing.T) {
