@@ -23,6 +23,33 @@ _(siguiente: Unit 14 — meta-commands. Fix deploy-build-muting: el builder de `
 
 ## Completed
 
+- [x] Unit 93 — deploy-actions-interactive. (1) Campo `exec_path` en cada
+  `DeployAction`: el dir donde corre el `run` — vacío→raíz (compose remoto / proyecto
+  local), relativo→colgado de la raíz, absoluto→tal cual (`resolveActionDir` con par
+  path/filepath; `actionRunLocal/Remote` hacen `cd` ahí; frame `running` loguea `dir=`).
+  (2) Comando `actions [list|add|edit|rm]`: `list` (tabla estilizada name·phase·where·
+  exec_path·run + footer source; local por defecto, servidor con `--from`/`--remote`,
+  wholesale rule avisada; `--json`), `add`/`edit` (wizard `actionWizard` como **secuencia
+  de forms huh** —el picker no cabe en un form— name→phase→where→**exec_path**→run;
+  `pickExecPath` con presets Project root/Addons directory/Pick a directory…/Type a path),
+  `rm` (red-confirm, `--force`, picker si falta nombre). El paso de dir usa el navegador
+  SSH de la Unit 91 (`pickRemoteDir` vía shim PushOpts) para `remote` y `pickLocalDir`
+  nuevo (mirror sobre `os.ReadDir`, comparte `dirPickerEntries`) para `local`; normaliza a
+  relativo si cae bajo la raíz (`underPath`). Target remoto resuelto **lazy+cacheado** (solo
+  si un picker/preset remoto o el upload lo necesita → un `actions` pelón no hace SSH).
+  Persiste al `[[deploy.actions]]` local (`SaveProject`) y ofrece **subir al servidor**
+  (`offerUploadActions`→`uploadActionsToServer`: `config.WithDeployActions` splicea la
+  sección preservando el resto, escribe por SSH stdin; gateado No-por-defecto, prod-confirm).
+  Config: `DeployAction.ExecPath`+`exec_path` toml, `deployActionsToFile`,
+  `config.WithDeployActions`, serialización en `SaveProject`. Nuevos `internal/cmd/actions.go`
+  +`actions_wizard.go`+test, `internal/repl/actions.go`. Registro Registry/dispatchNames/
+  dispatch/commandFlags/help/`projectlessOneShot`. README (tabla `actions` + `exec_path`) +
+  CHANGELOG `### Added`. Tests `actions_test.go` (parse, resolveActionDir, actionDir,
+  firstRelAddons, truncateMiddle, listLocalDirs) y `config_test.go` (exec_path round-trip,
+  WithDeployActions splice). **Verificado EN VIVO** con tmux el wizard completo local
+  (add→name→phase→where→exec_path preset→run→persist→list round-trip + `--json`); build/vet/
+  test verdes. Pendiente prueba real del picker remoto + upload contra un remoto con SSH.
+
 - [x] Unit 92 — deploy-actions. `[[deploy.actions]]` declarativas: comandos con
   nombre (`name`/`phase`/`where`/`run`) que corren **local/remoto** en fases fijas
   del ciclo de `deploy` — `pre_push`, `post_push` (rebuild de imagen), `pre_deploy`,

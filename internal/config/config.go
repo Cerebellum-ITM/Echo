@@ -130,11 +130,15 @@ type Config struct {
 // DeployAction is one declared step in the deploy lifecycle. Phase is
 // pre_push | post_push | pre_deploy | post_deploy; Where is local |
 // remote; Run is an `sh -c` command string. Name is unique within a list.
+// ExecPath is the directory Run executes in (empty = the root: remotePath
+// for a remote action, the project root for a local one; relative = joined
+// under that root; absolute = as-is).
 type DeployAction struct {
-	Name  string
-	Phase string
-	Where string
-	Run   string
+	Name     string
+	Phase    string
+	Where    string
+	ExecPath string
+	Run      string
 }
 
 // Deploy-action phase and where enums.
@@ -209,10 +213,11 @@ type deployFile struct {
 }
 
 type deployActionFile struct {
-	Name  string `toml:"name"`
-	Phase string `toml:"phase"`
-	Where string `toml:"where"`
-	Run   string `toml:"run"`
+	Name     string `toml:"name"`
+	Phase    string `toml:"phase"`
+	Where    string `toml:"where"`
+	ExecPath string `toml:"exec_path,omitempty"`
+	Run      string `toml:"run"`
 }
 
 // deployActionsFrom converts a decoded [deploy] table into the exported
@@ -223,7 +228,20 @@ func deployActionsFrom(f *deployFile) []DeployAction {
 	}
 	out := make([]DeployAction, 0, len(f.Actions))
 	for _, a := range f.Actions {
-		out = append(out, DeployAction{Name: a.Name, Phase: a.Phase, Where: a.Where, Run: a.Run})
+		out = append(out, DeployAction{Name: a.Name, Phase: a.Phase, Where: a.Where, ExecPath: a.ExecPath, Run: a.Run})
+	}
+	return out
+}
+
+// deployActionsToFile converts the exported slice back into the TOML file
+// shape for serialization (SaveProject / the actions upload).
+func deployActionsToFile(actions []DeployAction) []deployActionFile {
+	if len(actions) == 0 {
+		return nil
+	}
+	out := make([]deployActionFile, 0, len(actions))
+	for _, a := range actions {
+		out = append(out, deployActionFile{Name: a.Name, Phase: a.Phase, Where: a.Where, ExecPath: a.ExecPath, Run: a.Run})
 	}
 	return out
 }
@@ -548,6 +566,31 @@ func ParseRemoteProfile(globalTOML, projectTOML []byte) RemoteProfile {
 	}
 }
 
+// WithDeployActions returns the TOML bytes of a project profile with its
+// [[deploy.actions]] replaced by the given list (removed when empty),
+// preserving every other known key. Used by the `actions` command to
+// upload a local action set to a server's projects/<key>.toml over SSH
+// without hand-splicing TOML. An empty input yields a profile carrying
+// only the actions.
+func WithDeployActions(existingTOML []byte, actions []DeployAction) ([]byte, error) {
+	var p projectFile
+	if len(existingTOML) > 0 {
+		if err := toml.Unmarshal(existingTOML, &p); err != nil {
+			return nil, err
+		}
+	}
+	if len(actions) > 0 {
+		p.Deploy = &deployFile{Actions: deployActionsToFile(actions)}
+	} else {
+		p.Deploy = nil
+	}
+	var buf bytes.Buffer
+	if err := toml.NewEncoder(&buf).Encode(p); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
+}
+
 // SaveGlobal writes theme and logo to global.toml atomically.
 func SaveGlobal(cfg *Config) error {
 	root, err := configRoot()
@@ -632,6 +675,11 @@ func SaveProject(cfg *Config) error {
 	// survives across sessions; a pure auto-detect config leaves it out.
 	if cfg.PushPath != "" || cfg.PushMkdir != nil {
 		p.Push = &pushConfig{Path: cfg.PushPath, Mkdir: cfg.PushMkdir}
+	}
+	// Persist declared deploy actions (managed by the `actions` command);
+	// an empty list leaves the section out.
+	if len(cfg.DeployActions) > 0 {
+		p.Deploy = &deployFile{Actions: deployActionsToFile(cfg.DeployActions)}
 	}
 	var buf bytes.Buffer
 	if err := toml.NewEncoder(&buf).Encode(p); err != nil {

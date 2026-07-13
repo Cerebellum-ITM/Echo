@@ -8,6 +8,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Comando `actions` — gestión interactiva de `[[deploy.actions]]`.** En vez de
+  editar el TOML a mano: `actions` (tabla estilizada de las actions efectivas —
+  local, o del servidor con `--from`/`--remote`), `actions add` (wizard
+  name→phase→where→exec dir→command), `actions edit [<name>]` (edición in-place,
+  picker si se omite el nombre) y `actions rm [<name>] [--force]`. El wizard corre
+  como una secuencia de forms `huh` (el picker no cabe dentro de un form); el paso
+  de directorio ofrece **Project root**, **Addons directory** (resuelto del
+  perfil), **Pick a directory…** (navegador SSH remoto de la Unit 91 para actions
+  `remote`, navegador local para `local`) o **Type a path** — un path elegido se
+  guarda relativo si cae bajo la raíz. Las ediciones persisten al
+  `[[deploy.actions]]` **local**; tras cada cambio Echo ofrece (gateado, No por
+  defecto, red-confirm en prod) subir la lista al perfil del proyecto en el
+  servidor por SSH, reescribiendo solo esa sección. `actions list --json` para
+  scripting.
+- **`exec_path` en las deploy actions.** Cada action puede fijar el directorio
+  donde corre su `run`: vacío/ausente → la raíz (dir del compose en remoto, raíz
+  del proyecto en local); relativo → colgado de esa raíz; absoluto → tal cual. El
+  frame `running` loguea `dir=` cuando está seteado. Pensado para contextos de
+  build fuera del árbol del compose (p.ej. `exec_path = "docker"` para el rebuild
+  de imagen).
 - **Deploy actions (`[[deploy.actions]]`).** Comandos con nombre que corren
   **local o remoto** en puntos fijos del ciclo de `deploy`: `pre_push`,
   `post_push` (p.ej. reconstruir la imagen desde el código recién pusheado),

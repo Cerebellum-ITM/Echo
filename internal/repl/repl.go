@@ -211,7 +211,7 @@ func (sess *session) renderPrompt() string {
 var dispatchNames = []string{
 	"help", "clear", "copy-last", "report", "logview", "sequence",
 	"init", "reset", "alias", "link",
-	"up", "down", "stop", "restart", "ps", "logs", "push", "deploy", "watch", "checkpoint",
+	"up", "down", "stop", "restart", "ps", "logs", "push", "deploy", "watch", "checkpoint", "actions",
 	"install", "update", "uninstall", "test", "modules", "modinfo", "modstate", "view", "compare",
 	"i18n-export", "i18n-update", "i18n-pull",
 	"db-admin", "db-backup", "db-restore", "db-pull", "db-drop", "db-neutralize", "db-list", "db-use",
@@ -317,6 +317,8 @@ func (sess *session) dispatchParsed(ctx context.Context, cmd string, args []stri
 		sess.runWatch(ctx, args)
 	case "checkpoint":
 		sess.runCheckpoint(ctx, args)
+	case "actions":
+		sess.runActions(ctx, args)
 	default:
 		sess.print(Line{Kind: "warn", Text: "unknown command: " + cmd + " — try help"})
 		sess.exitCode = exitUsage
@@ -493,6 +495,12 @@ func helpSections() []helpSection {
 			{"  create --method db|dump", "Checkpoint method (default: configured, else db)"},
 			{"  rm [<name>]", "Delete a checkpoint (picker when no name); --all for every one"},
 			{"  rm --force", "Skip the confirmation prompt"},
+			{"actions [list]", "Manage [[deploy.actions]] interactively (list/add/edit/rm)"},
+			{"  add", "Wizard: name → phase → where → exec dir (picker) → command"},
+			{"  edit [<name>]", "Edit an action in place (picker when no name)"},
+			{"  rm [<name>] [--force]", "Delete an action (picker when no name)"},
+			{"  --from <target>/--remote", "Show the server list / target for the remote picker & upload"},
+			{"  --json", "Emit the action list as JSON to stdout (with list)"},
 		}},
 		{"Session", []helpEntry{
 			{"copy-last", "Copy the last command's output to clipboard"},

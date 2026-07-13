@@ -544,11 +544,16 @@ remote host at fixed points of the deploy lifecycle.
 ```toml
 # In the SERVER's global.toml/projects/<key>.toml (wins wholesale) or your local config:
 [[deploy.actions]]
-name  = "build-image"        # unique within the list
-phase = "post_push"          # pre_push | post_push | pre_deploy | post_deploy
-where = "remote"             # local | remote
-run   = "docker build -t myodoo:latest ."
+name      = "build-image"    # unique within the list
+phase     = "post_push"      # pre_push | post_push | pre_deploy | post_deploy
+where     = "remote"         # local | remote
+exec_path = "docker"         # optional; dir the command runs in (default: project root)
+run       = "docker build -t myodoo:latest ."
 ```
+
+`exec_path` sets the directory the command runs in: empty/absent → the project
+root (compose dir remote, project dir local), a relative path is joined under
+that root, an absolute one is used as-is.
 
 | Phase         | Runs                                                        | Typical use                     |
 |---------------|-------------------------------------------------------------|---------------------------------|
@@ -566,6 +571,26 @@ receives `ECHO_STAGE`, `ECHO_DB`, `ECHO_REMOTE_PATH`, `ECHO_MODULES`
 (space-separated update+install set), and `ECHO_PHASE`. A `deploy` without
 `--push` skips the two push phases with a note. Pair a `[push] path` build
 context (above) with a `post_push` image rebuild for image-built remotes.
+
+Manage actions interactively with the **`actions`** command instead of editing
+TOML by hand:
+
+| Command                       | Description                                                        |
+|-------------------------------|-------------------------------------------------------------------|
+| `actions` / `actions list`    | Styled table of the effective actions (local, or server with `--from`/`--remote`) |
+| `actions add`                 | Wizard: name → phase → where → exec dir → command                 |
+| `actions edit [<name>]`       | Edit an action in place (picker when no name)                     |
+| `actions rm [<name>] [--force]` | Delete an action (picker when no name)                          |
+| `  --from <t>` / `--remote`    | Resolve a remote target for the exec-dir picker and the upload offer |
+| `  --json`                    | Emit the list as JSON (with `list`)                               |
+
+The wizard's exec-dir step offers **Project root**, **Addons directory**
+(resolved from the profile), **Pick a directory…** (the remote SSH browser for
+a `remote` action, a local browser for a `local` one), or **Type a path** — a
+picked path is stored relative when it falls under the root. Edits persist to
+the **local** `[[deploy.actions]]`; after each change Echo can optionally
+upload the set to the server's project profile over SSH (rewriting only the
+`[[deploy.actions]]` section, prod-gated).
 
 `watch` inherits the checkpoint/rollback behavior: each cycle's deploy
 checkpoints the DB and auto-restores it if the commit broke the update, logging

@@ -201,7 +201,7 @@ func isDir(path string) bool {
 // `--from`/`--remote` — locally they need the compose project as always.
 func projectlessOneShot(name string, args []string) bool {
 	switch name {
-	case "help", "i18n-pull", "link", "deploy", "push", "watch", "checkpoint":
+	case "help", "i18n-pull", "link", "deploy", "push", "watch", "checkpoint", "actions":
 		return true
 	case "shell", "shell-run", "up", "stop", "restart", "logs", "logview", "sequence", "update", "test", "view", "compare":
 		return hasRemoteFlag(args)

@@ -7,6 +7,8 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -73,8 +75,11 @@ func actionsForPhase(actions []config.DeployAction, phase string) []config.Deplo
 // typed error. env supplies the ECHO_* context vars.
 func runDeployActions(ctx context.Context, rsc remoteShellContext, opts DeployOpts, actions []config.DeployAction, phase string, env actionEnv) error {
 	for _, a := range actionsForPhase(actions, phase) {
-		opts.log("INFO", "action", "running", rsc.prof.DBName,
-			[2]string{"action", a.Name}, [2]string{"phase", a.Phase}, [2]string{"where", a.Where})
+		fields := [][2]string{{"action", a.Name}, {"phase", a.Phase}, {"where", a.Where}}
+		if a.ExecPath != "" {
+			fields = append(fields, [2]string{"dir", actionDir(rsc, opts.Root, a)})
+		}
+		opts.log("INFO", "action", "running", rsc.prof.DBName, fields...)
 		start := time.Now()
 		vars := actionEnvVars(env, a.Phase)
 		var err error
@@ -106,21 +111,45 @@ func actionEnvVars(env actionEnv, phase string) []string {
 }
 
 // actionRunRemote runs a remote action over SSH: the ECHO_* vars are
-// exported, the shell cds into the project dir, and the script runs under
-// `sh -c`. A package var so tests can stub the transport.
+// exported, the shell cds into the action's exec dir (default remotePath),
+// and the script runs under `sh -c`. A package var so tests can stub it.
 var actionRunRemote = func(ctx context.Context, rsc remoteShellContext, a config.DeployAction, env []string, out func(string)) error {
-	cmd := envPrefix(env) + "cd " + shellQuote(rsc.remotePath) + " && sh -c " + shellQuote(a.Run)
+	dir := resolveActionDir(rsc.remotePath, a.ExecPath, path.Join, path.IsAbs)
+	cmd := envPrefix(env) + "cd " + shellQuote(dir) + " && sh -c " + shellQuote(a.Run)
 	return runSSHStream(ctx, rsc.sshHost, cmd, nil, out)
 }
 
-// actionRunLocal runs a local action with `sh -c` from the project root,
-// inheriting the process env plus the ECHO_* vars, streaming combined
-// stdout+stderr line by line. A package var so tests can stub execution.
+// actionRunLocal runs a local action with `sh -c` from the action's exec
+// dir (default the project root), inheriting the process env plus the
+// ECHO_* vars, streaming combined stdout+stderr. A package var for tests.
 var actionRunLocal = func(ctx context.Context, root string, a config.DeployAction, env []string, out func(string)) error {
 	c := exec.CommandContext(ctx, "sh", "-c", a.Run)
-	c.Dir = root
+	c.Dir = resolveActionDir(root, a.ExecPath, filepath.Join, filepath.IsAbs)
 	c.Env = append(os.Environ(), env...)
 	return streamCombined(c, out)
+}
+
+// resolveActionDir applies the exec-path rule: empty → root; absolute →
+// as-is; relative → joined under root. The join/isAbs pair is path.* for a
+// remote action (slash paths) and filepath.* for a local one.
+func resolveActionDir(root, execPath string, join func(...string) string, isAbs func(string) bool) string {
+	p := strings.TrimSpace(execPath)
+	if p == "" {
+		return root
+	}
+	if isAbs(p) {
+		return p
+	}
+	return join(root, p)
+}
+
+// actionDir resolves the display/exec directory for an action given the
+// deploy's remote context and local root, dispatching on where.
+func actionDir(rsc remoteShellContext, root string, a config.DeployAction) string {
+	if a.Where == config.WhereRemote {
+		return resolveActionDir(rsc.remotePath, a.ExecPath, path.Join, path.IsAbs)
+	}
+	return resolveActionDir(root, a.ExecPath, filepath.Join, filepath.IsAbs)
 }
 
 // envPrefix builds a `KEY=value KEY2=value2 ` prefix (each value quoted) for

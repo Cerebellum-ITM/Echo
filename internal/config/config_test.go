@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/BurntSushi/toml"
 )
 
 func TestLoadDefaults(t *testing.T) {
@@ -232,6 +234,64 @@ func TestParseRemoteProfileDeployActions(t *testing.T) {
 	// Neither → empty so the client falls back to its own local list.
 	if bare := ParseRemoteProfile(nil, []byte("db_name = \"erp\"\n")); len(bare.DeployActions) != 0 {
 		t.Errorf("absent [[deploy.actions]] should be empty, got %+v", bare.DeployActions)
+	}
+}
+
+func TestDeployActionsExecPathRoundTrip(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
+
+	cfg, _ := Load("/test/project")
+	cfg.Stage = "dev"
+	cfg.DeployActions = []DeployAction{
+		{Name: "build", Phase: "post_push", Where: "remote", ExecPath: "docker", Run: "./b.sh"},
+		{Name: "notify", Phase: "post_deploy", Where: "local", Run: "echo hi"}, // no exec_path
+	}
+	if err := SaveProject(cfg); err != nil {
+		t.Fatal(err)
+	}
+	reloaded, err := Load("/test/project")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(reloaded.DeployActions) != 2 {
+		t.Fatalf("got %d actions, want 2", len(reloaded.DeployActions))
+	}
+	if reloaded.DeployActions[0].ExecPath != "docker" {
+		t.Errorf("exec_path lost: %q", reloaded.DeployActions[0].ExecPath)
+	}
+	if reloaded.DeployActions[1].ExecPath != "" {
+		t.Errorf("absent exec_path should stay empty, got %q", reloaded.DeployActions[1].ExecPath)
+	}
+}
+
+func TestWithDeployActions(t *testing.T) {
+	// Splicing actions into an existing profile preserves other keys.
+	existing := []byte("db_name = \"erp\"\nstage = \"prod\"\n[connect]\nssh_host = \"h\"\n")
+	actions := []DeployAction{{Name: "build", Phase: "post_push", Where: "remote", ExecPath: "docker", Run: "./b.sh"}}
+	out, err := WithDeployActions(existing, actions)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var p projectFile
+	if err := toml.Unmarshal(out, &p); err != nil {
+		t.Fatal(err)
+	}
+	if p.DBName != "erp" || p.Stage != "prod" || p.Connect == nil || p.Connect.SSHHost != "h" {
+		t.Errorf("unrelated keys not preserved: %+v", p)
+	}
+	if p.Deploy == nil || len(p.Deploy.Actions) != 1 || p.Deploy.Actions[0].ExecPath != "docker" {
+		t.Errorf("actions not spliced: %+v", p.Deploy)
+	}
+	// Empty actions removes the section.
+	out2, _ := WithDeployActions(out, nil)
+	var p2 projectFile
+	_ = toml.Unmarshal(out2, &p2)
+	if p2.Deploy != nil {
+		t.Errorf("empty actions should drop [deploy], got %+v", p2.Deploy)
+	}
+	if p2.DBName != "erp" {
+		t.Error("other keys should survive the removal")
 	}
 }
 
