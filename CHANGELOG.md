@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **`logview`/`report` locales ya no exigen un proyecto compose.** Corrían
+  projectless solo con `--remote`/`--from`; sin flag pedían un `docker-compose.yml`
+  en el cwd y fallaban con "not inside a project" — absurdo para un inspector que
+  solo lee el historial local (además, el `deploy` que *escribió* ese historial ya
+  corría projectless). Ahora `logview`/`report` son projectless siempre: leen el
+  store local por cwd, y `--remote`/`--from` cambian la fuente (historial del
+  servidor), no el requisito. `ec logview` funciona desde cualquier directorio.
+
 ### Added
 - **`deploy` puede empujar por default (`[deploy] push`).** Para remotos que
   construyen la imagen (donde un deploy siempre manda código), ya no hace falta
