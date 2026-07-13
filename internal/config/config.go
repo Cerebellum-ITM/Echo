@@ -97,6 +97,16 @@ type Config struct {
 	CmdLogsRetentionDays int
 	CmdLogsMaxRuns       int
 	CmdLogsDisabled      bool
+
+	// Checkpoint ([checkpoint], global + per-project, project wins) — the
+	// DB checkpoint/rollback behavior of `deploy` (Unit 89). Mode is
+	// "auto" (checkpoint on staging/prod, off on dev), "on" (always) or
+	// "off" (never). Method is "db" (CREATE DATABASE … TEMPLATE, fast
+	// file-level copy) or "dump" (pg_dump kept server-side). Keep is how
+	// many checkpoints to retain per target before the oldest are pruned.
+	CheckpointMode   string
+	CheckpointMethod string
+	CheckpointKeep   int
 }
 
 type globalFile struct {
@@ -108,8 +118,18 @@ type globalFile struct {
 	LogDBMax       int                           `toml:"log_db_max"`
 	Prompt         *promptFile                   `toml:"prompt"`
 	CmdLogs        *cmdLogsFile                  `toml:"cmd_logs"`
+	Checkpoint     *checkpointConfig             `toml:"checkpoint"`
 	ConnectTargets map[string]*connectTargetFile `toml:"connect_targets"`
 	ProjectAliases map[string]string             `toml:"project_aliases"`
+}
+
+// checkpointConfig is the [checkpoint] table, valid in both global.toml and a
+// project profile. A nil pointer (section absent) leaves the built-in
+// defaults; a present table overrides field by field, project over global.
+type checkpointConfig struct {
+	Mode   string `toml:"mode"`
+	Method string `toml:"method"`
+	Keep   int    `toml:"keep"`
 }
 
 // cmdLogsFile is the [cmd_logs] table. A nil pointer (section absent) means
@@ -136,19 +156,20 @@ type promptFile struct {
 }
 
 type projectFile struct {
-	OdooVersion    string       `toml:"odoo_version"`
-	OdooContainer  string       `toml:"odoo_container"`
-	DBContainer    string       `toml:"db_container"`
-	DBName         string       `toml:"db_name"`
-	Stage          string       `toml:"stage"`
-	AddonsPaths    []string     `toml:"addons_paths"`
-	AddonsMode     string       `toml:"addons_mode"`
-	ConfPath       string       `toml:"conf_path"`
-	ScriptsDir     string       `toml:"scripts_dir"`
-	ComposeProject string       `toml:"compose_project"`
-	ProjectPath    string       `toml:"project_path"`
-	FilestorePath  string       `toml:"filestore_path"`
-	Connect        *connectFile `toml:"connect"`
+	OdooVersion    string            `toml:"odoo_version"`
+	OdooContainer  string            `toml:"odoo_container"`
+	DBContainer    string            `toml:"db_container"`
+	DBName         string            `toml:"db_name"`
+	Stage          string            `toml:"stage"`
+	AddonsPaths    []string          `toml:"addons_paths"`
+	AddonsMode     string            `toml:"addons_mode"`
+	ConfPath       string            `toml:"conf_path"`
+	ScriptsDir     string            `toml:"scripts_dir"`
+	ComposeProject string            `toml:"compose_project"`
+	ProjectPath    string            `toml:"project_path"`
+	FilestorePath  string            `toml:"filestore_path"`
+	Connect        *connectFile      `toml:"connect"`
+	Checkpoint     *checkpointConfig `toml:"checkpoint"`
 }
 
 type connectFile struct {
@@ -219,6 +240,7 @@ func Load(projectPath string) (*Config, error) {
 	cfg.Icons = g.Icons
 	cfg.LogDBMax = g.LogDBMax
 	applyCmdLogs(cfg, g.CmdLogs)
+	applyCheckpoint(cfg, g.Checkpoint)
 	cfg.ConnectTargets = sortedConnectTargets(g.ConnectTargets)
 	cfg.ProjectAliases = g.ProjectAliases
 	if g.Prompt != nil {
@@ -252,6 +274,19 @@ func Load(projectPath string) (*Config, error) {
 		cfg.ProjectPath = p.ProjectPath
 	}
 	cfg.FilestorePath = p.FilestorePath
+	// The project [checkpoint] overrides the global one field by field (a
+	// blank/zero field leaves the global/default value untouched).
+	if p.Checkpoint != nil {
+		if p.Checkpoint.Mode != "" {
+			cfg.CheckpointMode = p.Checkpoint.Mode
+		}
+		if p.Checkpoint.Method != "" {
+			cfg.CheckpointMethod = p.Checkpoint.Method
+		}
+		if p.Checkpoint.Keep != 0 {
+			cfg.CheckpointKeep = p.Checkpoint.Keep
+		}
+	}
 	if p.Connect != nil {
 		cfg.ConnectSSHHost = p.Connect.SSHHost
 		cfg.ConnectRemotePath = p.Connect.RemotePath
@@ -280,6 +315,14 @@ type RemoteProfile struct {
 	AddonsMode  string
 	AddonsPaths []string
 	ConfPath    string
+
+	// Checkpoint policy declared on the SERVER ([checkpoint] in the remote
+	// global.toml + project profile, project wins). Empty/zero when the
+	// server doesn't declare it — the client then falls back to its own
+	// local [checkpoint] (Unit 90). No defaults are applied here.
+	CheckpointMode   string
+	CheckpointMethod string
+	CheckpointKeep   int
 }
 
 // ParseRemoteProfile decodes a remote host's `global.toml` and
@@ -299,16 +342,37 @@ func ParseRemoteProfile(globalTOML, projectTOML []byte) RemoteProfile {
 	if compose == "" {
 		compose = "docker compose"
 	}
+	// Server-side [checkpoint] policy: global table, then project override
+	// field-by-field. No defaults — an absent section stays empty/zero so the
+	// client falls back to its own local config.
+	var cp checkpointConfig
+	if g.Checkpoint != nil {
+		cp = *g.Checkpoint
+	}
+	if p.Checkpoint != nil {
+		if p.Checkpoint.Mode != "" {
+			cp.Mode = p.Checkpoint.Mode
+		}
+		if p.Checkpoint.Method != "" {
+			cp.Method = p.Checkpoint.Method
+		}
+		if p.Checkpoint.Keep != 0 {
+			cp.Keep = p.Checkpoint.Keep
+		}
+	}
 	return RemoteProfile{
-		ComposeCmd:    compose,
-		OdooContainer: p.OdooContainer,
-		DBContainer:   p.DBContainer,
-		DBName:        p.DBName,
-		Stage:         p.Stage,
-		OdooVersion:   p.OdooVersion,
-		AddonsMode:    p.AddonsMode,
-		AddonsPaths:   p.AddonsPaths,
-		ConfPath:      p.ConfPath,
+		ComposeCmd:       compose,
+		OdooContainer:    p.OdooContainer,
+		DBContainer:      p.DBContainer,
+		DBName:           p.DBName,
+		Stage:            p.Stage,
+		OdooVersion:      p.OdooVersion,
+		AddonsMode:       p.AddonsMode,
+		AddonsPaths:      p.AddonsPaths,
+		ConfPath:         p.ConfPath,
+		CheckpointMode:   cp.Mode,
+		CheckpointMethod: cp.Method,
+		CheckpointKeep:   cp.Keep,
 	}
 }
 
@@ -465,6 +529,7 @@ func LoadGlobal() (*Config, error) {
 	cfg.Icons = g.Icons
 	cfg.LogDBMax = g.LogDBMax
 	applyCmdLogs(cfg, g.CmdLogs)
+	applyCheckpoint(cfg, g.Checkpoint)
 	cfg.ConnectTargets = sortedConnectTargets(g.ConnectTargets)
 	cfg.ProjectAliases = g.ProjectAliases
 	applyDefaults(cfg)
@@ -485,6 +550,28 @@ func applyCmdLogs(cfg *Config, f *cmdLogsFile) {
 	cfg.CmdLogsRetentionDays = f.RetentionDays
 	cfg.CmdLogsMaxRuns = f.MaxRuns
 	cfg.CmdLogsDisabled = f.Disabled
+}
+
+// applyCheckpoint maps the global [checkpoint] table onto the config. A nil
+// table applies the built-in defaults (auto / db / keep 2); a present table
+// overrides only its non-blank/non-zero fields, so a partial section still
+// inherits the rest. The project profile refines this further in Load.
+func applyCheckpoint(cfg *Config, f *checkpointConfig) {
+	cfg.CheckpointMode = Defaults.CheckpointMode
+	cfg.CheckpointMethod = Defaults.CheckpointMethod
+	cfg.CheckpointKeep = Defaults.CheckpointKeep
+	if f == nil {
+		return
+	}
+	if f.Mode != "" {
+		cfg.CheckpointMode = f.Mode
+	}
+	if f.Method != "" {
+		cfg.CheckpointMethod = f.Method
+	}
+	if f.Keep != 0 {
+		cfg.CheckpointKeep = f.Keep
+	}
 }
 
 // SaveConnectTarget inserts or replaces a named connect target in the

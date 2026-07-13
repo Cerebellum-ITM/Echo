@@ -5,6 +5,90 @@ All notable changes to Echo are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+- **Los checkpoints con método `db` quedan ocultos para Odoo.** Como la copia es
+  una base de datos Postgres real, aparecía en el selector de bases de Odoo
+  (`habitta_prod` **y** `habitta_prod__ckpt_…`), donde alguien podía entrar o
+  borrarla a mano. Ahora, tras crear la copia, Echo le hace
+  `ALTER DATABASE … WITH ALLOW_CONNECTIONS false`: Odoo solo lista bases con
+  conexiones permitidas, así que el checkpoint **desaparece de su selector y no
+  admite login** — automático, sin configurar nada en cada instancia. El rollback
+  reactiva las conexiones (`ALLOW_CONNECTIONS true`) sobre la base restaurada tras
+  el rename. Echo sí lo sigue viendo (`checkpoint list`), medible y podable. Solo
+  aplica a checkpoints nuevos; los ya creados se limpian con `checkpoint rm`.
+
+### Fixed
+- **El checkpoint/rollback fallaba con `service "db" is not running`.** El deploy
+  hacía `compose stop` (todos los servicios) antes de tomar el checkpoint, lo que
+  también apagaba el contenedor de Postgres — pero el checkpoint corre `psql`/
+  `pg_dump` **dentro** de ese contenedor, así que fallaba de inmediato
+  (`checkpoint terminate connections: service "db" is not running`). Mismo bug en
+  el restore (rollback) y en `checkpoint create`. Ahora, cuando hay checkpoint, se
+  detiene **solo el servicio de Odoo** (`compose stop <odoo>`), dejando el
+  contenedor `db` arriba: la DB origen queda sin sesiones de la app pero
+  consultable para la copia/restore. Nuevo helper `remoteStopApp`; el `up -d`
+  posterior recrea todo. Sin checkpoint, el deploy sigue parando todo como antes.
+
+### Changed
+- **La política de checkpoint se lee del perfil del servidor (server-first)**
+  (Unit 90). En la Unit 89 el `stage` que activa el modo `auto` venía del
+  servidor pero la política (`mode`/`method`/`keep`) se leía solo de la config
+  local del cliente — un split-brain: desplegar al mismo servidor desde otra
+  laptop podía comportarse distinto. Ahora `ParseRemoteProfile` lee la sección
+  `[checkpoint]` del `global.toml`/perfil de proyecto **del servidor** (por SSH,
+  como `stage`/`db`/contenedores), y `resolveCheckpointPolicy(prof, cfg)` la
+  fusiona campo por campo sobre la config local. Precedencia: flags por corrida
+  (`--checkpoint`/`--no-checkpoint`) › `[checkpoint]` del servidor › `[checkpoint]`
+  local (fallback) › default por stage. La misma sección `[checkpoint]` vale en
+  ambos lados; el servidor gana. La metadata local (`~/.config/echo/checkpoints/`)
+  sigue siendo del cliente. Tests de `resolveCheckpointPolicy` y del parseo del
+  `[checkpoint]` remoto.
+
+### Added
+- **Checkpoint y rollback de base de datos en `deploy`** (Unit 89). Antes del
+  `odoo -i/-u` —justo tras el `stop`, cuando la DB no tiene sesiones— `deploy`
+  toma un **checkpoint del lado del servidor** de la base, corre el update,
+  **verifica** el resultado (falla si el proceso sale distinto de cero *o* si en
+  el log aparece `CRITICAL` / `Traceback` / `Failed to load registry`) y, si
+  falla, **restaura la base** al checkpoint: pregunta en sesión interactiva
+  (para poder inspeccionar la DB rota) y restaura solo en headless (`--force` o
+  `watch`). Un deploy revertido nunca marca sus commits como desplegados, así
+  que `deploy --auto` los vuelve a ofrecer. Dos métodos: `db` (default,
+  `CREATE DATABASE … TEMPLATE` con `STRATEGY FILE_COPY` en PostgreSQL 15+;
+  rollback = `DROP` + `RENAME`, casi instantáneo) y `dump` (`pg_dump -Fc`
+  guardado en `backups/checkpoints/` del servidor). Default por stage
+  (encendido en `staging`/`prod`, apagado en `dev`), configurable con
+  `--checkpoint[=db|dump]` / `--no-checkpoint` y la sección `[checkpoint]`
+  (`mode`/`method`/`keep`) en `global.toml` o el perfil de proyecto. Preflight
+  de disco **antes del `stop`** (aborta si la base no cabe junto a su copia sin
+  tumbar el servicio) y retención automática por `keep`. Métricas `size=`/`took=`
+  en cada creación. Nuevo `internal/config/checkpoints.go` (store de metadata,
+  keyed por `DeployTargetKey`) y `internal/cmd/checkpoint_remote.go` (primitivas
+  remotas + composites `createCheckpoint`/`restoreCheckpoint`).
+- **`deploy --rollback`.** Restaura un checkpoint fuera de un deploy —el
+  salvavidas para "pasó, pero encontré el bug 20 minutos después": elige el más
+  reciente (picker si hay varios en TTY), confirma en rojo con **aviso de
+  antigüedad** cuando el checkpoint tiene más de una hora, restaura y des-marca
+  los commits para que puedan re-desplegarse.
+- **Comando `checkpoint`** (`list` / `create` / `rm`). `list` (default) imprime
+  una tabla de los checkpoints del target (método, tamaño, antigüedad, commits)
+  más el tamaño de la DB viva y el disco libre del servidor (`--json` disponible),
+  reconciliando la metadata contra el servidor (marca `stale` los borrados a
+  mano y los poda del store, y `orphan` las bases `…__ckpt_…` no rastreadas);
+  `create` toma un checkpoint manual (antes de una operación riesgosa); `rm`
+  borra uno (picker si no se nombra) o todos (`--all`), con confirmación roja.
+  Comando remoto (mismo `--from <t>`/link que `deploy`), one-shot, no ofrecido
+  en `sequence`.
+
+### Changed
+- **`watch` hereda checkpoint/rollback.** Cada ciclo hace checkpoint y se
+  auto-restaura si el commit rompió el update, loguea el ERROR y sigue
+  vigilando la rama; la línea de resumen `watch stopped` añade `rollbacks=N`.
+  Nuevo flag `watch --no-checkpoint` para saltar el checkpoint en ciclos
+  (útil cuando la copia hace los ciclos demasiado lentos).
+
 ## [0.22.0] — 2026-07-09
 
 ### Added

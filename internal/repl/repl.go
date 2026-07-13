@@ -211,7 +211,7 @@ func (sess *session) renderPrompt() string {
 var dispatchNames = []string{
 	"help", "clear", "copy-last", "report", "logview", "sequence",
 	"init", "reset", "alias", "link",
-	"up", "down", "stop", "restart", "ps", "logs", "push", "deploy", "watch",
+	"up", "down", "stop", "restart", "ps", "logs", "push", "deploy", "watch", "checkpoint",
 	"install", "update", "uninstall", "test", "modules", "modinfo", "modstate", "view", "compare",
 	"i18n-export", "i18n-update", "i18n-pull",
 	"db-admin", "db-backup", "db-restore", "db-pull", "db-drop", "db-neutralize", "db-list", "db-use",
@@ -315,6 +315,8 @@ func (sess *session) dispatchParsed(ctx context.Context, cmd string, args []stri
 		sess.runDeploy(ctx, args)
 	case "watch":
 		sess.runWatch(ctx, args)
+	case "checkpoint":
+		sess.runCheckpoint(ctx, args)
 	default:
 		sess.print(Line{Kind: "warn", Text: "unknown command: " + cmd + " — try help"})
 		sess.exitCode = exitUsage
@@ -468,12 +470,24 @@ func helpSections() []helpSection {
 			{"  --modules <names>", "Deploy these modules non-interactively (skips the picker)"},
 			{"  --auto", "Headless: deploy pending commits (ahead of upstream) + dirty modules, no picker"},
 			{"  --json", "Emit a machine-readable deploy summary to stdout (logs to stderr)"},
+			{"  --checkpoint[=db|dump]", "Force a DB checkpoint before the run (default: auto on staging/prod)"},
+			{"  --no-checkpoint", "Skip the DB checkpoint even on staging/prod"},
+			{"  --rollback", "Restore the target's most recent checkpoint (no deploy)"},
 			{"watch [<branch>]", "Auto push+deploy when new commits land on a branch; no branch → picker (Ctrl+C to stop)"},
 			{"  --from <target>", "Use a named connect target (default: this dir's link)"},
 			{"  --remote", "Target this directory's linked remote"},
 			{"  --interval <sec>", "Poll interval in seconds (default 10, min 2)"},
 			{"  --force", "Required to watch a prod-stage target"},
 			{"  --no-logs", "Don't follow the remote logs between cycles (silent wait)"},
+			{"  --no-checkpoint", "Skip the DB checkpoint on each cycle's deploy"},
+			{"checkpoint [list]", "List a target's DB checkpoints (size, age) + live DB size and disk free"},
+			{"  --from <target>", "Use a named connect target (default: this dir's link)"},
+			{"  --remote", "Target this directory's linked remote"},
+			{"  --json", "Emit the checkpoint list as JSON to stdout (logs to stderr)"},
+			{"  create", "Take a manual checkpoint (before a risky change)"},
+			{"  create --method db|dump", "Checkpoint method (default: configured, else db)"},
+			{"  rm [<name>]", "Delete a checkpoint (picker when no name); --all for every one"},
+			{"  rm --force", "Skip the confirmation prompt"},
 		}},
 		{"Session", []helpEntry{
 			{"copy-last", "Copy the last command's output to clipboard"},

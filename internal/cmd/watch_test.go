@@ -220,6 +220,19 @@ func TestParseWatchArgsNoLogs(t *testing.T) {
 	}
 }
 
+func TestParseWatchArgsNoCheckpoint(t *testing.T) {
+	p, err := parseWatchArgs([]string{"dev", "--no-checkpoint"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !p.noCheckpoint || p.branch != "dev" {
+		t.Fatalf("--no-checkpoint: noCheckpoint=%v branch=%q, want true/dev", p.noCheckpoint, p.branch)
+	}
+	if q, _ := parseWatchArgs([]string{"dev"}); q.noCheckpoint {
+		t.Fatal("noCheckpoint should default to false")
+	}
+}
+
 func noopWatchOpts() WatchOpts {
 	return WatchOpts{
 		Log:       func(string, string, string, string, ...[2]string) {},

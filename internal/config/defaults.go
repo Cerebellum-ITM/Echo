@@ -21,6 +21,10 @@ var Defaults = Config{
 	CmdLogsRetentionDays: 7,
 	CmdLogsMaxRuns:       500,
 	CmdLogsDisabled:      false,
+
+	CheckpointMode:   "auto",
+	CheckpointMethod: "db",
+	CheckpointKeep:   2,
 }
 
 func applyDefaults(cfg *Config) {
@@ -65,5 +69,14 @@ func applyDefaults(cfg *Config) {
 	}
 	if cfg.LogDBMax <= 0 {
 		cfg.LogDBMax = Defaults.LogDBMax
+	}
+	if cfg.CheckpointMode == "" {
+		cfg.CheckpointMode = Defaults.CheckpointMode
+	}
+	if cfg.CheckpointMethod == "" {
+		cfg.CheckpointMethod = Defaults.CheckpointMethod
+	}
+	if cfg.CheckpointKeep <= 0 {
+		cfg.CheckpointKeep = Defaults.CheckpointKeep
 	}
 }

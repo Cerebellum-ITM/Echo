@@ -23,6 +23,76 @@ _(siguiente: Unit 14 — meta-commands. Fix deploy-build-muting: el builder de `
 
 ## Completed
 
+- [x] Ocultar checkpoint DB de Odoo (post Unit 89/90). El usuario notó que la
+  copia `habitta_prod__ckpt_…` aparecía en el selector de bases de Odoo (es una
+  DB Postgres real). Fix automático, sin config por instancia: nuevo helper
+  `remoteSetAllowConns(rsc, db, allow)`; `createCheckpoint` (método db) hace
+  `ALTER DATABASE … WITH ALLOW_CONNECTIONS false` tras el CREATE (best-effort,
+  WARNING si falla) → Odoo lista solo bases con conexiones permitidas, así que
+  el checkpoint desaparece de su selector y no admite login. `restoreCheckpoint`
+  reactiva (`ALLOW_CONNECTIONS true`) sobre la base restaurada tras el rename
+  (ERROR con comando de remediación si falla). Echo sigue viéndolo en
+  `checkpoint list` (remoteListDatabases no filtra datallowconn). Solo aplica a
+  checkpoints nuevos. Tests ampliados (orden hide-tras-create, reenable-tras-rename).
+  CHANGELOG `### Changed`. build/vet/test verdes.
+
+- [x] Fix checkpoint `service "db" is not running` (post Unit 89/90). Bug
+  encontrado por el usuario probando contra habitta_prod (staging): el deploy
+  hacía `compose stop` (todo) antes del checkpoint, apagando el contenedor `db`,
+  pero el checkpoint corre `psql`/`pg_dump` DENTRO de ese contenedor → fallaba con
+  `checkpoint terminate connections: exit status 1: service "db" is not running`.
+  Mismo bug en el restore (handleDeployFailure + runDeployRollback) y en
+  `checkpoint create`. Fix: nuevo helper `remoteStopApp(rsc)` que hace
+  `compose stop <odooContainer>` (solo la app), dejando `db` arriba; la DB origen
+  queda sin sesiones de Odoo pero consultable. Deploy con checkpoint para solo
+  Odoo (sin checkpoint sigue parando todo); los dos paths de rollback y
+  `checkpoint create` idem. Test `TestRemoteStopApp`. build/vet/test verdes.
+
+- [x] Unit 90 — checkpoint-policy-remote. La política de checkpoint
+  (`mode`/`method`/`keep`) se lee **server-first**, arreglando el split-brain de
+  la Unit 89 (el `stage` venía del servidor pero la política de la config local
+  del cliente). `ParseRemoteProfile` ahora decodifica el `[checkpoint]` del
+  `global.toml`/perfil de proyecto del servidor (por SSH) y expone
+  `CheckpointMode/Method/Keep` en `RemoteProfile` (sin defaults remotos, para
+  poder caer al local). Nuevo `resolveCheckpointPolicy(prof, cfg)` que fusiona
+  campo por campo: remoto gana sobre local; `resolveCheckpointMode` toma la
+  `checkpointPolicy` fusionada en vez de `*config.Config`. Precedencia: flags
+  (`--checkpoint`/`--no-checkpoint`) › `[checkpoint]` servidor › `[checkpoint]`
+  local › default por stage. La misma sección vale en ambos lados. Deploy usa
+  `pol.keep` en la retención y `runCheckpointCreate` usa `policy.method`/`keep`.
+  La metadata local (`~/.config/echo/checkpoints/`) no se mueve. Tests
+  `resolveCheckpointPolicy` (override/fallback/partial) y `ParseRemoteProfile`
+  con `[checkpoint]`; README + CHANGELOG `### Changed`. build/vet/test verdes.
+  Motivado por prueba real del usuario contra muutrade-dev: en dev con `auto` no
+  se activaba (correcto) y la política vivía solo en el cliente (inconsistente).
+
+- [x] Unit 89 — deploy-checkpoint-rollback. `deploy` toma un checkpoint
+  server-side de la DB tras el `stop` (cuando no hay sesiones) y, si el
+  `odoo -i/-u` falla, restaura: pregunta en interactivo, auto en headless/
+  `watch`. Verify = exit code + scan del stream (`CRITICAL`/`Traceback`/
+  `Failed to load registry`, `runFailureScanner` + `deployFailureRe`). Dos
+  métodos: `db` (`CREATE DATABASE … TEMPLATE`, `STRATEGY FILE_COPY` en PG≥15;
+  rollback = drop+rename, `restoreCheckpoint` devuelve `consumed`) y `dump`
+  (`pg_dump -Fc` en `backups/checkpoints/` del server). Default por stage
+  (`stageWantsCheckpoint`: on staging/prod, off dev), override con
+  `--checkpoint[=db|dump]`/`--no-checkpoint` y `[checkpoint]` (`mode`/`method`/
+  `keep`) global+proyecto (`applyCheckpoint`, `resolveCheckpointMode`). Preflight
+  de disco antes del `stop` (`checkpointPreflight`, 1.2×/0.5×); retención
+  `pruneCheckpoints`; métricas `size=`/`took=`. `deploy --rollback` restaura
+  fuera de un deploy (picker si >1 en TTY, `confirmRollbackAged` con aviso de
+  antigüedad >1h, des-marca SHAs). Nuevo comando `checkpoint` (`list` con
+  reconciliación stale/orphan + footer db-size/disk-free + `--json`, `create`,
+  `rm`/`--all`). `watch --no-checkpoint` + `rollbacks=N` en el resumen. Store
+  `internal/config/checkpoints.go` (keyed por `DeployTargetKey`), primitivas
+  `internal/cmd/checkpoint_remote.go` (seams `ckptRunSSH`/`ckptRunSSHStream`),
+  comando `internal/cmd/checkpoint.go`, wrapper `internal/repl/checkpoint.go`.
+  Registro completo (Registry/dispatch/commandFlags/help/projectlessOneShot).
+  Tests de parse/resolveMode/scanner/ckptDBName/humanAge/create+restore (orden
+  + shapes vía seams)/store+retención; README + CHANGELOG `[Unreleased]`.
+  build/vet/test verdes. Filestore snapshot = fase 2 (documentado). Pendiente
+  verificación EN VIVO contra un remoto real por el usuario (sin docker/SSH en
+  el entorno de dev).
+
 - [x] Unit 88 — update-build-remote. `update --build` gana un builder dedicado
   (`runUpdateBuild`, `internal/cmd/build_update.go`) al estilo de
   `i18n-pull`/`deploy`: resuelve **Where** (select local / target nombrado →
