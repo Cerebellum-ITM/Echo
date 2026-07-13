@@ -323,32 +323,17 @@ func watchCycle(ctx context.Context, opts WatchOpts, rsc remoteShellContext, fro
 		[2]string{"modules", strings.Join(modules, ",")})
 
 	// Push the committed content at <new>, not the working tree — the watcher
-	// may sit on a different branch/worktree.
+	// may sit on a different branch/worktree. The deploy itself does the push
+	// (from this archive dir) so the push and its pre_push/post_push actions
+	// run in order inside the deploy pipeline; the watcher just supplies the
+	// source dir.
 	srcRoot, cleanup, err := archiveModules(ctx, opts.Cfg, opts.Root, new, modules)
 	if err != nil {
 		return 0, false, fmt.Errorf("archive: %w", err)
 	}
 	defer cleanup()
 
-	pushOpts := PushOpts{
-		Cfg: opts.Cfg, Root: opts.Root, Palette: opts.Palette,
-		Log: opts.Log, StreamOut: opts.StreamOut, OnSync: opts.OnSync,
-	}
-	// Honor a configured [push] destination (server/local); the watcher is
-	// headless so it never opens the picker.
-	destBase := ""
-	if dest, source, mkdir := resolvePushDest(pushArgs{}, rsc.prof, opts.Cfg); dest != "" {
-		resolved, derr := applyResolvedDest(ctx, rsc, pushOpts, dest, source, mkdir, false)
-		if derr != nil {
-			return 0, false, fmt.Errorf("push: %w", derr)
-		}
-		destBase = resolved
-	}
-	if _, err := pushModuleSet(ctx, rsc, pushOpts, modules, srcRoot, destBase, false, false); err != nil {
-		return 0, false, fmt.Errorf("push: %w", err)
-	}
-
-	rolledBack, derr := deployCommitsHeadless(ctx, opts, from, noCheckpoint, noActions, shas)
+	rolledBack, derr := deployCommitsHeadless(ctx, opts, from, noCheckpoint, noActions, shas, srcRoot)
 	if derr != nil {
 		return 0, rolledBack, fmt.Errorf("deploy: %w", derr)
 	}
@@ -361,8 +346,11 @@ func watchCycle(ctx context.Context, opts WatchOpts, rsc remoteShellContext, fro
 // deployCommitsHeadless runs the Unit 78 non-interactive deploy for the given
 // SHAs against the same target, with --force (the watcher already gated prod
 // at startup). Deploy's history marks the SHAs, so re-runs never redeploy.
-func deployCommitsHeadless(ctx context.Context, opts WatchOpts, from string, noCheckpoint, noActions bool, shas []string) (rolledBack bool, err error) {
-	args := []string{"--commits", strings.Join(shas, ","), "--force"}
+// The deploy performs the push itself from srcRoot (the watcher's git-archive
+// dir), so the push and its pre_push/post_push actions run in order within the
+// deploy pipeline — the watcher no longer pushes separately.
+func deployCommitsHeadless(ctx context.Context, opts WatchOpts, from string, noCheckpoint, noActions bool, shas []string, srcRoot string) (rolledBack bool, err error) {
+	args := []string{"--commits", strings.Join(shas, ","), "--force", "--push"}
 	if from != "" {
 		args = append(args, "--from", from)
 	}
@@ -372,13 +360,10 @@ func deployCommitsHeadless(ctx context.Context, opts WatchOpts, from string, noC
 	if noActions {
 		args = append(args, "--no-actions")
 	}
-	// watch already pushed the committed content from the git archive; tell the
-	// deploy not to push again even when [deploy] push is the configured
-	// default (Unit 95), so a cycle never double-pushes.
-	args = append(args, "--no-push")
 	res, err := RunDeploy(ctx, DeployOpts{
 		Cfg: opts.Cfg, Root: opts.Root, Args: args, Palette: opts.Palette,
-		Log: opts.Log, StreamOut: opts.StreamOut,
+		Log: opts.Log, StreamOut: opts.StreamOut, OnSync: opts.OnSync,
+		PushSrcRoot: srcRoot,
 	})
 	return res.RolledBack, err
 }

@@ -33,6 +33,12 @@ type DeployOpts struct {
 	// OnSync, when set, receives each --push module's file changes so the
 	// caller can render the change tree (same as the standalone `push`).
 	OnSync func(changes []FileChange)
+	// PushSrcRoot overrides the local directory --push reads module files
+	// from (default: Root). `watch` sets it to its git-archive scratch dir so
+	// the deploy pushes the committed content at the target ref — and so the
+	// push and its pre_push/post_push actions run in order inside the deploy
+	// pipeline instead of being done separately by the watcher.
+	PushSrcRoot string
 }
 
 // log emits a progress line when a logger is set; a no-op otherwise.
@@ -729,9 +735,13 @@ func RunDeploy(ctx context.Context, opts DeployOpts) (DeployResult, error) {
 			}
 			destBase = resolved
 		}
+		srcRoot := opts.Root
+		if opts.PushSrcRoot != "" {
+			srcRoot = opts.PushSrcRoot
+		}
 		opts.log("INFO", "push", "syncing modules to remote", prof.DBName,
 			[2]string{"modules", strings.Join(pushMods, ",")})
-		_, perr := pushModuleSet(ctx, pushRSC, pushOpts, pushMods, opts.Root, destBase, dryRun, false)
+		_, perr := pushModuleSet(ctx, pushRSC, pushOpts, pushMods, srcRoot, destBase, dryRun, false)
 		return perr
 	}
 

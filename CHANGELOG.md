@@ -8,6 +8,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- **`watch` volvió a correr las actions `post_push` (p.ej. el rebuild de imagen).**
+  Regresión de la Unit 95: `watch` hacía su propio push y luego llamaba al deploy
+  interno con `--no-push` para no duplicar, pero el gating de `pre_push`/`post_push`
+  cuelga de `p.push` del deploy → con `--no-push` se saltaban con "skipped — no push
+  in this run", así que el código nuevo se pusheaba pero **la imagen nunca se
+  reconstruía** (deploy con imagen vieja). Ahora `watch` no pushea por su cuenta:
+  archiva el contenido del commit y deja que el **deploy** haga el push desde ese
+  archive (nuevo `DeployOpts.PushSrcRoot` + `--push`), así el push y sus acciones
+  `pre_push`/`post_push` corren en orden dentro del pipeline del deploy —
+  `pre_push → push → post_push → pre_deploy → stop → up → -u → post_deploy` — sin
+  doble push. Elimina también la duplicación de la resolución de `[push]` en el
+  watcher.
 - **`logview` agrupa cada entrada con su traceback como un solo bloque.** Una
   entrada de Odoo multi-línea (un WARNING/ERROR + su traceback) se partía en
   líneas sueltas: al seleccionar solo tomabas una línea, y con un filtro de nivel
