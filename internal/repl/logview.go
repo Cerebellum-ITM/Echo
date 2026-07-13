@@ -46,23 +46,44 @@ func filterRuns(metas []config.CmdLogMeta, q string) []config.CmdLogMeta {
 	return out
 }
 
-// filterLogLines keeps lines matching both a case-insensitive text
-// substring and a min-level threshold. minLevel == "" disables the level
-// gate (all lines); with a threshold, unleveled lines (level == "") are
-// hidden — they only show on "all".
+// filterLogLines keeps whole log blocks matching both a case-insensitive
+// text substring and a min-level threshold. A block is a leveled entry plus
+// its unleveled continuation lines (a traceback), so the filter is
+// block-aware: it never splits an entry from its traceback. A block passes
+// the level gate when its header's level meets the threshold (minLevel == ""
+// disables it), and the text gate when ANY line in the block matches — so a
+// traceback stays attached to its warning/error even when only the header
+// (or only a deep frame) contains the query. A leading unleveled block (no
+// header) is kept only on "all", matching the old per-line rule for
+// headerless output.
 func filterLogLines(lines []config.ReportLine, q, minLevel string) []config.ReportLine {
 	q = strings.ToLower(strings.TrimSpace(q))
 	out := make([]config.ReportLine, 0, len(lines))
-	for _, l := range lines {
-		if q != "" && !strings.Contains(strings.ToLower(l.Text), q) {
-			continue
+	for i := 0; i < len(lines); {
+		// Block = lines[i] (a header, or a leading continuation) plus every
+		// following continuation line up to the next header.
+		end := i + 1
+		for end < len(lines) && entryHeaderLevel(lines[end].Text) == "" {
+			end++
 		}
-		if minLevel != "" {
-			if l.Level == "" || levelRank[l.Level] < levelRank[minLevel] {
-				continue
+		block := lines[i:end]
+		header := entryHeaderLevel(block[0].Text)
+
+		levelOK := minLevel == "" ||
+			(header != "" && levelRank[header] >= levelRank[minLevel])
+		textOK := q == ""
+		for _, l := range block {
+			if textOK {
+				break
+			}
+			if strings.Contains(strings.ToLower(l.Text), q) {
+				textOK = true
 			}
 		}
-		out = append(out, l)
+		if levelOK && textOK {
+			out = append(out, block...)
+		}
+		i = end
 	}
 	return out
 }
@@ -86,14 +107,31 @@ func cycleLevel(cur string, back bool) string {
 	return logviewLevels[idx]
 }
 
+// entryHeaderLevel returns the log level when text starts a NEW log record —
+// i.e. it carries a timestamped Odoo or loguru prefix — and "" for a
+// continuation line (a traceback frame, a bare message tail). This is the
+// block-boundary signal: it is deliberately NOT the stored ReportLine.Level,
+// because a traceback line inherits its entry's color (Kind warn/err) and so
+// gets tagged with a level during capture — grouping on that level would
+// split every traceback frame into its own block. A timestamp only ever
+// begins a real record, so it groups an entry with its whole traceback.
+func entryHeaderLevel(text string) string {
+	if m := odooLogPrefix.FindStringSubmatch(text); m != nil {
+		return m[1]
+	}
+	if m := loguruLogPrefix.FindStringSubmatch(text); m != nil {
+		return m[1]
+	}
+	return ""
+}
+
 // blockStartOf returns the index of the block that filtered line i belongs to.
-// A block is a leveled line plus every unleveled line that follows it (a log
-// entry and its continuation — e.g. a traceback, which already inherits the
-// entry's color) up to the next leveled line. Unleveled lines with no leveled
-// line before them form a leading block anchored at index 0.
+// A block is a log entry (a timestamped header) plus every continuation line
+// that follows it (a traceback) up to the next header. Continuation lines with
+// no header before them form a leading block anchored at index 0.
 func blockStartOf(lines []config.ReportLine, i int) int {
 	for j := i; j >= 0; j-- {
-		if lines[j].Level != "" {
+		if entryHeaderLevel(lines[j].Text) != "" {
 			return j
 		}
 	}
@@ -101,10 +139,10 @@ func blockStartOf(lines []config.ReportLine, i int) int {
 }
 
 // blockEndOf returns the exclusive end index of the block anchored at start:
-// the next leveled line after it, or the end of the slice.
+// the next header line after it, or the end of the slice.
 func blockEndOf(lines []config.ReportLine, start int) int {
 	for j := start + 1; j < len(lines); j++ {
-		if lines[j].Level != "" {
+		if entryHeaderLevel(lines[j].Text) != "" {
 			return j
 		}
 	}

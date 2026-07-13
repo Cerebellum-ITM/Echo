@@ -8,6 +8,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- **`logview` agrupa cada entrada con su traceback como un solo bloque.** Una
+  entrada de Odoo multi-línea (un WARNING/ERROR + su traceback) se partía en
+  líneas sueltas: al seleccionar solo tomabas una línea, y con un filtro de nivel
+  activo las líneas de continuación desaparecían. Causa: las líneas de traceback
+  heredan el color (Kind) de su cabecera, así que al capturarse quedaban
+  *marcadas con nivel*, y el agrupado se hacía por nivel — cada frame terminaba
+  siendo su propio bloque. Ahora el límite de bloque se detecta por el **prefijo
+  con timestamp** (una entrada nueva de log siempre empieza con fecha/hora), no
+  por el nivel: `blockStartOf`/`blockEndOf` y el filtro (`filterLogLines`) operan
+  por bloque completo — seleccionar/copiar toma toda la entrada + traceback, y un
+  umbral de nivel conserva el traceback junto a su cabecera (si la cabecera pasa)
+  o descarta el bloque entero. El filtro de texto mantiene el bloque si cualquier
+  línea (incluida una del traceback) coincide.
 - **`logview`/`report` locales ya no exigen un proyecto compose.** Corrían
   projectless solo con `--remote`/`--from`; sin flag pedían un `docker-compose.yml`
   en el cwd y fallaban con "not inside a project" — absurdo para un inspector que
