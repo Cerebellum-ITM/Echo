@@ -82,6 +82,9 @@ type deployArgs struct {
 	// rollback restores the target's most recent checkpoint instead of
 	// deploying (deploy --rollback). Mutually exclusive with any selection.
 	rollback bool
+	// noActions skips all declared deploy actions (Unit 92) for this run —
+	// the escape hatch when a server-declared action is broken.
+	noActions bool
 }
 
 // parseDeployArgs extracts --from/--limit/--dry-run/--force/--i18n/--no-i18n
@@ -154,6 +157,8 @@ func parseDeployArgs(args []string) (deployArgs, error) {
 			out.noCheckpoint = true
 		case a == "--rollback":
 			out.rollback = true
+		case a == "--no-actions":
+			out.noActions = true
 		case a == "--json":
 			out.jsonOut = true
 		case a == "--dry-run":
@@ -605,6 +610,37 @@ func RunDeploy(ctx context.Context, opts DeployOpts) (DeployResult, error) {
 		[2]string{"i18n", i18nState},
 		[2]string{"skipped", strconv.Itoa(skipped)})
 
+	// Resolve declared deploy actions (Unit 92) once and list them in the
+	// plan. An invalid config surfaces here, before any deploy step runs.
+	actions, actionsSrc, aerr := resolveDeployActions(prof, opts.Cfg, p.noActions)
+	if aerr != nil {
+		return DeployResult{}, aerr
+	}
+	actEnv := actionEnv{
+		stage:      target.stage,
+		db:         prof.DBName,
+		remotePath: remotePath,
+		modules:    strings.Join(append(append([]string(nil), update...), install...), " "),
+	}
+	for _, a := range actions {
+		opts.log("INFO", "plan", "action", prof.DBName,
+			[2]string{"name", a.Name}, [2]string{"phase", a.Phase},
+			[2]string{"where", a.Where}, [2]string{"source", actionsSrc})
+	}
+	// runActions runs one phase; the two push phases are skipped (with a note)
+	// on a deploy that isn't pushing, so the same profile serves both flows.
+	runActions := func(phase string) error {
+		if len(actionsForPhase(actions, phase)) == 0 {
+			return nil
+		}
+		if (phase == config.PhasePrePush || phase == config.PhasePostPush) && !p.push {
+			opts.log("INFO", "action", "skipped — no push in this run", prof.DBName,
+				[2]string{"phase", phase})
+			return nil
+		}
+		return runDeployActions(ctx, rsc, opts, actions, phase, actEnv)
+	}
+
 	// --push shares the deploy's already-resolved target: sync the resolved
 	// modules' local code to the remote addons dir before the run. In dry-run
 	// it prints the rsync itemization; on a real run a push failure aborts
@@ -656,8 +692,14 @@ func RunDeploy(ctx context.Context, opts DeployOpts) (DeployResult, error) {
 			return DeployResult{}, err
 		}
 	}
+	if err := runActions(config.PhasePrePush); err != nil {
+		return DeployResult{}, err
+	}
 	if err := runPush(false); err != nil {
 		return DeployResult{}, fmt.Errorf("push failed: %w", err)
+	}
+	if err := runActions(config.PhasePostPush); err != nil {
+		return DeployResult{}, err
 	}
 
 	// Disk preflight runs before any container stop, so a doomed deploy never
@@ -678,6 +720,12 @@ func RunDeploy(ctx context.Context, opts DeployOpts) (DeployResult, error) {
 		}
 		return nil
 	}
+	// pre_deploy runs right before the containers are touched — the last
+	// hook while the service is still up (maintenance page, job drain).
+	if err := runActions(config.PhasePreDeploy); err != nil {
+		return DeployResult{}, err
+	}
+
 	// Stop before the run. With a checkpoint we stop ONLY the Odoo app service
 	// so the Postgres container stays up for the copy (the source DB then has no
 	// app sessions but is still queryable); without one, stop everything as
@@ -757,11 +805,30 @@ func RunDeploy(ctx context.Context, opts DeployOpts) (DeployResult, error) {
 		}
 	}
 
+	// post_deploy runs after verify passed and the code is live. A failure
+	// here marks the run failed but never rolls back a healthy deploy —
+	// undoing a verified-green deploy for a notification hook is worse.
+	if err := runActions(config.PhasePostDeploy); err != nil {
+		opts.log("ERROR", "", "deploy succeeded, post_deploy action failed", prof.DBName,
+			[2]string{"action", deployActionName(err)})
+		return result, err
+	}
+
 	opts.log("INFO", "", "deploy complete", prof.DBName,
 		[2]string{"update", strconv.Itoa(len(update))},
 		[2]string{"install", strconv.Itoa(len(install))},
 		[2]string{"skipped", strconv.Itoa(skipped)})
 	return result, nil
+}
+
+// deployActionName extracts the failing action's name from a deploy-action
+// error, or "" for any other error.
+func deployActionName(err error) string {
+	var ae *deployActionError
+	if errors.As(err, &ae) {
+		return ae.name
+	}
+	return ""
 }
 
 // deployRunError wraps the odoo-run outcome into a deploy error: the SSH

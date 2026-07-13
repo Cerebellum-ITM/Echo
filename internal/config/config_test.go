@@ -210,6 +210,31 @@ func TestPushSectionRoundTrip(t *testing.T) {
 	}
 }
 
+func TestParseRemoteProfileDeployActions(t *testing.T) {
+	// A project [[deploy.actions]] list replaces the global one wholesale.
+	global := []byte("[[deploy.actions]]\nname = \"g\"\nphase = \"pre_push\"\nwhere = \"local\"\nrun = \"echo g\"\n")
+	project := []byte("db_name = \"erp\"\n[[deploy.actions]]\nname = \"build\"\nphase = \"post_push\"\nwhere = \"remote\"\nrun = \"./build.sh\"\n")
+	prof := ParseRemoteProfile(global, project)
+	if len(prof.DeployActions) != 1 || prof.DeployActions[0].Name != "build" {
+		t.Fatalf("DeployActions = %+v, want the project list (wholesale)", prof.DeployActions)
+	}
+	a := prof.DeployActions[0]
+	if a.Phase != "post_push" || a.Where != "remote" || a.Run != "./build.sh" {
+		t.Errorf("action = %+v", a)
+	}
+	if err := ValidateDeployActions(prof.DeployActions); err != nil {
+		t.Errorf("decoded actions failed validation: %v", err)
+	}
+	// Only a global list → it stands.
+	if p2 := ParseRemoteProfile(global, []byte("db_name = \"erp\"\n")); len(p2.DeployActions) != 1 || p2.DeployActions[0].Name != "g" {
+		t.Errorf("global-only DeployActions = %+v, want [g]", p2.DeployActions)
+	}
+	// Neither → empty so the client falls back to its own local list.
+	if bare := ParseRemoteProfile(nil, []byte("db_name = \"erp\"\n")); len(bare.DeployActions) != 0 {
+		t.Errorf("absent [[deploy.actions]] should be empty, got %+v", bare.DeployActions)
+	}
+}
+
 func TestConnectSectionAbsentByDefault(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("HOME", tmp)

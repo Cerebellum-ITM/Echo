@@ -8,6 +8,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Deploy actions (`[[deploy.actions]]`).** Comandos con nombre que corren
+  **local o remoto** en puntos fijos del ciclo de `deploy`: `pre_push`,
+  `post_push` (p.ej. reconstruir la imagen desde el código recién pusheado),
+  `pre_deploy` y `post_deploy`. Se declaran en el `global.toml`/perfil del
+  **servidor** (gana **wholesale**: si el servidor declara actions, su lista
+  reemplaza a la local) o en la config local; `--no-actions` (en `deploy` y
+  `watch`) las salta. Ejecución **fail-fast**: un exit≠0 antes del `stop` aborta
+  el deploy sin tocar los contenedores; una action `post_deploy` fallida marca el
+  run como fallido pero **no** revierte un deploy ya verificado en verde. Cada
+  script recibe `ECHO_STAGE`/`ECHO_DB`/`ECHO_REMOTE_PATH`/`ECHO_MODULES`/
+  `ECHO_PHASE`; un `deploy` sin `--push` salta las dos fases de push con un aviso;
+  `watch` las corre en cada ciclo y una falla solo tumba ese ciclo. Config inválida
+  (fase/where desconocido, nombre duplicado, `run` vacío) falla al resolver, antes
+  de cualquier paso. Pensado para remotos que construyen la imagen: `[push] path`
+  (contexto de build) + una action `post_push` que hace el rebuild.
 - **`push` a un directorio de destino explícito (`--dest` / `[push]`).** Para
   remotos que **construyen la imagen** desde el código (sin carpeta de addons
   montada que auto-detectar), ahora `push` puede apuntar directo al contexto de

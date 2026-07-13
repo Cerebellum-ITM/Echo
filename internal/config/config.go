@@ -2,9 +2,11 @@ package config
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/BurntSushi/toml"
@@ -117,6 +119,60 @@ type Config struct {
 	// destination before syncing.
 	PushPath  string
 	PushMkdir *bool
+
+	// DeployActions ([[deploy.actions]], global + per-project) — named
+	// local/remote commands hooked into fixed points of `deploy` (Unit 92).
+	// The list is wholesale: a non-empty project list replaces the global
+	// one (order across machines must stay predictable).
+	DeployActions []DeployAction
+}
+
+// DeployAction is one declared step in the deploy lifecycle. Phase is
+// pre_push | post_push | pre_deploy | post_deploy; Where is local |
+// remote; Run is an `sh -c` command string. Name is unique within a list.
+type DeployAction struct {
+	Name  string
+	Phase string
+	Where string
+	Run   string
+}
+
+// Deploy-action phase and where enums.
+const (
+	PhasePrePush    = "pre_push"
+	PhasePostPush   = "post_push"
+	PhasePreDeploy  = "pre_deploy"
+	PhasePostDeploy = "post_deploy"
+	WhereLocal      = "local"
+	WhereRemote     = "remote"
+)
+
+// ValidateDeployActions checks a decoded action list: unique non-empty
+// names, a known phase and where, and a non-empty run. Returns the first
+// problem found so a misconfiguration surfaces before any deploy step runs.
+func ValidateDeployActions(actions []DeployAction) error {
+	seen := map[string]bool{}
+	phases := map[string]bool{PhasePrePush: true, PhasePostPush: true, PhasePreDeploy: true, PhasePostDeploy: true}
+	wheres := map[string]bool{WhereLocal: true, WhereRemote: true}
+	for i, a := range actions {
+		if strings.TrimSpace(a.Name) == "" {
+			return fmt.Errorf("deploy action #%d: name is required", i+1)
+		}
+		if seen[a.Name] {
+			return fmt.Errorf("deploy action %q: duplicate name", a.Name)
+		}
+		seen[a.Name] = true
+		if !phases[a.Phase] {
+			return fmt.Errorf("deploy action %q: invalid phase %q (want pre_push|post_push|pre_deploy|post_deploy)", a.Name, a.Phase)
+		}
+		if !wheres[a.Where] {
+			return fmt.Errorf("deploy action %q: invalid where %q (want local|remote)", a.Name, a.Where)
+		}
+		if strings.TrimSpace(a.Run) == "" {
+			return fmt.Errorf("deploy action %q: run is required", a.Name)
+		}
+	}
+	return nil
 }
 
 type globalFile struct {
@@ -130,6 +186,7 @@ type globalFile struct {
 	CmdLogs        *cmdLogsFile                  `toml:"cmd_logs"`
 	Checkpoint     *checkpointConfig             `toml:"checkpoint"`
 	Push           *pushConfig                   `toml:"push"`
+	Deploy         *deployFile                   `toml:"deploy"`
 	ConnectTargets map[string]*connectTargetFile `toml:"connect_targets"`
 	ProjectAliases map[string]string             `toml:"project_aliases"`
 }
@@ -142,6 +199,42 @@ type globalFile struct {
 type pushConfig struct {
 	Path  string `toml:"path"`
 	Mkdir *bool  `toml:"mkdir"`
+}
+
+// deployFile is the [deploy] table; its `actions` array of tables carries
+// the declared deploy-lifecycle steps. A nil pointer (section absent) means
+// no actions on that side of the merge.
+type deployFile struct {
+	Actions []deployActionFile `toml:"actions"`
+}
+
+type deployActionFile struct {
+	Name  string `toml:"name"`
+	Phase string `toml:"phase"`
+	Where string `toml:"where"`
+	Run   string `toml:"run"`
+}
+
+// deployActionsFrom converts a decoded [deploy] table into the exported
+// slice, preserving declared order. Nil-safe.
+func deployActionsFrom(f *deployFile) []DeployAction {
+	if f == nil || len(f.Actions) == 0 {
+		return nil
+	}
+	out := make([]DeployAction, 0, len(f.Actions))
+	for _, a := range f.Actions {
+		out = append(out, DeployAction{Name: a.Name, Phase: a.Phase, Where: a.Where, Run: a.Run})
+	}
+	return out
+}
+
+// mergeDeployActions applies the wholesale rule: a non-empty project list
+// replaces the global one; otherwise the global list stands.
+func mergeDeployActions(global, project []DeployAction) []DeployAction {
+	if len(project) > 0 {
+		return project
+	}
+	return global
 }
 
 // checkpointConfig is the [checkpoint] table, valid in both global.toml and a
@@ -192,6 +285,7 @@ type projectFile struct {
 	Connect        *connectFile      `toml:"connect"`
 	Checkpoint     *checkpointConfig `toml:"checkpoint"`
 	Push           *pushConfig       `toml:"push"`
+	Deploy         *deployFile       `toml:"deploy"`
 }
 
 type connectFile struct {
@@ -320,6 +414,8 @@ func Load(projectPath string) (*Config, error) {
 			cfg.PushMkdir = p.Push.Mkdir
 		}
 	}
+	// Deploy actions: wholesale — a project list replaces the global one.
+	cfg.DeployActions = mergeDeployActions(deployActionsFrom(g.Deploy), deployActionsFrom(p.Deploy))
 	if p.Connect != nil {
 		cfg.ConnectSSHHost = p.Connect.SSHHost
 		cfg.ConnectRemotePath = p.Connect.RemotePath
@@ -375,6 +471,12 @@ type RemoteProfile struct {
 	// back to its own local [push] (Unit 91). No defaults are applied here.
 	PushPath  string
 	PushMkdir *bool
+
+	// DeployActions declared on the SERVER ([[deploy.actions]] in the remote
+	// global.toml + project profile). Wholesale: a non-empty server list
+	// wins over the client's local list (Unit 92); empty when the server
+	// declares none.
+	DeployActions []DeployAction
 }
 
 // ParseRemoteProfile decodes a remote host's `global.toml` and
@@ -442,6 +544,7 @@ func ParseRemoteProfile(globalTOML, projectTOML []byte) RemoteProfile {
 		CheckpointKeep:   cp.Keep,
 		PushPath:         push.Path,
 		PushMkdir:        push.Mkdir,
+		DeployActions:    mergeDeployActions(deployActionsFrom(g.Deploy), deployActionsFrom(p.Deploy)),
 	}
 }
 

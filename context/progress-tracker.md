@@ -23,6 +23,32 @@ _(siguiente: Unit 14 — meta-commands. Fix deploy-build-muting: el builder de `
 
 ## Completed
 
+- [x] Unit 92 — deploy-actions. `[[deploy.actions]]` declarativas: comandos con
+  nombre (`name`/`phase`/`where`/`run`) que corren **local/remoto** en fases fijas
+  del ciclo de `deploy` — `pre_push`, `post_push` (rebuild de imagen), `pre_deploy`,
+  `post_deploy`. Resolución **server-first wholesale** (`resolveDeployActions`: si el
+  servidor declara actions su lista reemplaza la local; `--no-actions` las salta) con
+  validación (`ValidateDeployActions`: fase/where enum, nombre único, run no vacío)
+  al resolver, antes de cualquier paso. Ejecución **fail-fast**
+  (`runDeployActions`/`actionsForPhase`, seams `actionRunLocal`/`actionRunRemote`): un
+  exit≠0 antes del `stop` aborta el deploy sin tocar contenedores; `post_deploy` fallida
+  marca el run fallido pero **no** revierte un deploy verificado en verde
+  (`deployActionName`). Env por script `ECHO_STAGE`/`ECHO_DB`/`ECHO_REMOTE_PATH`/
+  `ECHO_MODULES`/`ECHO_PHASE` (`actionEnvVars`+`envPrefix` quoteado para remoto,
+  `streamCombined` local con `io.Pipe`). `deploy` sin `--push` salta las fases de push
+  con aviso; `watch` corre las actions por ciclo (falla = ese ciclo) vía `--no-actions`
+  hilado por `watchCycle`/`deployCommitsHeadless`. Config: `DeployAction`+
+  `Config.DeployActions`+`RemoteProfile.DeployActions`, `deployFile`/`deployActionsFrom`/
+  `mergeDeployActions`, decode en `Load`/`ParseRemoteProfile`. Nuevos
+  `internal/cmd/deploy_actions.go`+test; hooks en `deploy.go` (plan lista actions +
+  4 fases) y `watch.go`. Registro `commandFlags`+help (deploy/watch) + README (sección
+  Deploy actions + tabla de fases) + CHANGELOG `### Added`. Tests
+  `deploy_actions_test.go` (resolve precedencia, actionsForPhase orden, fail-fast+
+  env vars via seams, envPrefix, ValidateDeployActions) y `config_test.go`
+  (`ParseRemoteProfile` `[[deploy.actions]]` wholesale). build/vet/test verdes.
+  **Pendiente verificación EN VIVO** (remoto real con SSH). Depende de Unit 91
+  (`[push] path` para el flujo image-built).
+
 - [x] Unit 91 — push-path. `push` gana un **destino explícito** para remotos que
   construyen la imagen desde el código (sin addons montado): flag `--dest <path>`
   + sección `[push]` (`path`/`mkdir`) resuelta **server-first con fallback local**

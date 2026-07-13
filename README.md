@@ -358,6 +358,7 @@ the code there — that's for the tool you use to sync the working tree.
 | `  --modules <names>` | Deploy these (dirty) modules non-interactively (skips the picker) |
 | `  --checkpoint[=db\|dump]` | Force a DB checkpoint before the run (default: auto on `staging`/`prod`) |
 | `  --no-checkpoint` | Skip the DB checkpoint even on `staging`/`prod`          |
+| `  --no-actions`   | Skip declared `[[deploy.actions]]` for this run          |
 | `  --rollback`     | Restore the target's most recent checkpoint (no deploy)  |
 
 #### DB checkpoint & rollback
@@ -529,6 +530,42 @@ The same `[push]` destination is honored by `deploy --push` and `watch`
 | `  --force`                      | Required to watch a `prod`-stage target                          |
 | `  --no-logs`                    | Don't follow the remote logs between cycles (silent wait)        |
 | `  --no-checkpoint`              | Skip the DB checkpoint on each cycle's deploy                    |
+| `  --no-actions`                 | Skip declared `[[deploy.actions]]` on each cycle's deploy        |
+
+Both `deploy` and `watch` take `--no-actions` to skip declared deploy actions.
+
+#### Deploy actions
+
+For deploys that need extra steps around the container cycle — rebuilding an
+image from freshly-pushed code, flipping a maintenance page, notifying a
+channel — declare **actions**: named commands that run locally or on the
+remote host at fixed points of the deploy lifecycle.
+
+```toml
+# In the SERVER's global.toml/projects/<key>.toml (wins wholesale) or your local config:
+[[deploy.actions]]
+name  = "build-image"        # unique within the list
+phase = "post_push"          # pre_push | post_push | pre_deploy | post_deploy
+where = "remote"             # local | remote
+run   = "docker build -t myodoo:latest ."
+```
+
+| Phase         | Runs                                                        | Typical use                     |
+|---------------|-------------------------------------------------------------|---------------------------------|
+| `pre_push`    | Before the `push` (only when the deploy pushes)             | prep/clean the build context    |
+| `post_push`   | After a successful push, before the container stop          | **rebuild the image**           |
+| `pre_deploy`  | Right before the containers are touched                     | maintenance page on, drain jobs |
+| `post_deploy` | After the `-u` run verified green and the code is live      | maintenance off, notify         |
+
+Resolution is **server-first, wholesale**: if the server declares any actions
+its list wins entirely; otherwise the local list applies. `--no-actions`
+(on `deploy` and `watch`) skips them for a run. Execution is **fail-fast** — a
+non-zero exit before the stop aborts the deploy untouched; a `post_deploy`
+failure marks the run failed but never rolls back a healthy deploy. Each script
+receives `ECHO_STAGE`, `ECHO_DB`, `ECHO_REMOTE_PATH`, `ECHO_MODULES`
+(space-separated update+install set), and `ECHO_PHASE`. A `deploy` without
+`--push` skips the two push phases with a note. Pair a `[push] path` build
+context (above) with a `post_push` image rebuild for image-built remotes.
 
 `watch` inherits the checkpoint/rollback behavior: each cycle's deploy
 checkpoints the DB and auto-restores it if the commit broke the update, logging
