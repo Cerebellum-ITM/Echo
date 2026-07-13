@@ -331,7 +331,17 @@ func watchCycle(ctx context.Context, opts WatchOpts, rsc remoteShellContext, fro
 		Cfg: opts.Cfg, Root: opts.Root, Palette: opts.Palette,
 		Log: opts.Log, StreamOut: opts.StreamOut, OnSync: opts.OnSync,
 	}
-	if _, err := pushModuleSet(ctx, rsc, pushOpts, modules, srcRoot, false, false); err != nil {
+	// Honor a configured [push] destination (server/local); the watcher is
+	// headless so it never opens the picker.
+	destBase := ""
+	if dest, source, mkdir := resolvePushDest(pushArgs{}, rsc.prof, opts.Cfg); dest != "" {
+		resolved, derr := applyResolvedDest(ctx, rsc, pushOpts, dest, source, mkdir, false)
+		if derr != nil {
+			return 0, false, fmt.Errorf("push: %w", derr)
+		}
+		destBase = resolved
+	}
+	if _, err := pushModuleSet(ctx, rsc, pushOpts, modules, srcRoot, destBase, false, false); err != nil {
 		return 0, false, fmt.Errorf("push: %w", err)
 	}
 

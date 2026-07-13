@@ -5,6 +5,26 @@ All notable changes to Echo are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- **`push` a un directorio de destino explícito (`--dest` / `[push]`).** Para
+  remotos que **construyen la imagen** desde el código (sin carpeta de addons
+  montada que auto-detectar), ahora `push` puede apuntar directo al contexto de
+  build. Precedencia, de mayor a menor: `--dest <path>` por corrida › `[push]
+  path` del **servidor** › `[push] path` local › auto-detección. Un path
+  relativo se cuelga del directorio del proyecto remoto; uno absoluto se usa tal
+  cual (así un contexto de build fuera del árbol del compose también funciona);
+  la raíz del compose queda vetada. `--pick-dest` abre un **navegador
+  interactivo del filesystem remoto** por SSH (nivel por nivel, teñido por
+  stage) y ofrece **guardar** la elección en el `[push] path` local para que el
+  siguiente push no pregunte; si la auto-detección no encuentra dónde escribir y
+  hay terminal, el picker se abre solo. `--mkdir` (o `[push] mkdir = true`) crea
+  el directorio si falta. El mismo `[push]` lo respetan `deploy --push` y
+  `watch` (ambos headless: resuelven de config, nunca abren el picker), y con un
+  destino explícito los remotos conf-mode (addons dentro de la imagen) dejan de
+  fallar closed.
+
 ## [0.23.0] — 2026-07-13
 
 ### Changed

@@ -23,6 +23,31 @@ _(siguiente: Unit 14 — meta-commands. Fix deploy-build-muting: el builder de `
 
 ## Completed
 
+- [x] Unit 91 — push-path. `push` gana un **destino explícito** para remotos que
+  construyen la imagen desde el código (sin addons montado): flag `--dest <path>`
+  + sección `[push]` (`path`/`mkdir`) resuelta **server-first con fallback local**
+  (patrón Unit 90). Precedencia: `--dest` › `[push]` servidor › `[push]` local ›
+  auto-detección. Path relativo se cuelga de `remotePath`, absoluto tal cual, raíz
+  del compose vetada (`resolveDestPath`). `--pick-dest` abre un **navegador
+  interactivo del FS remoto** por SSH (`pickRemoteDir` sobre `runSingleFuzzyPickerStaged`,
+  seam `listRemoteDirs`=`find -maxdepth 1 -type d`, `dirPickerEntries` con filas
+  `· use this directory`/`.. (up)`, navega arriba de `remotePath`, rechaza la raíz
+  in-place) y ofrece **persistir** a `[push] path` local (`SaveProject`, confirm
+  `huh`). Si la auto-detección falla en TTY, cae al picker; headless sigue
+  fail-closed. `deploy --push` y `watch` honran el `[push]` configurado (nunca
+  abren picker). Config: `Config.PushPath/PushMkdir` + `RemoteProfile.PushPath/
+  PushMkdir`, `applyPush`, merge en `Load`/`ParseRemoteProfile`, persistencia en
+  `SaveProject`. Nuevos `internal/cmd/push_dest.go` (`resolvePushDest`/
+  `resolvePushDestination`/`prepareExplicitDest`/`resolveDestPath`/`pickRemoteDir`/
+  `dirPickerEntries`/`underPath`); `pushModuleSet` gana `destBase`. Registro:
+  `commandFlags["push"]`+help (Docker) + README (Explicit destination + `[push]`) +
+  CHANGELOG `### Added`. Tests `push_dest_test.go` (parse `--dest`/`--pick-dest`/
+  `--mkdir`+exclusión mutua, `resolvePushDest` matriz, `resolveDestPath`,
+  `dirPickerEntries`, `underPath`) y `config_test.go` (`ParseRemoteProfile` `[push]`
+  + round-trip `SaveProject`). build/vet/test verdes. **Pendiente verificación EN
+  VIVO** (remoto real con SSH + contexto de build). Prep de la Unit 92 (deploy
+  actions).
+
 - [x] Ocultar checkpoint DB de Odoo (post Unit 89/90). El usuario notó que la
   copia `habitta_prod__ckpt_…` aparecía en el selector de bases de Odoo (es una
   DB Postgres real). Fix automático, sin config por instancia: nuevo helper

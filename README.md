@@ -492,6 +492,26 @@ file-type icon per file. The destination is decided by the **remote** layout
 (a module already on the server updates in place; a new one lands in the
 remote's addons dir), never by the directory you run `push` from.
 
+**Explicit destination.** When the server builds its image from the code
+(no mounted addons dir for auto-detect to find), point `push` at the build
+context directly. Precedence — highest first: `--dest <path>` per run, a
+server-side `[push] path`, a local `[push] path`, then auto-detect. A
+relative path is joined under the target's project dir; an absolute one is
+used as-is (so a build context outside the compose tree works). `--pick-dest`
+browses the remote filesystem level by level and offers to save the choice;
+if auto-detect finds nowhere to write and you're on a terminal, the picker
+opens automatically. `--mkdir` (or `[push] mkdir = true`) creates the dir.
+
+```toml
+# In the SERVER's projects/<key>.toml (wins) or your local one:
+[push]
+path  = "docker/build/addons"   # relative → <project_dir>/docker/build/addons
+mkdir = true
+```
+
+The same `[push]` destination is honored by `deploy --push` and `watch`
+(both headless — they resolve from config, never the picker).
+
 | Command                          | Description                                                       |
 |----------------------------------|-------------------------------------------------------------------|
 | `push [<mod>...]`                | Rsync local modules to the remote target's addons dir over SSH   |
@@ -499,6 +519,9 @@ remote's addons dir), never by the directory you run `push` from.
 | `  --dirty`                      | Push every module with uncommitted working-tree changes          |
 | `  --dry-run`                    | List the changes rsync would make; transfer nothing              |
 | `  --delete`                     | Remove remote files no longer present locally                    |
+| `  --dest <path>`                | Push to an explicit remote dir (skips addons auto-detect)        |
+| `  --pick-dest`                  | Browse the remote filesystem to choose the destination           |
+| `  --mkdir`                      | Create the destination dir if it doesn't exist                   |
 | `  --force`                      | Skip the remote `prod`-stage confirmation                        |
 | `watch [<branch>]`               | Poll a branch and auto `push`+`deploy` when new commits land (`Ctrl+C` to stop); no branch → branch picker |
 | `  --from <target>` / `--remote` | Target a named connect target or this directory's linked remote  |

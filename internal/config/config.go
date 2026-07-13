@@ -107,6 +107,16 @@ type Config struct {
 	CheckpointMode   string
 	CheckpointMethod string
 	CheckpointKeep   int
+
+	// Push ([push], global + per-project, project wins) — the explicit
+	// destination directory for `push` (Unit 91). PushPath, when set,
+	// overrides the auto-detected addons dir: every module lands at
+	// <PushPath>/<module>. A relative path is joined under the target's
+	// remotePath; an absolute one is used as-is. PushMkdir (pointer to
+	// distinguish unset from explicit false) requests `mkdir -p` of the
+	// destination before syncing.
+	PushPath  string
+	PushMkdir *bool
 }
 
 type globalFile struct {
@@ -119,8 +129,19 @@ type globalFile struct {
 	Prompt         *promptFile                   `toml:"prompt"`
 	CmdLogs        *cmdLogsFile                  `toml:"cmd_logs"`
 	Checkpoint     *checkpointConfig             `toml:"checkpoint"`
+	Push           *pushConfig                   `toml:"push"`
 	ConnectTargets map[string]*connectTargetFile `toml:"connect_targets"`
 	ProjectAliases map[string]string             `toml:"project_aliases"`
+}
+
+// pushConfig is the [push] table, valid in both global.toml and a project
+// profile. A nil pointer (section absent) leaves push on auto-detect; a
+// present table declares the explicit destination, project over global.
+// Mkdir is a pointer so an explicit `mkdir = false` is distinguishable from
+// an absent key (which falls through to the other side of the merge).
+type pushConfig struct {
+	Path  string `toml:"path"`
+	Mkdir *bool  `toml:"mkdir"`
 }
 
 // checkpointConfig is the [checkpoint] table, valid in both global.toml and a
@@ -170,6 +191,7 @@ type projectFile struct {
 	FilestorePath  string            `toml:"filestore_path"`
 	Connect        *connectFile      `toml:"connect"`
 	Checkpoint     *checkpointConfig `toml:"checkpoint"`
+	Push           *pushConfig       `toml:"push"`
 }
 
 type connectFile struct {
@@ -241,6 +263,7 @@ func Load(projectPath string) (*Config, error) {
 	cfg.LogDBMax = g.LogDBMax
 	applyCmdLogs(cfg, g.CmdLogs)
 	applyCheckpoint(cfg, g.Checkpoint)
+	applyPush(cfg, g.Push)
 	cfg.ConnectTargets = sortedConnectTargets(g.ConnectTargets)
 	cfg.ProjectAliases = g.ProjectAliases
 	if g.Prompt != nil {
@@ -287,6 +310,16 @@ func Load(projectPath string) (*Config, error) {
 			cfg.CheckpointKeep = p.Checkpoint.Keep
 		}
 	}
+	// The project [push] overrides the global one field by field (a blank
+	// path / absent mkdir leaves the global/default value untouched).
+	if p.Push != nil {
+		if p.Push.Path != "" {
+			cfg.PushPath = p.Push.Path
+		}
+		if p.Push.Mkdir != nil {
+			cfg.PushMkdir = p.Push.Mkdir
+		}
+	}
 	if p.Connect != nil {
 		cfg.ConnectSSHHost = p.Connect.SSHHost
 		cfg.ConnectRemotePath = p.Connect.RemotePath
@@ -295,6 +328,18 @@ func Load(projectPath string) (*Config, error) {
 
 	applyDefaults(cfg)
 	return cfg, nil
+}
+
+// applyPush maps the global [push] table onto the config. A nil table
+// (section absent) leaves push on auto-detect (empty path, nil mkdir); a
+// present table is honored verbatim. The project profile refines this
+// further in Load.
+func applyPush(cfg *Config, f *pushConfig) {
+	if f == nil {
+		return
+	}
+	cfg.PushPath = f.Path
+	cfg.PushMkdir = f.Mkdir
 }
 
 // RemoteProfile is the subset of a server-side Echo configuration the
@@ -323,6 +368,13 @@ type RemoteProfile struct {
 	CheckpointMode   string
 	CheckpointMethod string
 	CheckpointKeep   int
+
+	// Push destination declared on the SERVER ([push] in the remote
+	// global.toml + project profile, project wins). Empty PushPath / nil
+	// PushMkdir when the server doesn't declare it — the client then falls
+	// back to its own local [push] (Unit 91). No defaults are applied here.
+	PushPath  string
+	PushMkdir *bool
 }
 
 // ParseRemoteProfile decodes a remote host's `global.toml` and
@@ -360,6 +412,21 @@ func ParseRemoteProfile(globalTOML, projectTOML []byte) RemoteProfile {
 			cp.Keep = p.Checkpoint.Keep
 		}
 	}
+	// Server-side [push] destination: global table, then project override
+	// field-by-field. No defaults — an absent section stays empty so the
+	// client falls back to its own local config.
+	var push pushConfig
+	if g.Push != nil {
+		push = *g.Push
+	}
+	if p.Push != nil {
+		if p.Push.Path != "" {
+			push.Path = p.Push.Path
+		}
+		if p.Push.Mkdir != nil {
+			push.Mkdir = p.Push.Mkdir
+		}
+	}
 	return RemoteProfile{
 		ComposeCmd:       compose,
 		OdooContainer:    p.OdooContainer,
@@ -373,6 +440,8 @@ func ParseRemoteProfile(globalTOML, projectTOML []byte) RemoteProfile {
 		CheckpointMode:   cp.Mode,
 		CheckpointMethod: cp.Method,
 		CheckpointKeep:   cp.Keep,
+		PushPath:         push.Path,
+		PushMkdir:        push.Mkdir,
 	}
 }
 
@@ -455,6 +524,11 @@ func SaveProject(cfg *Config) error {
 			RemotePath: cfg.ConnectRemotePath,
 			ChromePath: cfg.ConnectChromePath,
 		}
+	}
+	// Persist a declared [push] destination so a picked/configured path
+	// survives across sessions; a pure auto-detect config leaves it out.
+	if cfg.PushPath != "" || cfg.PushMkdir != nil {
+		p.Push = &pushConfig{Path: cfg.PushPath, Mkdir: cfg.PushMkdir}
 	}
 	var buf bytes.Buffer
 	if err := toml.NewEncoder(&buf).Encode(p); err != nil {

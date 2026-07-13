@@ -164,6 +164,52 @@ func TestParseRemoteProfileCheckpoint(t *testing.T) {
 	}
 }
 
+func TestParseRemoteProfilePush(t *testing.T) {
+	// Server [push]: global sets a path, project overrides it and adds mkdir.
+	global := []byte("[push]\npath = \"build/addons\"\n")
+	project := []byte("db_name = \"erp\"\n[push]\npath = \"docker/build\"\nmkdir = true\n")
+	prof := ParseRemoteProfile(global, project)
+	if prof.PushPath != "docker/build" {
+		t.Errorf("PushPath = %q, want docker/build (project override)", prof.PushPath)
+	}
+	if prof.PushMkdir == nil || !*prof.PushMkdir {
+		t.Errorf("PushMkdir = %v, want true", prof.PushMkdir)
+	}
+	// Absent server [push] → empty so the client falls back to local config.
+	if bare := ParseRemoteProfile(nil, []byte("db_name = \"erp\"\n")); bare.PushPath != "" || bare.PushMkdir != nil {
+		t.Errorf("absent server [push] should be empty, got %q/%v", bare.PushPath, bare.PushMkdir)
+	}
+}
+
+func TestPushSectionRoundTrip(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
+
+	cfg, _ := Load("/test/project")
+	cfg.Stage = "dev"
+	cfg.PushPath = "build/addons"
+	if err := SaveProject(cfg); err != nil {
+		t.Fatal(err)
+	}
+	reloaded, err := Load("/test/project")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reloaded.PushPath != "build/addons" {
+		t.Errorf("PushPath after round-trip = %q, want build/addons", reloaded.PushPath)
+	}
+
+	// A pure auto-detect config leaves [push] out of the profile.
+	cfg2, _ := Load("/test/other")
+	cfg2.Stage = "dev"
+	if err := SaveProject(cfg2); err != nil {
+		t.Fatal(err)
+	}
+	if r2, _ := Load("/test/other"); r2.PushPath != "" {
+		t.Errorf("absent [push] should stay empty, got %q", r2.PushPath)
+	}
+}
+
 func TestConnectSectionAbsentByDefault(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("HOME", tmp)

@@ -625,9 +625,19 @@ func RunDeploy(ctx context.Context, opts DeployOpts) (DeployResult, error) {
 			Cfg: opts.Cfg, Root: opts.Root, Palette: opts.Palette,
 			Log: opts.Log, StreamOut: opts.StreamOut, OnSync: opts.OnSync,
 		}
+		// Resolve an explicit destination (server/local [push], no picker in
+		// a headless deploy). Empty → per-module auto-detect.
+		destBase := ""
+		if dest, source, mkdir := resolvePushDest(pushArgs{}, prof, opts.Cfg); dest != "" {
+			resolved, derr := applyResolvedDest(ctx, pushRSC, pushOpts, dest, source, mkdir, dryRun)
+			if derr != nil {
+				return derr
+			}
+			destBase = resolved
+		}
 		opts.log("INFO", "push", "syncing modules to remote", prof.DBName,
 			[2]string{"modules", strings.Join(pushMods, ",")})
-		_, perr := pushModuleSet(ctx, pushRSC, pushOpts, pushMods, opts.Root, dryRun, false)
+		_, perr := pushModuleSet(ctx, pushRSC, pushOpts, pushMods, opts.Root, destBase, dryRun, false)
 		return perr
 	}
 
