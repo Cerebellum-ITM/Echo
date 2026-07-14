@@ -611,6 +611,11 @@ the **local** `[[deploy.actions]]`; after each change Echo can optionally
 upload the set to the server's project profile over SSH (rewriting only the
 `[[deploy.actions]]` section, prod-gated).
 
+`actions` lists the effective set — name · phase · where · exec_path · run —
+so you can see at a glance what runs around each deploy:
+
+<p align="center"><img src="demo/gifs/actions.gif" alt="echo actions — effective deploy-actions table: post_push image rebuild, pre_deploy maintenance flag, post_deploy notify" width="860"></p>
+
 `watch` inherits the checkpoint/rollback behavior: each cycle's deploy
 checkpoints the DB and auto-restores it if the commit broke the update, logging
 the failure and continuing to poll (the `watch stopped` summary reports

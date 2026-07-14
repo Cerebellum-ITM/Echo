@@ -71,6 +71,7 @@ _logcolor() {
     echo.db-pull.filestore)             printf '255;214;165';;  # peach
     echo.compare)                       printf '189;178;255';;  # lavender
     echo.logview)                       printf '189;178;255';;  # lavender
+    echo.actions)                       printf '189;178;255';;  # lavender (FNV-1a%8 → slot 5)
     echo.watch)                         printf '189;178;255';;  # lavender
     echo.watch.logs)                    printf '202;255;191';;  # mint
     echo.watch.cycle)                   printf '189;178;255';;  # lavender
@@ -270,6 +271,29 @@ deploy() {
   _log INFO "$OPID" odoo.modules.loading "Modules loaded.";                       sleep 0.20
   printf '\n'
   _log INFO "$EPID" echo.deploy "deploy complete" "update=2" "install=1" "skipped=1"
+}
+
+# actions: manage [[deploy.actions]] interactively (Unit 93). `actions` (list,
+# the default) streams the effective action table — name·phase·where·exec_path·
+# run — as raw lines the REPL prints in fg, closed by the INFO source footer.
+# Layout mirrors renderActionsTable in internal/cmd/actions.go: each column
+# padded to max(header, values), 2-space gutters, run middle-truncated at 48.
+# The data models an image-built remote: a post_push image rebuild in the build
+# context, a pre_deploy maintenance flag, and a post_deploy notify.
+actions() {
+  printf '\n'
+  _actrow NAME        PHASE        WHERE  EXEC_PATH RUN;                                sleep 0.22
+  _actrow build-image post_push    remote docker    'docker build -t my-shop:latest .'; sleep 0.13
+  _actrow maint-on    pre_deploy   remote '(root)'  'touch /srv/odoo/maintenance.flag'; sleep 0.13
+  _actrow notify      post_deploy  local  '(root)'  './scripts/notify.sh deployed'
+  printf '\n'; sleep 0.30
+  _log INFO "$EPID" echo.actions "actions listed" "count=3" "source=local"
+}
+
+# _actrow NAME PHASE WHERE PATH RUN — one action-table row, all fg like the raw
+# streamed lines. Widths match renderActionsTable's max() over these values.
+_actrow() {
+  printf '%s\n' "$(_c "$FG" "$(printf '%-11s  %-11s  %-6s  %-9s  %s' "$1" "$2" "$3" "$4" "$5")")"
 }
 
 db-list() {
