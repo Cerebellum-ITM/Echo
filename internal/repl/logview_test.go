@@ -1,6 +1,9 @@
 package repl
 
 import (
+	"encoding/json"
+	"io"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -9,6 +12,67 @@ import (
 	"github.com/pascualchavez/echo/internal/config"
 	"github.com/pascualchavez/echo/internal/theme"
 )
+
+// captureStdout runs fn with os.Stdout redirected to a pipe and returns what
+// it wrote — the headless JSON path writes straight to os.Stdout.
+func captureStdout(t *testing.T, fn func()) string {
+	t.Helper()
+	orig := os.Stdout
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe: %v", err)
+	}
+	os.Stdout = w
+	fn()
+	w.Close()
+	os.Stdout = orig
+	out, _ := io.ReadAll(r)
+	return string(out)
+}
+
+func TestLogviewPrintJSON(t *testing.T) {
+	sess := cmdLogSession(t)
+
+	metas := []config.CmdLogMeta{
+		{Command: "watch-deploy", Cmd: "deploy --commits abc123", Stage: "staging",
+			Exit: 0, DeployedTip: "abc123def", Started: time.Now()},
+		{Command: "update", Cmd: "update sale", Stage: "dev", Exit: 1, Started: time.Now()},
+	}
+	out := captureStdout(t, func() { sess.logviewPrintJSON(metas) })
+
+	var got []map[string]any
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatalf("output is not valid JSON: %v\n%s", err, out)
+	}
+	if len(got) != 2 {
+		t.Fatalf("expected 2 entries, got %d", len(got))
+	}
+	if got[0]["command"] != "watch-deploy" || got[0]["deployed_tip"] != "abc123def" {
+		t.Fatalf("agent-facing keys wrong: %+v", got[0])
+	}
+	// The non-watch record omits deployed_tip entirely (omitempty), and never
+	// leaks the local record path.
+	if _, ok := got[1]["deployed_tip"]; ok {
+		t.Fatalf("deployed_tip should be omitted on non-watch record: %+v", got[1])
+	}
+	if _, ok := got[0]["Path"]; ok {
+		t.Fatalf("local record Path must not be serialized: %+v", got[0])
+	}
+	if sess.exitCode != exitOK {
+		t.Fatalf("exit = %d, want exitOK", sess.exitCode)
+	}
+}
+
+func TestLogviewPrintJSONEmpty(t *testing.T) {
+	sess := cmdLogSession(t)
+	out := captureStdout(t, func() { sess.logviewPrintJSON(nil) })
+	if strings.TrimSpace(out) != "[]" {
+		t.Fatalf("empty history should print []: %q", out)
+	}
+	if sess.exitCode != exitOK {
+		t.Fatalf("exit = %d, want exitOK", sess.exitCode)
+	}
+}
 
 // lvLines models a real captured excerpt: a plain INFO, a WARNING with a
 // two-line traceback, then an ERROR. Headers carry the timestamped Odoo
@@ -165,22 +229,25 @@ func TestLogviewTimeLabel(t *testing.T) {
 }
 
 func TestParseLogviewArgs(t *testing.T) {
-	list, last, clear, force, remote, from, unknown := parseLogviewArgs([]string{"--clear", "--force"})
-	if !clear || !force || list || last || remote || from != "" || unknown != "" {
-		t.Fatalf("parse --clear --force wrong: %v %v %v %v %v %q %q", list, last, clear, force, remote, from, unknown)
+	list, last, clear, force, remote, jsonOut, from, unknown := parseLogviewArgs([]string{"--clear", "--force"})
+	if !clear || !force || list || last || remote || jsonOut || from != "" || unknown != "" {
+		t.Fatalf("parse --clear --force wrong: %v %v %v %v %v %v %q %q", list, last, clear, force, remote, jsonOut, from, unknown)
 	}
-	if _, _, _, _, _, _, u := parseLogviewArgs([]string{"--bogus"}); u != "--bogus" {
+	if _, _, _, _, _, _, _, u := parseLogviewArgs([]string{"--bogus"}); u != "--bogus" {
 		t.Fatalf("unknown flag not surfaced: %q", u)
 	}
 	// --from consumes its value token; --remote is a bare switch.
-	if _, _, _, _, _, f, u := parseLogviewArgs([]string{"--from", "prod"}); f != "prod" || u != "" {
+	if _, _, _, _, _, _, f, u := parseLogviewArgs([]string{"--from", "prod"}); f != "prod" || u != "" {
 		t.Fatalf("--from prod → from=%q unknown=%q", f, u)
 	}
-	if _, _, _, _, _, f, _ := parseLogviewArgs([]string{"--from=staging"}); f != "staging" {
+	if _, _, _, _, _, _, f, _ := parseLogviewArgs([]string{"--from=staging"}); f != "staging" {
 		t.Fatalf("--from=staging → from=%q", f)
 	}
-	if _, _, _, _, r, _, _ := parseLogviewArgs([]string{"--remote"}); !r {
+	if _, _, _, _, r, _, _, _ := parseLogviewArgs([]string{"--remote"}); !r {
 		t.Fatalf("--remote not parsed")
+	}
+	if _, _, _, _, _, j, _, _ := parseLogviewArgs([]string{"--json"}); !j {
+		t.Fatalf("--json not parsed")
 	}
 }
 
@@ -250,10 +317,10 @@ func blockLines() []config.ReportLine {
 	// lines carry an inherited ERROR level but no timestamp (the real capture
 	// shape) — blocks group by the timestamp, not the level.
 	return []config.ReportLine{
-		{Level: "INFO", Text: "2026-07-13 10:00:00,000 1 INFO db odoo: starting"}, // 0 block 0
-		{Level: "ERROR", Text: "2026-07-13 10:00:01,000 1 ERROR db odoo: boom"},   // 1 block 1
-		{Level: "ERROR", Text: "  File x.py line 3"},                              // 2 block 1 (continuation)
-		{Level: "ERROR", Text: "  ValueError: nope"},                             // 3 block 1 (continuation)
+		{Level: "INFO", Text: "2026-07-13 10:00:00,000 1 INFO db odoo: starting"},         // 0 block 0
+		{Level: "ERROR", Text: "2026-07-13 10:00:01,000 1 ERROR db odoo: boom"},           // 1 block 1
+		{Level: "ERROR", Text: "  File x.py line 3"},                                      // 2 block 1 (continuation)
+		{Level: "ERROR", Text: "  ValueError: nope"},                                      // 3 block 1 (continuation)
 		{Level: "WARNING", Text: "2026-07-13 10:00:02,000 1 WARNING db odoo: slow query"}, // 4 block 4
 	}
 }

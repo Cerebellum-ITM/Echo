@@ -285,6 +285,7 @@ func startWatchLogs(ctx context.Context, opts WatchOpts, rsc remoteShellContext,
 // deployed (0 when the range had nothing deployable or the branch was
 // rewritten).
 func watchCycle(ctx context.Context, opts WatchOpts, rsc remoteShellContext, from string, noCheckpoint, noActions bool, old, new string) (int, bool, error) {
+	cycleStart := time.Now()
 	if !isFastForward(ctx, opts.Root, old, new) {
 		opts.log("WARNING", "cycle", "branch rewritten — re-baselining, nothing deployed", rsc.prof.DBName,
 			[2]string{"from", shortSHA(old)}, [2]string{"to", shortSHA(new)})
@@ -334,6 +335,11 @@ func watchCycle(ctx context.Context, opts WatchOpts, rsc remoteShellContext, fro
 	defer cleanup()
 
 	rolledBack, derr := deployCommitsHeadless(ctx, opts, from, noCheckpoint, noActions, shas, srcRoot)
+	// Record the cycle in the local command-log history so a headless caller
+	// (an agent) can learn whether a commit auto-deployed — without re-running
+	// watch or touching SSH. Best-effort: a save failure never affects the
+	// cycle's own outcome.
+	saveWatchDeployRecord(opts, rsc, from, shas, modules, new, derr, cycleStart)
 	if derr != nil {
 		return 0, rolledBack, fmt.Errorf("deploy: %w", derr)
 	}
@@ -341,6 +347,45 @@ func watchCycle(ctx context.Context, opts WatchOpts, rsc remoteShellContext, fro
 		[2]string{"modules", strconv.Itoa(len(modules))},
 		[2]string{"commits", strconv.Itoa(len(shas))})
 	return len(shas), rolledBack, nil
+}
+
+// saveWatchDeployRecord persists one `watch-deploy` cmd-log record for a
+// finished cycle under the LOCAL project's history (the same store `logview`
+// reads). The deployed branch tip lands in DeployedTip so a caller can test
+// `git merge-base --is-ancestor <commit> <tip>` to see if a specific commit
+// shipped. Mirrors repl.saveCmdLog's guards: disabled config is a no-op, the
+// write is best-effort, and one retention pass follows. tip is the full SHA
+// of the cycle's new head; derr is the deploy result (nil = success).
+func saveWatchDeployRecord(opts WatchOpts, rsc remoteShellContext, from string, shas, modules []string, tip string, derr error, started time.Time) {
+	if opts.Cfg == nil || opts.Cfg.CmdLogsDisabled {
+		return
+	}
+	exit, result := 0, "ok"
+	if derr != nil {
+		exit, result = 1, "failed"
+	}
+	fromLabel := from
+	if fromLabel == "" {
+		fromLabel = "remote"
+	}
+	lines := []config.ReportLine{{Level: "INFO", Text: fmt.Sprintf(
+		"watch-deploy %s — modules=%s commits=%d tip=%s",
+		result, strings.Join(modules, ","), len(shas), shortSHA(tip))}}
+	rec := config.CmdLogRecord{
+		Cmd:         "deploy --commits " + strings.Join(shas, ","),
+		Command:     "watch-deploy",
+		DB:          rsc.prof.DBName,
+		Stage:       rsc.target.stage,
+		From:        fromLabel,
+		Exit:        exit,
+		Started:     started,
+		DurationMS:  time.Since(started).Milliseconds(),
+		Errors:      exit,
+		DeployedTip: tip,
+		Lines:       lines,
+	}
+	_ = config.SaveCmdLog(opts.Root, rec)
+	_, _ = config.PruneCmdLogs(opts.Root, opts.Cfg.CmdLogsRetentionDays, opts.Cfg.CmdLogsMaxRuns)
 }
 
 // deployCommitsHeadless runs the Unit 78 non-interactive deploy for the given

@@ -2,8 +2,10 @@ package repl
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -849,7 +851,7 @@ func (m logviewModel) filterEcho(f string) string {
 // plus headless escape hatches. It is a meta command — it never resets
 // lastOutput, so `copy-last` still copies the previous command.
 func (sess *session) runLogview(ctx context.Context, args []string) {
-	list, last, clear, force, remote, from, unknown := parseLogviewArgs(args)
+	list, last, clear, force, remote, jsonOut, from, unknown := parseLogviewArgs(args)
 	if unknown != "" {
 		sess.print(Line{Kind: "warn", Text: "logview: unknown flag " + unknown})
 		sess.exitCode = exitUsage
@@ -859,6 +861,11 @@ func (sess *session) runLogview(ctx context.Context, args []string) {
 	isRemote := remote || from != ""
 
 	if clear {
+		if jsonOut {
+			sess.print(Line{Kind: "warn", Text: "logview --json has no --clear payload"})
+			sess.exitCode = exitUsage
+			return
+		}
 		if isRemote {
 			sess.print(Line{Kind: "warn", Text: "logview --clear is local-only"})
 			sess.exitCode = exitUsage
@@ -896,6 +903,11 @@ func (sess *session) runLogview(ctx context.Context, args []string) {
 		}
 	} else {
 		metas, _ = config.ListCmdLogs(sess.projectDir)
+	}
+
+	if jsonOut {
+		sess.logviewPrintJSON(metas)
+		return
 	}
 
 	if list {
@@ -1004,6 +1016,27 @@ func (sess *session) logviewPrintList(metas []config.CmdLogMeta) {
 	sess.exitCode = exitOK
 }
 
+// logviewPrintJSON dumps the resolved run list as a JSON array to stdout —
+// the headless / agent path. Payload goes straight to os.Stdout (the
+// finishActionsJSON convention); an empty history prints `[]` with exit 0 so
+// a caller reads "no runs yet" as data, not an error. Local or remote metas
+// serialize identically; DeployedTip is present on `watch-deploy` records.
+func (sess *session) logviewPrintJSON(metas []config.CmdLogMeta) {
+	if metas == nil {
+		metas = []config.CmdLogMeta{}
+	}
+	b, err := json.Marshal(metas)
+	if err != nil {
+		emitOdooLogTo(os.Stderr, "ERROR", "echo.logview", "encode failed",
+			[]logField{{"err", err.Error()}}, sess.styles, sess.palette, sess.cfg.DBName)
+		sess.exitCode = exitError
+		return
+	}
+	os.Stdout.Write(b)
+	os.Stdout.Write([]byte("\n"))
+	sess.exitCode = exitOK
+}
+
 // logviewClear deletes the project's command-log history after a confirm
 // (skipped with --force; non-TTY without --force fails closed).
 func (sess *session) logviewClear(force bool) {
@@ -1044,7 +1077,7 @@ func (sess *session) logviewClear(force bool) {
 // returned so the caller can fail with a usage error. `--from <t>` / `--from=t`
 // name a connect target and `--remote` selects this directory's link — both
 // switch the browser to the remote target's log history.
-func parseLogviewArgs(args []string) (list, last, clear, force, remote bool, from, unknown string) {
+func parseLogviewArgs(args []string) (list, last, clear, force, remote, jsonOut bool, from, unknown string) {
 	for i := 0; i < len(args); i++ {
 		a := args[i]
 		switch {
@@ -1058,6 +1091,8 @@ func parseLogviewArgs(args []string) (list, last, clear, force, remote bool, fro
 			force = true
 		case a == "--remote":
 			remote = true
+		case a == "--json":
+			jsonOut = true
 		case a == "--from":
 			if i+1 < len(args) {
 				from = args[i+1]

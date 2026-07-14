@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **`logview --json` + `watch-deploy` history: un agente puede saber si su commit
+  se desplegó, sin SSH ni re-invocar `watch`.** `watch` corre en la máquina del
+  usuario y `deploy` guarda su historial de comandos **local** (nunca lo empuja
+  al servidor); el agente vive en esa misma máquina y directorio. Ahora cada
+  ciclo de auto-deploy de `watch` escribe un record `watch-deploy` en el
+  historial local con los SHAs desplegados y el tip de la rama del ciclo
+  (`deployed_tip`), y `logview --json` vuelca la lista de runs como arreglo JSON
+  a stdout — headless, sin TUI, sin SSH, sin proyecto compose. Así el agente que
+  acaba de commitear puede sondear `logview --json`, hallar el `watch-deploy` más
+  reciente cuyo `deployed_tip` incluye su commit
+  (`git merge-base --is-ancestor <sha> <tip>`) y leer `exit` para saber si su
+  cambio entró — todo sin salir a la red, esquivando el agente SSH de 1Password
+  que no carga en subagentes/background. Campo nuevo `DeployedTip` en
+  `CmdLogRecord`/`CmdLogMeta` (omitido en todo comando que no sea `watch-deploy`);
+  `CmdLogMeta` gana tags JSON estables (`cmd`/`command`/`exit`/`deployed_tip`…) y
+  oculta la ruta local del record.
+
 ### Fixed
 - **`watch` volvió a correr las actions `post_push` (p.ej. el rebuild de imagen).**
   Regresión de la Unit 95: `watch` hacía su propio push y luego llamaba al deploy

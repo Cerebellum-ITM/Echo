@@ -653,6 +653,7 @@ side), not file-by-file reads.
 | `logview`               | Interactive browser over every past command's saved logs     |
 | `  --from <target>` / `--remote` | Browse a **remote** target's log history over SSH instead of the local one |
 | `  --list`              | Print the run list without the interactive browser           |
+| `  --json`              | Dump the run list as JSON to stdout (headless / agents)      |
 | `  --last`              | Open the most recent run directly                            |
 | `  --clear [--force]`   | Delete this project's log history (`--force` skips the confirm; local only) |
 
@@ -680,6 +681,16 @@ instead: it reads the server's own `cmd-logs/` over SSH (read-only), so you can
 review what ran on a staging/prod box from your laptop — runs from a pure addons
 repo, no local `docker-compose.yml`. The local `logview` still needs a project
 (its history is keyed by project path).
+
+**Headless / agents.** `logview --json` prints the run list as a JSON array to
+stdout (no TUI, no SSH, no compose project) — the machine-readable path for a
+tool that needs to know what ran. It pairs with `watch`: each auto-deploy cycle
+writes a `watch-deploy` record locally carrying the deployed commit SHAs and the
+deployed branch tip (`deployed_tip`). So an agent that just committed can poll
+`logview --json`, find the newest `watch-deploy` record whose `deployed_tip`
+contains its commit (`git merge-base --is-ancestor <sha> <tip>`), and read
+`exit` to learn whether its change shipped — all from the same machine `watch`
+runs on, without re-invoking it.
 
 <p align="center"><img src="demo/gifs/logview.gif" alt="echo logview — run list, per-run log view, live text and level filters" width="860"></p>
 

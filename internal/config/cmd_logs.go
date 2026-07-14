@@ -27,25 +27,32 @@ type CmdLogRecord struct {
 	Warnings   int          `json:"warnings"`    // WARNING line count
 	Truncated  bool         `json:"truncated"`   // buffer dropped oldest lines
 	Lines      []ReportLine `json:"lines"`       // captured output, level-tagged
+	// DeployedTip is the full SHA of the branch tip a `watch-deploy` cycle
+	// shipped — empty for every other command. It lets a headless caller test
+	// `git merge-base --is-ancestor <commit> <DeployedTip>` to learn whether a
+	// specific commit made it into an auto-deploy (watch batches, so the tip,
+	// not an exact SHA, is the deployed frontier).
+	DeployedTip string `json:"deployed_tip,omitempty"`
 }
 
 // CmdLogMeta is a CmdLogRecord's header without its Lines, plus the file
 // path and parsed timestamp — what a run listing loads to render rows
 // without opening bodies.
 type CmdLogMeta struct {
-	Path       string
-	Cmd        string
-	Command    string
-	DB         string
-	Stage      string
-	From       string
-	Exit       int
-	Started    time.Time
-	DurationMS int64
-	Errors     int
-	Warnings   int
-	Truncated  bool
-	LineCount  int // number of captured lines, for a listing without the body
+	Path        string    `json:"-"` // local record path — internal, not agent-facing
+	Cmd         string    `json:"cmd"`
+	Command     string    `json:"command"`
+	DB          string    `json:"db"`
+	Stage       string    `json:"stage"`
+	From        string    `json:"from"`
+	Exit        int       `json:"exit"`
+	Started     time.Time `json:"started"`
+	DurationMS  int64     `json:"duration_ms"`
+	Errors      int       `json:"errors"`
+	Warnings    int       `json:"warnings"`
+	Truncated   bool      `json:"truncated"`
+	LineCount   int       `json:"line_count"`             // captured lines, without the body
+	DeployedTip string    `json:"deployed_tip,omitempty"` // branch tip a `watch-deploy` cycle shipped
 }
 
 // CmdLogsDir returns the per-project command-log directory,
@@ -132,19 +139,20 @@ func ListCmdLogs(root string) ([]CmdLogMeta, error) {
 			continue
 		}
 		out = append(out, CmdLogMeta{
-			Path:       path,
-			Cmd:        rec.Cmd,
-			Command:    rec.Command,
-			DB:         rec.DB,
-			Stage:      rec.Stage,
-			From:       rec.From,
-			Exit:       rec.Exit,
-			Started:    rec.Started,
-			DurationMS: rec.DurationMS,
-			Errors:     rec.Errors,
-			Warnings:   rec.Warnings,
-			Truncated:  rec.Truncated,
-			LineCount:  len(rec.Lines),
+			Path:        path,
+			Cmd:         rec.Cmd,
+			Command:     rec.Command,
+			DB:          rec.DB,
+			Stage:       rec.Stage,
+			From:        rec.From,
+			Exit:        rec.Exit,
+			Started:     rec.Started,
+			DurationMS:  rec.DurationMS,
+			Errors:      rec.Errors,
+			Warnings:    rec.Warnings,
+			Truncated:   rec.Truncated,
+			LineCount:   len(rec.Lines),
+			DeployedTip: rec.DeployedTip,
 		})
 	}
 	return out, nil

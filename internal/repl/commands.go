@@ -56,7 +56,7 @@ var commandFlags = map[string][]string{
 	"actions":       {"--from", "--remote", "--json", "--force"},
 	"copy-last":     {"--errors"},
 	"report":        {"--step", "--level", "--min-level", "--copy"},
-	"logview":       {"--list", "--last", "--clear", "--force", "--from", "--remote"},
+	"logview":       {"--list", "--last", "--clear", "--force", "--from", "--remote", "--json"},
 	"sequence":      {"--remote", "--from", "--last", "--continue-on-error"},
 }
 

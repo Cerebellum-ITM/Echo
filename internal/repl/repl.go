@@ -515,6 +515,7 @@ func helpSections() []helpSection {
 			{"  --copy", "Copy the matched lines (default: print)"},
 			{"logview", "Browse past commands' logs (filter by text and level)"},
 			{"  --list", "Print the run list without the interactive browser"},
+			{"  --json", "Dump the run list as JSON to stdout (headless / agents)"},
 			{"  --last", "Open the most recent run directly"},
 			{"  --clear", "Delete this project's log history (--force skips confirm)"},
 			{"sequence", "Pick several commands in order and run them (tri-state Tab)"},
