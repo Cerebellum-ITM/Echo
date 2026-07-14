@@ -51,6 +51,7 @@ type watchArgs struct {
 	force        bool
 	noLogs       bool
 	noCheckpoint bool
+	noActions    bool
 }
 
 // parseWatchArgs extracts the optional branch positional plus
@@ -83,6 +84,8 @@ func parseWatchArgs(args []string) (watchArgs, error) {
 			out.noLogs = true
 		case a == "--no-checkpoint":
 			out.noCheckpoint = true
+		case a == "--no-actions":
+			out.noActions = true
 		case a == "--interval":
 			if i+1 >= len(args) {
 				return watchArgs{}, fmt.Errorf("%w: --interval requires a number", ErrUsage)
@@ -215,7 +218,7 @@ func RunWatch(ctx context.Context, opts WatchOpts) error {
 				continue
 			}
 			pauseLogs() // stop the follow before any cycle output
-			n, rolledBack, cerr := watchCycle(ctx, opts, rsc, p.from, p.noCheckpoint, baseline, newTip)
+			n, rolledBack, cerr := watchCycle(ctx, opts, rsc, p.from, p.noCheckpoint, p.noActions, baseline, newTip)
 			baseline = newTip // always re-baseline, even on failure
 			if rolledBack {
 				rollbacks++
@@ -281,7 +284,8 @@ func startWatchLogs(ctx context.Context, opts WatchOpts, rsc remoteShellContext,
 // push committed content → headless deploy. Returns the number of commits
 // deployed (0 when the range had nothing deployable or the branch was
 // rewritten).
-func watchCycle(ctx context.Context, opts WatchOpts, rsc remoteShellContext, from string, noCheckpoint bool, old, new string) (int, bool, error) {
+func watchCycle(ctx context.Context, opts WatchOpts, rsc remoteShellContext, from string, noCheckpoint, noActions bool, old, new string) (int, bool, error) {
+	cycleStart := time.Now()
 	if !isFastForward(ctx, opts.Root, old, new) {
 		opts.log("WARNING", "cycle", "branch rewritten — re-baselining, nothing deployed", rsc.prof.DBName,
 			[2]string{"from", shortSHA(old)}, [2]string{"to", shortSHA(new)})
@@ -320,22 +324,22 @@ func watchCycle(ctx context.Context, opts WatchOpts, rsc remoteShellContext, fro
 		[2]string{"modules", strings.Join(modules, ",")})
 
 	// Push the committed content at <new>, not the working tree — the watcher
-	// may sit on a different branch/worktree.
+	// may sit on a different branch/worktree. The deploy itself does the push
+	// (from this archive dir) so the push and its pre_push/post_push actions
+	// run in order inside the deploy pipeline; the watcher just supplies the
+	// source dir.
 	srcRoot, cleanup, err := archiveModules(ctx, opts.Cfg, opts.Root, new, modules)
 	if err != nil {
 		return 0, false, fmt.Errorf("archive: %w", err)
 	}
 	defer cleanup()
 
-	pushOpts := PushOpts{
-		Cfg: opts.Cfg, Root: opts.Root, Palette: opts.Palette,
-		Log: opts.Log, StreamOut: opts.StreamOut, OnSync: opts.OnSync,
-	}
-	if _, err := pushModuleSet(ctx, rsc, pushOpts, modules, srcRoot, false, false); err != nil {
-		return 0, false, fmt.Errorf("push: %w", err)
-	}
-
-	rolledBack, derr := deployCommitsHeadless(ctx, opts, from, noCheckpoint, shas)
+	rolledBack, derr := deployCommitsHeadless(ctx, opts, from, noCheckpoint, noActions, shas, srcRoot)
+	// Record the cycle in the local command-log history so a headless caller
+	// (an agent) can learn whether a commit auto-deployed — without re-running
+	// watch or touching SSH. Best-effort: a save failure never affects the
+	// cycle's own outcome.
+	saveWatchDeployRecord(opts, rsc, from, shas, modules, new, derr, cycleStart)
 	if derr != nil {
 		return 0, rolledBack, fmt.Errorf("deploy: %w", derr)
 	}
@@ -345,20 +349,66 @@ func watchCycle(ctx context.Context, opts WatchOpts, rsc remoteShellContext, fro
 	return len(shas), rolledBack, nil
 }
 
+// saveWatchDeployRecord persists one `watch-deploy` cmd-log record for a
+// finished cycle under the LOCAL project's history (the same store `logview`
+// reads). The deployed branch tip lands in DeployedTip so a caller can test
+// `git merge-base --is-ancestor <commit> <tip>` to see if a specific commit
+// shipped. Mirrors repl.saveCmdLog's guards: disabled config is a no-op, the
+// write is best-effort, and one retention pass follows. tip is the full SHA
+// of the cycle's new head; derr is the deploy result (nil = success).
+func saveWatchDeployRecord(opts WatchOpts, rsc remoteShellContext, from string, shas, modules []string, tip string, derr error, started time.Time) {
+	if opts.Cfg == nil || opts.Cfg.CmdLogsDisabled {
+		return
+	}
+	exit, result := 0, "ok"
+	if derr != nil {
+		exit, result = 1, "failed"
+	}
+	fromLabel := from
+	if fromLabel == "" {
+		fromLabel = "remote"
+	}
+	lines := []config.ReportLine{{Level: "INFO", Text: fmt.Sprintf(
+		"watch-deploy %s — modules=%s commits=%d tip=%s",
+		result, strings.Join(modules, ","), len(shas), shortSHA(tip))}}
+	rec := config.CmdLogRecord{
+		Cmd:         "deploy --commits " + strings.Join(shas, ","),
+		Command:     "watch-deploy",
+		DB:          rsc.prof.DBName,
+		Stage:       rsc.target.stage,
+		From:        fromLabel,
+		Exit:        exit,
+		Started:     started,
+		DurationMS:  time.Since(started).Milliseconds(),
+		Errors:      exit,
+		DeployedTip: tip,
+		Lines:       lines,
+	}
+	_ = config.SaveCmdLog(opts.Root, rec)
+	_, _ = config.PruneCmdLogs(opts.Root, opts.Cfg.CmdLogsRetentionDays, opts.Cfg.CmdLogsMaxRuns)
+}
+
 // deployCommitsHeadless runs the Unit 78 non-interactive deploy for the given
 // SHAs against the same target, with --force (the watcher already gated prod
 // at startup). Deploy's history marks the SHAs, so re-runs never redeploy.
-func deployCommitsHeadless(ctx context.Context, opts WatchOpts, from string, noCheckpoint bool, shas []string) (rolledBack bool, err error) {
-	args := []string{"--commits", strings.Join(shas, ","), "--force"}
+// The deploy performs the push itself from srcRoot (the watcher's git-archive
+// dir), so the push and its pre_push/post_push actions run in order within the
+// deploy pipeline — the watcher no longer pushes separately.
+func deployCommitsHeadless(ctx context.Context, opts WatchOpts, from string, noCheckpoint, noActions bool, shas []string, srcRoot string) (rolledBack bool, err error) {
+	args := []string{"--commits", strings.Join(shas, ","), "--force", "--push"}
 	if from != "" {
 		args = append(args, "--from", from)
 	}
 	if noCheckpoint {
 		args = append(args, "--no-checkpoint")
 	}
+	if noActions {
+		args = append(args, "--no-actions")
+	}
 	res, err := RunDeploy(ctx, DeployOpts{
 		Cfg: opts.Cfg, Root: opts.Root, Args: args, Palette: opts.Palette,
-		Log: opts.Log, StreamOut: opts.StreamOut,
+		Log: opts.Log, StreamOut: opts.StreamOut, OnSync: opts.OnSync,
+		PushSrcRoot: srcRoot,
 	})
 	return res.RolledBack, err
 }

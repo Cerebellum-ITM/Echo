@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/BurntSushi/toml"
 )
 
 func TestLoadDefaults(t *testing.T) {
@@ -161,6 +163,176 @@ func TestParseRemoteProfileCheckpoint(t *testing.T) {
 	}
 	if prof.CheckpointKeep != 5 {
 		t.Errorf("CheckpointKeep = %d, want 5 (from global)", prof.CheckpointKeep)
+	}
+}
+
+func TestParseRemoteProfilePush(t *testing.T) {
+	// Server [push]: global sets a path, project overrides it and adds mkdir.
+	global := []byte("[push]\npath = \"build/addons\"\n")
+	project := []byte("db_name = \"erp\"\n[push]\npath = \"docker/build\"\nmkdir = true\n")
+	prof := ParseRemoteProfile(global, project)
+	if prof.PushPath != "docker/build" {
+		t.Errorf("PushPath = %q, want docker/build (project override)", prof.PushPath)
+	}
+	if prof.PushMkdir == nil || !*prof.PushMkdir {
+		t.Errorf("PushMkdir = %v, want true", prof.PushMkdir)
+	}
+	// Absent server [push] → empty so the client falls back to local config.
+	if bare := ParseRemoteProfile(nil, []byte("db_name = \"erp\"\n")); bare.PushPath != "" || bare.PushMkdir != nil {
+		t.Errorf("absent server [push] should be empty, got %q/%v", bare.PushPath, bare.PushMkdir)
+	}
+}
+
+func TestPushSectionRoundTrip(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
+
+	cfg, _ := Load("/test/project")
+	cfg.Stage = "dev"
+	cfg.PushPath = "build/addons"
+	if err := SaveProject(cfg); err != nil {
+		t.Fatal(err)
+	}
+	reloaded, err := Load("/test/project")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reloaded.PushPath != "build/addons" {
+		t.Errorf("PushPath after round-trip = %q, want build/addons", reloaded.PushPath)
+	}
+
+	// A pure auto-detect config leaves [push] out of the profile.
+	cfg2, _ := Load("/test/other")
+	cfg2.Stage = "dev"
+	if err := SaveProject(cfg2); err != nil {
+		t.Fatal(err)
+	}
+	if r2, _ := Load("/test/other"); r2.PushPath != "" {
+		t.Errorf("absent [push] should stay empty, got %q", r2.PushPath)
+	}
+}
+
+func TestParseRemoteProfileDeployActions(t *testing.T) {
+	// A project [[deploy.actions]] list replaces the global one wholesale.
+	global := []byte("[[deploy.actions]]\nname = \"g\"\nphase = \"pre_push\"\nwhere = \"local\"\nrun = \"echo g\"\n")
+	project := []byte("db_name = \"erp\"\n[[deploy.actions]]\nname = \"build\"\nphase = \"post_push\"\nwhere = \"remote\"\nrun = \"./build.sh\"\n")
+	prof := ParseRemoteProfile(global, project)
+	if len(prof.DeployActions) != 1 || prof.DeployActions[0].Name != "build" {
+		t.Fatalf("DeployActions = %+v, want the project list (wholesale)", prof.DeployActions)
+	}
+	a := prof.DeployActions[0]
+	if a.Phase != "post_push" || a.Where != "remote" || a.Run != "./build.sh" {
+		t.Errorf("action = %+v", a)
+	}
+	if err := ValidateDeployActions(prof.DeployActions); err != nil {
+		t.Errorf("decoded actions failed validation: %v", err)
+	}
+	// Only a global list → it stands.
+	if p2 := ParseRemoteProfile(global, []byte("db_name = \"erp\"\n")); len(p2.DeployActions) != 1 || p2.DeployActions[0].Name != "g" {
+		t.Errorf("global-only DeployActions = %+v, want [g]", p2.DeployActions)
+	}
+	// Neither → empty so the client falls back to its own local list.
+	if bare := ParseRemoteProfile(nil, []byte("db_name = \"erp\"\n")); len(bare.DeployActions) != 0 {
+		t.Errorf("absent [[deploy.actions]] should be empty, got %+v", bare.DeployActions)
+	}
+}
+
+func TestDeployActionsExecPathRoundTrip(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
+
+	cfg, _ := Load("/test/project")
+	cfg.Stage = "dev"
+	cfg.DeployActions = []DeployAction{
+		{Name: "build", Phase: "post_push", Where: "remote", ExecPath: "docker", Run: "./b.sh"},
+		{Name: "notify", Phase: "post_deploy", Where: "local", Run: "echo hi"}, // no exec_path
+	}
+	if err := SaveProject(cfg); err != nil {
+		t.Fatal(err)
+	}
+	reloaded, err := Load("/test/project")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(reloaded.DeployActions) != 2 {
+		t.Fatalf("got %d actions, want 2", len(reloaded.DeployActions))
+	}
+	if reloaded.DeployActions[0].ExecPath != "docker" {
+		t.Errorf("exec_path lost: %q", reloaded.DeployActions[0].ExecPath)
+	}
+	if reloaded.DeployActions[1].ExecPath != "" {
+		t.Errorf("absent exec_path should stay empty, got %q", reloaded.DeployActions[1].ExecPath)
+	}
+}
+
+func TestDeployPushConfig(t *testing.T) {
+	// Server [deploy] push: project overrides global.
+	prof := ParseRemoteProfile([]byte("[deploy]\npush = false\n"), []byte("db_name = \"erp\"\n[deploy]\npush = true\n"))
+	if prof.DeployPush == nil || !*prof.DeployPush {
+		t.Errorf("server DeployPush = %v, want true (project override)", prof.DeployPush)
+	}
+	// Absent → nil so the client falls back.
+	if bare := ParseRemoteProfile(nil, []byte("db_name = \"erp\"\n")); bare.DeployPush != nil {
+		t.Errorf("absent [deploy] push should be nil, got %v", bare.DeployPush)
+	}
+}
+
+func TestDeployPushRoundTrip(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
+
+	cfg, _ := Load("/test/project")
+	cfg.Stage = "dev"
+	tru := true
+	cfg.DeployPush = &tru
+	if err := SaveProject(cfg); err != nil {
+		t.Fatal(err)
+	}
+	reloaded, err := Load("/test/project")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reloaded.DeployPush == nil || !*reloaded.DeployPush {
+		t.Errorf("DeployPush after round-trip = %v, want true", reloaded.DeployPush)
+	}
+	// Absent → stays nil.
+	cfg2, _ := Load("/test/other")
+	cfg2.Stage = "dev"
+	if err := SaveProject(cfg2); err != nil {
+		t.Fatal(err)
+	}
+	if r2, _ := Load("/test/other"); r2.DeployPush != nil {
+		t.Errorf("absent [deploy] push should stay nil, got %v", r2.DeployPush)
+	}
+}
+
+func TestWithDeployActions(t *testing.T) {
+	// Splicing actions into an existing profile preserves other keys.
+	existing := []byte("db_name = \"erp\"\nstage = \"prod\"\n[connect]\nssh_host = \"h\"\n")
+	actions := []DeployAction{{Name: "build", Phase: "post_push", Where: "remote", ExecPath: "docker", Run: "./b.sh"}}
+	out, err := WithDeployActions(existing, actions)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var p projectFile
+	if err := toml.Unmarshal(out, &p); err != nil {
+		t.Fatal(err)
+	}
+	if p.DBName != "erp" || p.Stage != "prod" || p.Connect == nil || p.Connect.SSHHost != "h" {
+		t.Errorf("unrelated keys not preserved: %+v", p)
+	}
+	if p.Deploy == nil || len(p.Deploy.Actions) != 1 || p.Deploy.Actions[0].ExecPath != "docker" {
+		t.Errorf("actions not spliced: %+v", p.Deploy)
+	}
+	// Empty actions removes the section.
+	out2, _ := WithDeployActions(out, nil)
+	var p2 projectFile
+	_ = toml.Unmarshal(out2, &p2)
+	if p2.Deploy != nil {
+		t.Errorf("empty actions should drop [deploy], got %+v", p2.Deploy)
+	}
+	if p2.DBName != "erp" {
+		t.Error("other keys should survive the removal")
 	}
 }
 

@@ -2,8 +2,10 @@ package repl
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -46,23 +48,44 @@ func filterRuns(metas []config.CmdLogMeta, q string) []config.CmdLogMeta {
 	return out
 }
 
-// filterLogLines keeps lines matching both a case-insensitive text
-// substring and a min-level threshold. minLevel == "" disables the level
-// gate (all lines); with a threshold, unleveled lines (level == "") are
-// hidden — they only show on "all".
+// filterLogLines keeps whole log blocks matching both a case-insensitive
+// text substring and a min-level threshold. A block is a leveled entry plus
+// its unleveled continuation lines (a traceback), so the filter is
+// block-aware: it never splits an entry from its traceback. A block passes
+// the level gate when its header's level meets the threshold (minLevel == ""
+// disables it), and the text gate when ANY line in the block matches — so a
+// traceback stays attached to its warning/error even when only the header
+// (or only a deep frame) contains the query. A leading unleveled block (no
+// header) is kept only on "all", matching the old per-line rule for
+// headerless output.
 func filterLogLines(lines []config.ReportLine, q, minLevel string) []config.ReportLine {
 	q = strings.ToLower(strings.TrimSpace(q))
 	out := make([]config.ReportLine, 0, len(lines))
-	for _, l := range lines {
-		if q != "" && !strings.Contains(strings.ToLower(l.Text), q) {
-			continue
+	for i := 0; i < len(lines); {
+		// Block = lines[i] (a header, or a leading continuation) plus every
+		// following continuation line up to the next header.
+		end := i + 1
+		for end < len(lines) && entryHeaderLevel(lines[end].Text) == "" {
+			end++
 		}
-		if minLevel != "" {
-			if l.Level == "" || levelRank[l.Level] < levelRank[minLevel] {
-				continue
+		block := lines[i:end]
+		header := entryHeaderLevel(block[0].Text)
+
+		levelOK := minLevel == "" ||
+			(header != "" && levelRank[header] >= levelRank[minLevel])
+		textOK := q == ""
+		for _, l := range block {
+			if textOK {
+				break
+			}
+			if strings.Contains(strings.ToLower(l.Text), q) {
+				textOK = true
 			}
 		}
-		out = append(out, l)
+		if levelOK && textOK {
+			out = append(out, block...)
+		}
+		i = end
 	}
 	return out
 }
@@ -86,14 +109,31 @@ func cycleLevel(cur string, back bool) string {
 	return logviewLevels[idx]
 }
 
+// entryHeaderLevel returns the log level when text starts a NEW log record —
+// i.e. it carries a timestamped Odoo or loguru prefix — and "" for a
+// continuation line (a traceback frame, a bare message tail). This is the
+// block-boundary signal: it is deliberately NOT the stored ReportLine.Level,
+// because a traceback line inherits its entry's color (Kind warn/err) and so
+// gets tagged with a level during capture — grouping on that level would
+// split every traceback frame into its own block. A timestamp only ever
+// begins a real record, so it groups an entry with its whole traceback.
+func entryHeaderLevel(text string) string {
+	if m := odooLogPrefix.FindStringSubmatch(text); m != nil {
+		return m[1]
+	}
+	if m := loguruLogPrefix.FindStringSubmatch(text); m != nil {
+		return m[1]
+	}
+	return ""
+}
+
 // blockStartOf returns the index of the block that filtered line i belongs to.
-// A block is a leveled line plus every unleveled line that follows it (a log
-// entry and its continuation — e.g. a traceback, which already inherits the
-// entry's color) up to the next leveled line. Unleveled lines with no leveled
-// line before them form a leading block anchored at index 0.
+// A block is a log entry (a timestamped header) plus every continuation line
+// that follows it (a traceback) up to the next header. Continuation lines with
+// no header before them form a leading block anchored at index 0.
 func blockStartOf(lines []config.ReportLine, i int) int {
 	for j := i; j >= 0; j-- {
-		if lines[j].Level != "" {
+		if entryHeaderLevel(lines[j].Text) != "" {
 			return j
 		}
 	}
@@ -101,10 +141,10 @@ func blockStartOf(lines []config.ReportLine, i int) int {
 }
 
 // blockEndOf returns the exclusive end index of the block anchored at start:
-// the next leveled line after it, or the end of the slice.
+// the next header line after it, or the end of the slice.
 func blockEndOf(lines []config.ReportLine, start int) int {
 	for j := start + 1; j < len(lines); j++ {
-		if lines[j].Level != "" {
+		if entryHeaderLevel(lines[j].Text) != "" {
 			return j
 		}
 	}
@@ -811,7 +851,7 @@ func (m logviewModel) filterEcho(f string) string {
 // plus headless escape hatches. It is a meta command — it never resets
 // lastOutput, so `copy-last` still copies the previous command.
 func (sess *session) runLogview(ctx context.Context, args []string) {
-	list, last, clear, force, remote, from, unknown := parseLogviewArgs(args)
+	list, last, clear, force, remote, jsonOut, from, unknown := parseLogviewArgs(args)
 	if unknown != "" {
 		sess.print(Line{Kind: "warn", Text: "logview: unknown flag " + unknown})
 		sess.exitCode = exitUsage
@@ -821,6 +861,11 @@ func (sess *session) runLogview(ctx context.Context, args []string) {
 	isRemote := remote || from != ""
 
 	if clear {
+		if jsonOut {
+			sess.print(Line{Kind: "warn", Text: "logview --json has no --clear payload"})
+			sess.exitCode = exitUsage
+			return
+		}
 		if isRemote {
 			sess.print(Line{Kind: "warn", Text: "logview --clear is local-only"})
 			sess.exitCode = exitUsage
@@ -858,6 +903,11 @@ func (sess *session) runLogview(ctx context.Context, args []string) {
 		}
 	} else {
 		metas, _ = config.ListCmdLogs(sess.projectDir)
+	}
+
+	if jsonOut {
+		sess.logviewPrintJSON(metas)
+		return
 	}
 
 	if list {
@@ -966,6 +1016,27 @@ func (sess *session) logviewPrintList(metas []config.CmdLogMeta) {
 	sess.exitCode = exitOK
 }
 
+// logviewPrintJSON dumps the resolved run list as a JSON array to stdout —
+// the headless / agent path. Payload goes straight to os.Stdout (the
+// finishActionsJSON convention); an empty history prints `[]` with exit 0 so
+// a caller reads "no runs yet" as data, not an error. Local or remote metas
+// serialize identically; DeployedTip is present on `watch-deploy` records.
+func (sess *session) logviewPrintJSON(metas []config.CmdLogMeta) {
+	if metas == nil {
+		metas = []config.CmdLogMeta{}
+	}
+	b, err := json.Marshal(metas)
+	if err != nil {
+		emitOdooLogTo(os.Stderr, "ERROR", "echo.logview", "encode failed",
+			[]logField{{"err", err.Error()}}, sess.styles, sess.palette, sess.cfg.DBName)
+		sess.exitCode = exitError
+		return
+	}
+	os.Stdout.Write(b)
+	os.Stdout.Write([]byte("\n"))
+	sess.exitCode = exitOK
+}
+
 // logviewClear deletes the project's command-log history after a confirm
 // (skipped with --force; non-TTY without --force fails closed).
 func (sess *session) logviewClear(force bool) {
@@ -1006,7 +1077,7 @@ func (sess *session) logviewClear(force bool) {
 // returned so the caller can fail with a usage error. `--from <t>` / `--from=t`
 // name a connect target and `--remote` selects this directory's link — both
 // switch the browser to the remote target's log history.
-func parseLogviewArgs(args []string) (list, last, clear, force, remote bool, from, unknown string) {
+func parseLogviewArgs(args []string) (list, last, clear, force, remote, jsonOut bool, from, unknown string) {
 	for i := 0; i < len(args); i++ {
 		a := args[i]
 		switch {
@@ -1020,6 +1091,8 @@ func parseLogviewArgs(args []string) (list, last, clear, force, remote bool, fro
 			force = true
 		case a == "--remote":
 			remote = true
+		case a == "--json":
+			jsonOut = true
 		case a == "--from":
 			if i+1 < len(args) {
 				from = args[i+1]

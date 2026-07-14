@@ -5,6 +5,130 @@ All notable changes to Echo are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- **`logview --json` + `watch-deploy` history: un agente puede saber si su commit
+  se desplegó, sin SSH ni re-invocar `watch`.** `watch` corre en la máquina del
+  usuario y `deploy` guarda su historial de comandos **local** (nunca lo empuja
+  al servidor); el agente vive en esa misma máquina y directorio. Ahora cada
+  ciclo de auto-deploy de `watch` escribe un record `watch-deploy` en el
+  historial local con los SHAs desplegados y el tip de la rama del ciclo
+  (`deployed_tip`), y `logview --json` vuelca la lista de runs como arreglo JSON
+  a stdout — headless, sin TUI, sin SSH, sin proyecto compose. Así el agente que
+  acaba de commitear puede sondear `logview --json`, hallar el `watch-deploy` más
+  reciente cuyo `deployed_tip` incluye su commit
+  (`git merge-base --is-ancestor <sha> <tip>`) y leer `exit` para saber si su
+  cambio entró — todo sin salir a la red, esquivando el agente SSH de 1Password
+  que no carga en subagentes/background. Campo nuevo `DeployedTip` en
+  `CmdLogRecord`/`CmdLogMeta` (omitido en todo comando que no sea `watch-deploy`);
+  `CmdLogMeta` gana tags JSON estables (`cmd`/`command`/`exit`/`deployed_tip`…) y
+  oculta la ruta local del record.
+
+### Fixed
+- **`watch` volvió a correr las actions `post_push` (p.ej. el rebuild de imagen).**
+  Regresión de la Unit 95: `watch` hacía su propio push y luego llamaba al deploy
+  interno con `--no-push` para no duplicar, pero el gating de `pre_push`/`post_push`
+  cuelga de `p.push` del deploy → con `--no-push` se saltaban con "skipped — no push
+  in this run", así que el código nuevo se pusheaba pero **la imagen nunca se
+  reconstruía** (deploy con imagen vieja). Ahora `watch` no pushea por su cuenta:
+  archiva el contenido del commit y deja que el **deploy** haga el push desde ese
+  archive (nuevo `DeployOpts.PushSrcRoot` + `--push`), así el push y sus acciones
+  `pre_push`/`post_push` corren en orden dentro del pipeline del deploy —
+  `pre_push → push → post_push → pre_deploy → stop → up → -u → post_deploy` — sin
+  doble push. Elimina también la duplicación de la resolución de `[push]` en el
+  watcher.
+- **`logview` agrupa cada entrada con su traceback como un solo bloque.** Una
+  entrada de Odoo multi-línea (un WARNING/ERROR + su traceback) se partía en
+  líneas sueltas: al seleccionar solo tomabas una línea, y con un filtro de nivel
+  activo las líneas de continuación desaparecían. Causa: las líneas de traceback
+  heredan el color (Kind) de su cabecera, así que al capturarse quedaban
+  *marcadas con nivel*, y el agrupado se hacía por nivel — cada frame terminaba
+  siendo su propio bloque. Ahora el límite de bloque se detecta por el **prefijo
+  con timestamp** (una entrada nueva de log siempre empieza con fecha/hora), no
+  por el nivel: `blockStartOf`/`blockEndOf` y el filtro (`filterLogLines`) operan
+  por bloque completo — seleccionar/copiar toma toda la entrada + traceback, y un
+  umbral de nivel conserva el traceback junto a su cabecera (si la cabecera pasa)
+  o descarta el bloque entero. El filtro de texto mantiene el bloque si cualquier
+  línea (incluida una del traceback) coincide.
+- **`logview`/`report` locales ya no exigen un proyecto compose.** Corrían
+  projectless solo con `--remote`/`--from`; sin flag pedían un `docker-compose.yml`
+  en el cwd y fallaban con "not inside a project" — absurdo para un inspector que
+  solo lee el historial local (además, el `deploy` que *escribió* ese historial ya
+  corría projectless). Ahora `logview`/`report` son projectless siempre: leen el
+  store local por cwd, y `--remote`/`--from` cambian la fuente (historial del
+  servidor), no el requisito. `ec logview` funciona desde cualquier directorio.
+
+### Added
+- **`deploy` puede empujar por default (`[deploy] push`).** Para remotos que
+  construyen la imagen (donde un deploy siempre manda código), ya no hace falta
+  teclear `--push` cada vez: `[deploy] push = true` lo prende por default, resuelto
+  **server-first con fallback local** (el servidor sabe que construye imagen). Se
+  configura desde CLI sin editar TOML con `deploy --set-push` (escribe la config
+  local y sale, sin deploy ni SSH; `--set-push=false` lo apaga). `--no-push` lo
+  salta puntualmente aunque sea el default; `--push`/`--no-push` son mutuamente
+  excluyentes. `watch` siempre empuja desde su propio git archive, así que el
+  default nunca causa doble push ahí (su deploy interno pasa `--no-push`).
+- **`push --set-dest` — fijar el destino de push sin empujar nada.** El paso
+  natural de configuración para remotos que construyen la imagen: resuelve el
+  target, abre el picker del FS remoto (o toma `--dest <path>` headless), guarda
+  el `[push] path` local y sale — **sin pedir módulo, sin rsync, sin gate de
+  prod**. Quita la fricción de tener que elegir un módulo solo para configurar la
+  carpeta. `--mkdir` compone (persiste `[push] mkdir = true`); un path bajo el dir
+  del proyecto se guarda relativo, fuera de él absoluto. Después, `deploy --push`/
+  `watch` usan el destino guardado sin volver a preguntar.
+- **Comando `actions` — gestión interactiva de `[[deploy.actions]]`.** En vez de
+  editar el TOML a mano: `actions` (tabla estilizada de las actions efectivas —
+  local, o del servidor con `--from`/`--remote`), `actions add` (wizard
+  name→phase→where→exec dir→command), `actions edit [<name>]` (edición in-place,
+  picker si se omite el nombre) y `actions rm [<name>] [--force]`. El wizard corre
+  como una secuencia de forms `huh` (el picker no cabe dentro de un form); el paso
+  de directorio ofrece **Project root**, **Addons directory** (resuelto del
+  perfil), **Pick a directory…** (navegador SSH remoto de la Unit 91 para actions
+  `remote`, navegador local para `local`) o **Type a path** — un path elegido se
+  guarda relativo si cae bajo la raíz. Las ediciones persisten al
+  `[[deploy.actions]]` **local**; tras cada cambio Echo ofrece (gateado, No por
+  defecto, red-confirm en prod) subir la lista al perfil del proyecto en el
+  servidor por SSH, reescribiendo solo esa sección. `actions list --json` para
+  scripting.
+- **`exec_path` en las deploy actions.** Cada action puede fijar el directorio
+  donde corre su `run`: vacío/ausente → la raíz (dir del compose en remoto, raíz
+  del proyecto en local); relativo → colgado de esa raíz; absoluto → tal cual. El
+  frame `running` loguea `dir=` cuando está seteado. Pensado para contextos de
+  build fuera del árbol del compose (p.ej. `exec_path = "docker"` para el rebuild
+  de imagen).
+- **Deploy actions (`[[deploy.actions]]`).** Comandos con nombre que corren
+  **local o remoto** en puntos fijos del ciclo de `deploy`: `pre_push`,
+  `post_push` (p.ej. reconstruir la imagen desde el código recién pusheado),
+  `pre_deploy` y `post_deploy`. Se declaran en el `global.toml`/perfil del
+  **servidor** (gana **wholesale**: si el servidor declara actions, su lista
+  reemplaza a la local) o en la config local; `--no-actions` (en `deploy` y
+  `watch`) las salta. Ejecución **fail-fast**: un exit≠0 antes del `stop` aborta
+  el deploy sin tocar los contenedores; una action `post_deploy` fallida marca el
+  run como fallido pero **no** revierte un deploy ya verificado en verde. Cada
+  script recibe `ECHO_STAGE`/`ECHO_DB`/`ECHO_REMOTE_PATH`/`ECHO_MODULES`/
+  `ECHO_PHASE`; un `deploy` sin `--push` salta las dos fases de push con un aviso;
+  `watch` las corre en cada ciclo y una falla solo tumba ese ciclo. Config inválida
+  (fase/where desconocido, nombre duplicado, `run` vacío) falla al resolver, antes
+  de cualquier paso. Pensado para remotos que construyen la imagen: `[push] path`
+  (contexto de build) + una action `post_push` que hace el rebuild.
+- **`push` a un directorio de destino explícito (`--dest` / `[push]`).** Para
+  remotos que **construyen la imagen** desde el código (sin carpeta de addons
+  montada que auto-detectar), ahora `push` puede apuntar directo al contexto de
+  build. Precedencia, de mayor a menor: `--dest <path>` por corrida › `[push]
+  path` del **servidor** › `[push] path` local › auto-detección. Un path
+  relativo se cuelga del directorio del proyecto remoto; uno absoluto se usa tal
+  cual (así un contexto de build fuera del árbol del compose también funciona);
+  la raíz del compose queda vetada. `--pick-dest` abre un **navegador
+  interactivo del filesystem remoto** por SSH (nivel por nivel, teñido por
+  stage) y ofrece **guardar** la elección en el `[push] path` local para que el
+  siguiente push no pregunte; si la auto-detección no encuentra dónde escribir y
+  hay terminal, el picker se abre solo. `--mkdir` (o `[push] mkdir = true`) crea
+  el directorio si falta. El mismo `[push]` lo respetan `deploy --push` y
+  `watch` (ambos headless: resuelven de config, nunca abren el picker), y con un
+  destino explícito los remotos conf-mode (addons dentro de la imagen) dejan de
+  fallar closed.
+
 ## [0.23.0] — 2026-07-13
 
 ### Changed

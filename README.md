@@ -358,7 +358,18 @@ the code there — that's for the tool you use to sync the working tree.
 | `  --modules <names>` | Deploy these (dirty) modules non-interactively (skips the picker) |
 | `  --checkpoint[=db\|dump]` | Force a DB checkpoint before the run (default: auto on `staging`/`prod`) |
 | `  --no-checkpoint` | Skip the DB checkpoint even on `staging`/`prod`          |
+| `  --no-actions`   | Skip declared `[[deploy.actions]]` for this run          |
+| `  --push` / `--no-push` | Push the resolved modules before the run / skip it even when it's the default |
+| `  --set-push[=bool]` | Set `deploy` to push by default and exit (no deploy)  |
 | `  --rollback`     | Restore the target's most recent checkpoint (no deploy)  |
+
+**Push by default.** For an image-built remote where a deploy always ships
+code, make `--push` the default instead of typing it every time: `deploy
+--set-push` writes `[deploy] push = true` to the local profile (headless, no
+deploy), or declare it in the server profile (server wins, local falls back).
+Then `deploy` pushes on its own; `deploy --no-push` skips it for one run.
+`watch` always pushes from its own git archive, so the default never
+double-pushes there.
 
 #### DB checkpoint & rollback
 
@@ -492,6 +503,35 @@ file-type icon per file. The destination is decided by the **remote** layout
 (a module already on the server updates in place; a new one lands in the
 remote's addons dir), never by the directory you run `push` from.
 
+**Explicit destination.** When the server builds its image from the code
+(no mounted addons dir for auto-detect to find), point `push` at the build
+context directly. Precedence — highest first: `--dest <path>` per run, a
+server-side `[push] path`, a local `[push] path`, then auto-detect. A
+relative path is joined under the target's project dir; an absolute one is
+used as-is (so a build context outside the compose tree works). `--pick-dest`
+browses the remote filesystem level by level and offers to save the choice;
+if auto-detect finds nowhere to write and you're on a terminal, the picker
+opens automatically. `--mkdir` (or `[push] mkdir = true`) creates the dir.
+
+To set the destination **without pushing anything** (the usual first step),
+use `push --set-dest`: it resolves the target, opens the picker (or takes
+`--dest <path>`), saves the `[push] path`, and exits — no module needed.
+
+```bash
+echo_cli push --set-dest --from prod                 # pick the dir interactively
+echo_cli push --set-dest --dest docker/addons --from prod   # or set it headlessly
+```
+
+```toml
+# In the SERVER's projects/<key>.toml (wins) or your local one:
+[push]
+path  = "docker/build/addons"   # relative → <project_dir>/docker/build/addons
+mkdir = true
+```
+
+The same `[push]` destination is honored by `deploy --push` and `watch`
+(both headless — they resolve from config, never the picker).
+
 | Command                          | Description                                                       |
 |----------------------------------|-------------------------------------------------------------------|
 | `push [<mod>...]`                | Rsync local modules to the remote target's addons dir over SSH   |
@@ -499,6 +539,9 @@ remote's addons dir), never by the directory you run `push` from.
 | `  --dirty`                      | Push every module with uncommitted working-tree changes          |
 | `  --dry-run`                    | List the changes rsync would make; transfer nothing              |
 | `  --delete`                     | Remove remote files no longer present locally                    |
+| `  --dest <path>`                | Push to an explicit remote dir (skips addons auto-detect)        |
+| `  --pick-dest`                  | Browse the remote filesystem to choose the destination           |
+| `  --mkdir`                      | Create the destination dir if it doesn't exist                   |
 | `  --force`                      | Skip the remote `prod`-stage confirmation                        |
 | `watch [<branch>]`               | Poll a branch and auto `push`+`deploy` when new commits land (`Ctrl+C` to stop); no branch → branch picker |
 | `  --from <target>` / `--remote` | Target a named connect target or this directory's linked remote  |
@@ -506,6 +549,72 @@ remote's addons dir), never by the directory you run `push` from.
 | `  --force`                      | Required to watch a `prod`-stage target                          |
 | `  --no-logs`                    | Don't follow the remote logs between cycles (silent wait)        |
 | `  --no-checkpoint`              | Skip the DB checkpoint on each cycle's deploy                    |
+| `  --no-actions`                 | Skip declared `[[deploy.actions]]` on each cycle's deploy        |
+
+Both `deploy` and `watch` take `--no-actions` to skip declared deploy actions.
+
+#### Deploy actions
+
+For deploys that need extra steps around the container cycle — rebuilding an
+image from freshly-pushed code, flipping a maintenance page, notifying a
+channel — declare **actions**: named commands that run locally or on the
+remote host at fixed points of the deploy lifecycle.
+
+```toml
+# In the SERVER's global.toml/projects/<key>.toml (wins wholesale) or your local config:
+[[deploy.actions]]
+name      = "build-image"    # unique within the list
+phase     = "post_push"      # pre_push | post_push | pre_deploy | post_deploy
+where     = "remote"         # local | remote
+exec_path = "docker"         # optional; dir the command runs in (default: project root)
+run       = "docker build -t myodoo:latest ."
+```
+
+`exec_path` sets the directory the command runs in: empty/absent → the project
+root (compose dir remote, project dir local), a relative path is joined under
+that root, an absolute one is used as-is.
+
+| Phase         | Runs                                                        | Typical use                     |
+|---------------|-------------------------------------------------------------|---------------------------------|
+| `pre_push`    | Before the `push` (only when the deploy pushes)             | prep/clean the build context    |
+| `post_push`   | After a successful push, before the container stop          | **rebuild the image**           |
+| `pre_deploy`  | Right before the containers are touched                     | maintenance page on, drain jobs |
+| `post_deploy` | After the `-u` run verified green and the code is live      | maintenance off, notify         |
+
+Resolution is **server-first, wholesale**: if the server declares any actions
+its list wins entirely; otherwise the local list applies. `--no-actions`
+(on `deploy` and `watch`) skips them for a run. Execution is **fail-fast** — a
+non-zero exit before the stop aborts the deploy untouched; a `post_deploy`
+failure marks the run failed but never rolls back a healthy deploy. Each script
+receives `ECHO_STAGE`, `ECHO_DB`, `ECHO_REMOTE_PATH`, `ECHO_MODULES`
+(space-separated update+install set), and `ECHO_PHASE`. A `deploy` without
+`--push` skips the two push phases with a note. Pair a `[push] path` build
+context (above) with a `post_push` image rebuild for image-built remotes.
+
+Manage actions interactively with the **`actions`** command instead of editing
+TOML by hand:
+
+| Command                       | Description                                                        |
+|-------------------------------|-------------------------------------------------------------------|
+| `actions` / `actions list`    | Styled table of the effective actions (local, or server with `--from`/`--remote`) |
+| `actions add`                 | Wizard: name → phase → where → exec dir → command                 |
+| `actions edit [<name>]`       | Edit an action in place (picker when no name)                     |
+| `actions rm [<name>] [--force]` | Delete an action (picker when no name)                          |
+| `  --from <t>` / `--remote`    | Resolve a remote target for the exec-dir picker and the upload offer |
+| `  --json`                    | Emit the list as JSON (with `list`)                               |
+
+The wizard's exec-dir step offers **Project root**, **Addons directory**
+(resolved from the profile), **Pick a directory…** (the remote SSH browser for
+a `remote` action, a local browser for a `local` one), or **Type a path** — a
+picked path is stored relative when it falls under the root. Edits persist to
+the **local** `[[deploy.actions]]`; after each change Echo can optionally
+upload the set to the server's project profile over SSH (rewriting only the
+`[[deploy.actions]]` section, prod-gated).
+
+`actions` lists the effective set — name · phase · where · exec_path · run —
+so you can see at a glance what runs around each deploy:
+
+<p align="center"><img src="demo/gifs/actions.gif" alt="echo actions — effective deploy-actions table: post_push image rebuild, pre_deploy maintenance flag, post_deploy notify" width="860"></p>
 
 `watch` inherits the checkpoint/rollback behavior: each cycle's deploy
 checkpoints the DB and auto-restores it if the commit broke the update, logging
@@ -549,6 +658,7 @@ side), not file-by-file reads.
 | `logview`               | Interactive browser over every past command's saved logs     |
 | `  --from <target>` / `--remote` | Browse a **remote** target's log history over SSH instead of the local one |
 | `  --list`              | Print the run list without the interactive browser           |
+| `  --json`              | Dump the run list as JSON to stdout (headless / agents)      |
 | `  --last`              | Open the most recent run directly                            |
 | `  --clear [--force]`   | Delete this project's log history (`--force` skips the confirm; local only) |
 
@@ -576,6 +686,16 @@ instead: it reads the server's own `cmd-logs/` over SSH (read-only), so you can
 review what ran on a staging/prod box from your laptop — runs from a pure addons
 repo, no local `docker-compose.yml`. The local `logview` still needs a project
 (its history is keyed by project path).
+
+**Headless / agents.** `logview --json` prints the run list as a JSON array to
+stdout (no TUI, no SSH, no compose project) — the machine-readable path for a
+tool that needs to know what ran. It pairs with `watch`: each auto-deploy cycle
+writes a `watch-deploy` record locally carrying the deployed commit SHAs and the
+deployed branch tip (`deployed_tip`). So an agent that just committed can poll
+`logview --json`, find the newest `watch-deploy` record whose `deployed_tip`
+contains its commit (`git merge-base --is-ancestor <sha> <tip>`), and read
+`exit` to learn whether its change shipped — all from the same machine `watch`
+runs on, without re-invoking it.
 
 <p align="center"><img src="demo/gifs/logview.gif" alt="echo logview — run list, per-run log view, live text and level filters" width="860"></p>
 

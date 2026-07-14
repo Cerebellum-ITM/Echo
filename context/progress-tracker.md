@@ -23,6 +23,119 @@ _(siguiente: Unit 14 — meta-commands. Fix deploy-build-muting: el builder de `
 
 ## Completed
 
+- [x] Unit 95 — deploy-push-default. `deploy --push` puede ser el default vía
+  config `[deploy] push` (bool), resuelto **server-first con fallback local**
+  (`resolveDeployPush`: `--no-push` › `--push` › server › local › false, seteado en
+  `p.push` tras leer el perfil). `--no-push` lo salta puntualmente; `--push`+`--no-push`
+  mutuamente excluyentes. Setup desde CLI con `deploy --set-push[=true|false]`:
+  config-only, persiste `[deploy] push` al perfil local (`SaveProject`) y sale — sin
+  SSH, sin deploy, headless (short-circuit al inicio de `RunDeploy`). `watch` siempre
+  empuja desde su git archive, así que su deploy interno pasa `--no-push` para no
+  duplicar el push cuando el default está prendido. Config: `deployFile.Push *bool`
+  (`toml:"push"`), `Config.DeployPush`+`RemoteProfile.DeployPush`, merge en `Load`
+  (project>global) y `ParseRemoteProfile` (`mergeDeployPush`), serialización en
+  `SaveProject` (emite `[deploy]` si hay actions O push). `deployArgs.noPush`/`setPush`,
+  `parseDeployArgs` `--no-push`/`--set-push[=bool]`. Registro commandFlags+help+
+  README (bloque "Push by default") + CHANGELOG. Tests `deploy_test.go`
+  (`parseDeployArgs` push flags + exclusión, `resolveDeployPush` matriz) y
+  `config_test.go` (`ParseRemoteProfile` `[deploy] push` + round-trip). build/vet/test
+  verdes; **verificado EN VIVO** `deploy --set-push`/`=false` escribe el perfil local
+  headless. Pendiente prueba real del default contra remoto con SSH.
+
+- [x] Unit 94 — push-set-dest. `push --set-dest`: fija el `[push] path` local
+  **sin empujar nada** — resuelve el target, abre el picker del FS remoto (o toma
+  `--dest <path>` headless), guarda el destino y sale. Sin módulos, sin rsync, sin
+  prod gate (no cambia nada en el server). Quita la fricción de tener que elegir un
+  módulo solo para configurar la carpeta (el problema que reportó el usuario con
+  `push --pick-dest`). `RunPush` corta temprano tras `parsePushArgs` (antes de
+  `requireRsync`) a `runSetDest` (nuevo en `push_dest.go`): `resolveRemoteShell` →
+  `prepareExplicitDest` (con `--dest`) o `pickRemoteDir` → normaliza a relativo si
+  cae bajo `remotePath` (`underPath`) → `SaveProject` (con `PushMkdir` si `--mkdir`)
+  → log `push destination set`. `pushArgs.setDest`+`--set-dest`; registro
+  commandFlags+help+CHANGELOG+README (bloque config-only). Tests `push_dest_test.go`
+  (parse `--set-dest` solo y con `--dest`). build/vet/test verdes; verificado el
+  short-circuit (error de target sin pedir módulo). Contexto de build persiste (seed
+  una vez con el multiselect, luego `deploy --push` incremental); el usuario NO pidió
+  `push --all`/`deploy --push-all`. Pendiente prueba real contra remoto con SSH.
+
+- [x] Unit 93 — deploy-actions-interactive. (1) Campo `exec_path` en cada
+  `DeployAction`: el dir donde corre el `run` — vacío→raíz (compose remoto / proyecto
+  local), relativo→colgado de la raíz, absoluto→tal cual (`resolveActionDir` con par
+  path/filepath; `actionRunLocal/Remote` hacen `cd` ahí; frame `running` loguea `dir=`).
+  (2) Comando `actions [list|add|edit|rm]`: `list` (tabla estilizada name·phase·where·
+  exec_path·run + footer source; local por defecto, servidor con `--from`/`--remote`,
+  wholesale rule avisada; `--json`), `add`/`edit` (wizard `actionWizard` como **secuencia
+  de forms huh** —el picker no cabe en un form— name→phase→where→**exec_path**→run;
+  `pickExecPath` con presets Project root/Addons directory/Pick a directory…/Type a path),
+  `rm` (red-confirm, `--force`, picker si falta nombre). El paso de dir usa el navegador
+  SSH de la Unit 91 (`pickRemoteDir` vía shim PushOpts) para `remote` y `pickLocalDir`
+  nuevo (mirror sobre `os.ReadDir`, comparte `dirPickerEntries`) para `local`; normaliza a
+  relativo si cae bajo la raíz (`underPath`). Target remoto resuelto **lazy+cacheado** (solo
+  si un picker/preset remoto o el upload lo necesita → un `actions` pelón no hace SSH).
+  Persiste al `[[deploy.actions]]` local (`SaveProject`) y ofrece **subir al servidor**
+  (`offerUploadActions`→`uploadActionsToServer`: `config.WithDeployActions` splicea la
+  sección preservando el resto, escribe por SSH stdin; gateado No-por-defecto, prod-confirm).
+  Config: `DeployAction.ExecPath`+`exec_path` toml, `deployActionsToFile`,
+  `config.WithDeployActions`, serialización en `SaveProject`. Nuevos `internal/cmd/actions.go`
+  +`actions_wizard.go`+test, `internal/repl/actions.go`. Registro Registry/dispatchNames/
+  dispatch/commandFlags/help/`projectlessOneShot`. README (tabla `actions` + `exec_path`) +
+  CHANGELOG `### Added`. Tests `actions_test.go` (parse, resolveActionDir, actionDir,
+  firstRelAddons, truncateMiddle, listLocalDirs) y `config_test.go` (exec_path round-trip,
+  WithDeployActions splice). **Verificado EN VIVO** con tmux el wizard completo local
+  (add→name→phase→where→exec_path preset→run→persist→list round-trip + `--json`); build/vet/
+  test verdes. Pendiente prueba real del picker remoto + upload contra un remoto con SSH.
+
+- [x] Unit 92 — deploy-actions. `[[deploy.actions]]` declarativas: comandos con
+  nombre (`name`/`phase`/`where`/`run`) que corren **local/remoto** en fases fijas
+  del ciclo de `deploy` — `pre_push`, `post_push` (rebuild de imagen), `pre_deploy`,
+  `post_deploy`. Resolución **server-first wholesale** (`resolveDeployActions`: si el
+  servidor declara actions su lista reemplaza la local; `--no-actions` las salta) con
+  validación (`ValidateDeployActions`: fase/where enum, nombre único, run no vacío)
+  al resolver, antes de cualquier paso. Ejecución **fail-fast**
+  (`runDeployActions`/`actionsForPhase`, seams `actionRunLocal`/`actionRunRemote`): un
+  exit≠0 antes del `stop` aborta el deploy sin tocar contenedores; `post_deploy` fallida
+  marca el run fallido pero **no** revierte un deploy verificado en verde
+  (`deployActionName`). Env por script `ECHO_STAGE`/`ECHO_DB`/`ECHO_REMOTE_PATH`/
+  `ECHO_MODULES`/`ECHO_PHASE` (`actionEnvVars`+`envPrefix` quoteado para remoto,
+  `streamCombined` local con `io.Pipe`). `deploy` sin `--push` salta las fases de push
+  con aviso; `watch` corre las actions por ciclo (falla = ese ciclo) vía `--no-actions`
+  hilado por `watchCycle`/`deployCommitsHeadless`. Config: `DeployAction`+
+  `Config.DeployActions`+`RemoteProfile.DeployActions`, `deployFile`/`deployActionsFrom`/
+  `mergeDeployActions`, decode en `Load`/`ParseRemoteProfile`. Nuevos
+  `internal/cmd/deploy_actions.go`+test; hooks en `deploy.go` (plan lista actions +
+  4 fases) y `watch.go`. Registro `commandFlags`+help (deploy/watch) + README (sección
+  Deploy actions + tabla de fases) + CHANGELOG `### Added`. Tests
+  `deploy_actions_test.go` (resolve precedencia, actionsForPhase orden, fail-fast+
+  env vars via seams, envPrefix, ValidateDeployActions) y `config_test.go`
+  (`ParseRemoteProfile` `[[deploy.actions]]` wholesale). build/vet/test verdes.
+  **Pendiente verificación EN VIVO** (remoto real con SSH). Depende de Unit 91
+  (`[push] path` para el flujo image-built).
+
+- [x] Unit 91 — push-path. `push` gana un **destino explícito** para remotos que
+  construyen la imagen desde el código (sin addons montado): flag `--dest <path>`
+  + sección `[push]` (`path`/`mkdir`) resuelta **server-first con fallback local**
+  (patrón Unit 90). Precedencia: `--dest` › `[push]` servidor › `[push]` local ›
+  auto-detección. Path relativo se cuelga de `remotePath`, absoluto tal cual, raíz
+  del compose vetada (`resolveDestPath`). `--pick-dest` abre un **navegador
+  interactivo del FS remoto** por SSH (`pickRemoteDir` sobre `runSingleFuzzyPickerStaged`,
+  seam `listRemoteDirs`=`find -maxdepth 1 -type d`, `dirPickerEntries` con filas
+  `· use this directory`/`.. (up)`, navega arriba de `remotePath`, rechaza la raíz
+  in-place) y ofrece **persistir** a `[push] path` local (`SaveProject`, confirm
+  `huh`). Si la auto-detección falla en TTY, cae al picker; headless sigue
+  fail-closed. `deploy --push` y `watch` honran el `[push]` configurado (nunca
+  abren picker). Config: `Config.PushPath/PushMkdir` + `RemoteProfile.PushPath/
+  PushMkdir`, `applyPush`, merge en `Load`/`ParseRemoteProfile`, persistencia en
+  `SaveProject`. Nuevos `internal/cmd/push_dest.go` (`resolvePushDest`/
+  `resolvePushDestination`/`prepareExplicitDest`/`resolveDestPath`/`pickRemoteDir`/
+  `dirPickerEntries`/`underPath`); `pushModuleSet` gana `destBase`. Registro:
+  `commandFlags["push"]`+help (Docker) + README (Explicit destination + `[push]`) +
+  CHANGELOG `### Added`. Tests `push_dest_test.go` (parse `--dest`/`--pick-dest`/
+  `--mkdir`+exclusión mutua, `resolvePushDest` matriz, `resolveDestPath`,
+  `dirPickerEntries`, `underPath`) y `config_test.go` (`ParseRemoteProfile` `[push]`
+  + round-trip `SaveProject`). build/vet/test verdes. **Pendiente verificación EN
+  VIVO** (remoto real con SSH + contexto de build). Prep de la Unit 92 (deploy
+  actions).
+
 - [x] Ocultar checkpoint DB de Odoo (post Unit 89/90). El usuario notó que la
   copia `habitta_prod__ckpt_…` aparecía en el selector de bases de Odoo (es una
   DB Postgres real). Fix automático, sin config por instancia: nuevo helper
@@ -864,3 +977,4 @@ _(siguiente: Unit 14 — meta-commands. Fix deploy-build-muting: el builder de `
 - 2026-06-08: Unit 24 (flag-highlight-complete) implementada a pedido del usuario (similar a Unit 21 pero para flags + autocomplete de flags). Decisiones en form: resaltado validado **sin rojo** (conocida=acento, desconocida=tenue) por el passthrough de docker/connect; Tab dispara sobre token que empieza con `-`. Pieza base: registro `commandFlags`. `View()` ahora colorea todo el buffer vía `lineStyles`; `handleTab` comparte el flujo 1/LCP/lista entre comando y flag. Spec `24-flag-highlight-complete.md` + build plan + código + tests + CHANGELOG + tracker en un commit.
 - 2026-06-08: Unit 26 (addons-paths-from-conf) implementada tras el usuario reportar `echo.update.error: no modules found — configure addons paths with` modules --config`` en `habitta_prod`. Diagnóstico: Echo solo escaneaba carpetas del host junto al compose, pero esa instancia tiene los addons dentro del contenedor declarados en `addons_path` del `odoo.conf`. Solución: fallback automático que lee el `odoo.conf` del contenedor (`docker exec cat`), parsea `addons_path` y lista los módulos dentro del contenedor, persistiendo `addons_mode=conf`+rutas (`conf_path` default `/etc/odoo/odoo.conf`). Modo conf re-lee en vivo (auto-update); `modules --config` sigue fijando modo host (coexistencia). Nuevo `resolveModules` reemplaza las llamadas directas a `listAvailableModules`. Spec `26-addons-paths-from-conf.md` + build plan + config + código + tests + CHANGELOG + tracker en la rama `feat/unit-26-addons-paths-from-conf`. Build/vet/tests verdes; falta probar contra la instancia real.
 - 2026-06-08: Unit 25 (filestore-in-container) implementada tras el usuario reportar `FileNotFoundError: /var/lib/odoo/filestore/habitta_prod/06/...` post-restore. Diagnóstico: el SQL restauraba bien pero el filestore se copiaba al host (`~/.local/share/Odoo`), fuera del alcance del contenedor. Confirmado que el archivo SÍ venía en el zip. Decisiones en form: `docker cp` al contenedor (ruta configurable, default `/var/lib/odoo/filestore`) + arreglar restore y backup. Spec `25-filestore-in-container.md` + build plan + config (`filestore_path`) + `docker.ExecAsRoot` + reescritura de filestore en `db.go` + limpieza de helpers de host + CHANGELOG + tracker en un commit.
+- 2026-07-13: Unit 96 (watch-deploy-status) implementada para dar al **agente** una forma de saber si su commit se auto-desplegó **sin SSH, sin el agente de 1Password y sin re-invocar `watch`**. Hallazgo base: `watch` corre en la máquina del usuario y `deploy` guarda su cmd-log **local** (`root = projectDir`, nunca lo empuja al servidor), y el agente vive en esa misma máquina/dir → basta una lectura local. Huecos cerrados: (1) `watch` era un solo comando REPL cuyo record se escribía al salir, y su `deployCommitsHeadless` no llamaba `SaveCmdLog`; ahora `watchCycle` graba un record `watch-deploy` por ciclo (`saveWatchDeployRecord`) con los SHAs en `Cmd`, el tip de rama en el nuevo campo `DeployedTip`, y `Exit` según el resultado; guards espejo de `saveCmdLog` (config nil/`CmdLogsDisabled` → no-op, best-effort, una pasada de prune). (2) `logview` no tenía salida máquina-legible; nuevo `logview --json` vuelca `[]CmdLogMeta` a stdout (convención `finishActionsJSON`, `[]` en vacío), compone con `--remote`/`--from`, rechaza `--json --clear`. `CmdLogMeta` ganó tags JSON estables + `Path` oculto (`json:"-"`). El agente sondea `logview --json`, halla el `watch-deploy` más reciente cuyo `deployed_tip` incluye su commit (`git merge-base --is-ancestor`) y lee `exit`. Spec `96-watch-deploy-status.md` + config (`DeployedTip` en record/meta) + watch + logview + registro `commandFlags`/help + README + CHANGELOG + tests (round-trip `DeployedTip`, `parseLogviewArgs --json`, builder `watch-deploy` + guard disabled, `logviewPrintJSON` sample+vacío con captura de stdout). Build/vet/tests verdes. Wording del skill `odoo-probe` (cómo el agente lo consume) queda para un pase de doc aparte. El Problema 1 (no delegar probes remotos a subagentes por 1Password) ya se documentó en `SKILL.md` de odoo-probe en esta misma sesión.

@@ -41,18 +41,24 @@ func (o PushOpts) log(level, sub, msg, db string, fields ...[2]string) {
 
 // pushArgs is the parsed shape of the push input.
 type pushArgs struct {
-	modules []string
-	dirty   bool
-	dryRun  bool
-	del     bool
-	from    string
-	remote  bool
+	modules  []string
+	dirty    bool
+	dryRun   bool
+	del      bool
+	from     string
+	remote   bool
+	dest     string
+	pickDest bool
+	setDest  bool
+	mkdir    bool
 }
 
 // parsePushArgs extracts the module positionals and flags. The remote-mode
 // switches (`--from <t>` / `--from=t` / `--remote`) are consumed here so the
 // value token after a bare `--from` is not read as a module; any other
-// `-`-prefixed token errors.
+// `-`-prefixed token errors. `--dest <path>` / `--dest=path` names an
+// explicit remote destination; `--pick-dest` opens the directory picker.
+// The two are mutually exclusive.
 func parsePushArgs(args []string) (pushArgs, error) {
 	out := pushArgs{}
 	out.from, out.remote = remoteFlagsIn(args)
@@ -67,6 +73,23 @@ func parsePushArgs(args []string) (pushArgs, error) {
 			out.del = true
 		case a == "--force":
 			// consumed by confirmRemoteProd
+		case a == "--mkdir":
+			out.mkdir = true
+		case a == "--pick-dest":
+			out.pickDest = true
+		case a == "--set-dest":
+			out.setDest = true
+		case a == "--dest":
+			if i+1 >= len(args) || strings.TrimSpace(args[i+1]) == "" {
+				return pushArgs{}, fmt.Errorf("%w: --dest needs a path", ErrUsage)
+			}
+			out.dest = args[i+1]
+			i++
+		case strings.HasPrefix(a, "--dest="):
+			out.dest = strings.TrimPrefix(a, "--dest=")
+			if strings.TrimSpace(out.dest) == "" {
+				return pushArgs{}, fmt.Errorf("%w: --dest needs a path", ErrUsage)
+			}
 		case a == "--from":
 			i++ // skip the target value; captured by remoteFlagsIn
 		case strings.HasPrefix(a, "--from="), a == "--remote":
@@ -77,6 +100,9 @@ func parsePushArgs(args []string) (pushArgs, error) {
 			out.modules = append(out.modules, a)
 		}
 	}
+	if out.dest != "" && out.pickDest {
+		return pushArgs{}, fmt.Errorf("%w: --dest and --pick-dest are mutually exclusive", ErrUsage)
+	}
 	return out, nil
 }
 
@@ -84,11 +110,16 @@ func parsePushArgs(args []string) (pushArgs, error) {
 // directory over SSH: resolve the target, gate prod, then sync each module
 // in place (existing remote location) or mirrored at the local subpath.
 func RunPush(ctx context.Context, opts PushOpts) error {
-	if err := requireRsync(); err != nil {
-		return err
-	}
 	p, err := parsePushArgs(opts.Args)
 	if err != nil {
+		return err
+	}
+	// --set-dest is config-only: resolve the target, pick/take the
+	// destination, persist it, and return — no modules, no rsync.
+	if p.setDest {
+		return runSetDest(ctx, opts, p)
+	}
+	if err := requireRsync(); err != nil {
 		return err
 	}
 
@@ -136,7 +167,12 @@ func RunPush(ctx context.Context, opts PushOpts) error {
 		}
 	}
 
-	files, err := pushModuleSet(ctx, rsc, opts, modules, opts.Root, p.dryRun, p.del)
+	destBase, err := resolvePushDestination(ctx, rsc, opts, p, modules)
+	if err != nil {
+		return err
+	}
+
+	files, err := pushModuleSet(ctx, rsc, opts, modules, opts.Root, destBase, p.dryRun, p.del)
 	if err != nil {
 		return err
 	}
@@ -163,7 +199,10 @@ type FileChange struct {
 // Shared by `push`, `deploy --push`, and `watch`. A greppable syncing/synced
 // log frame brackets each module; opts.OnSync (when set) receives the file
 // list so the caller can render the change tree between them.
-func pushModuleSet(ctx context.Context, rsc remoteShellContext, opts PushOpts, modules []string, srcRoot string, dryRun, del bool) (int, error) {
+// destBase, when non-empty, is the resolved remote directory every module
+// lands under (<destBase>/<module>) — the explicit-destination path (Unit
+// 91). Empty destBase keeps the per-module auto-detect (`pushDest`).
+func pushModuleSet(ctx context.Context, rsc remoteShellContext, opts PushOpts, modules []string, srcRoot, destBase string, dryRun, del bool) (int, error) {
 	rv := remoteView{rsc: rsc}
 	total := 0
 	for _, m := range modules {
@@ -171,9 +210,14 @@ func pushModuleSet(ctx context.Context, rsc remoteShellContext, opts PushOpts, m
 		if err != nil {
 			return total, fmt.Errorf("module %q: %w", m, err)
 		}
-		destDir, err := pushDest(ctx, rv, opts, m)
-		if err != nil {
-			return total, err
+		var destDir string
+		if destBase != "" {
+			destDir = path.Join(destBase, m)
+		} else {
+			destDir, err = pushDest(ctx, rv, opts, m)
+			if err != nil {
+				return total, err
+			}
 		}
 		opts.log("INFO", "module", "syncing", rsc.prof.DBName,
 			[2]string{"module", m}, [2]string{"dest", destDir})

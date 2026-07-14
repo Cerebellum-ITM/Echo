@@ -211,7 +211,7 @@ func (sess *session) renderPrompt() string {
 var dispatchNames = []string{
 	"help", "clear", "copy-last", "report", "logview", "sequence",
 	"init", "reset", "alias", "link",
-	"up", "down", "stop", "restart", "ps", "logs", "push", "deploy", "watch", "checkpoint",
+	"up", "down", "stop", "restart", "ps", "logs", "push", "deploy", "watch", "checkpoint", "actions",
 	"install", "update", "uninstall", "test", "modules", "modinfo", "modstate", "view", "compare",
 	"i18n-export", "i18n-update", "i18n-pull",
 	"db-admin", "db-backup", "db-restore", "db-pull", "db-drop", "db-neutralize", "db-list", "db-use",
@@ -317,6 +317,8 @@ func (sess *session) dispatchParsed(ctx context.Context, cmd string, args []stri
 		sess.runWatch(ctx, args)
 	case "checkpoint":
 		sess.runCheckpoint(ctx, args)
+	case "actions":
+		sess.runActions(ctx, args)
 	default:
 		sess.print(Line{Kind: "warn", Text: "unknown command: " + cmd + " — try help"})
 		sess.exitCode = exitUsage
@@ -457,10 +459,16 @@ func helpSections() []helpSection {
 			{"  --dirty", "Push every module with uncommitted changes"},
 			{"  --dry-run", "List the changes rsync would make; transfer nothing"},
 			{"  --delete", "Remove remote files no longer present locally"},
+			{"  --dest <path>", "Push to an explicit remote dir (skips auto-detect)"},
+			{"  --pick-dest", "Browse the remote filesystem to choose the destination"},
+			{"  --set-dest", "Set the remote push destination and exit (no push)"},
+			{"  --mkdir", "Create the destination dir if it doesn't exist"},
 			{"  --force", "Skip the prod-stage confirmation prompt"},
 			{"deploy", "Deploy picked commits + dirty modules to a remote (stop, up, -i/-u)"},
 			{"  --from <target>", "Use a named connect target (default: this dir's link)"},
 			{"  --push", "Rsync the resolved modules to the remote before the run"},
+			{"  --no-push", "Skip the push even when [deploy] push is the default"},
+			{"  --set-push[=bool]", "Set deploy to push by default and exit (no deploy)"},
 			{"  --limit <N>", "Commits offered in the picker (default 20)"},
 			{"  --dry-run", "Resolve modules and show the plan; execute nothing"},
 			{"  --force", "Skip the prod-stage confirmation prompt"},
@@ -472,6 +480,7 @@ func helpSections() []helpSection {
 			{"  --json", "Emit a machine-readable deploy summary to stdout (logs to stderr)"},
 			{"  --checkpoint[=db|dump]", "Force a DB checkpoint before the run (default: auto on staging/prod)"},
 			{"  --no-checkpoint", "Skip the DB checkpoint even on staging/prod"},
+			{"  --no-actions", "Skip declared [[deploy.actions]] for this run"},
 			{"  --rollback", "Restore the target's most recent checkpoint (no deploy)"},
 			{"watch [<branch>]", "Auto push+deploy when new commits land on a branch; no branch → picker (Ctrl+C to stop)"},
 			{"  --from <target>", "Use a named connect target (default: this dir's link)"},
@@ -480,6 +489,7 @@ func helpSections() []helpSection {
 			{"  --force", "Required to watch a prod-stage target"},
 			{"  --no-logs", "Don't follow the remote logs between cycles (silent wait)"},
 			{"  --no-checkpoint", "Skip the DB checkpoint on each cycle's deploy"},
+			{"  --no-actions", "Skip declared [[deploy.actions]] on each cycle's deploy"},
 			{"checkpoint [list]", "List a target's DB checkpoints (size, age) + live DB size and disk free"},
 			{"  --from <target>", "Use a named connect target (default: this dir's link)"},
 			{"  --remote", "Target this directory's linked remote"},
@@ -488,6 +498,12 @@ func helpSections() []helpSection {
 			{"  create --method db|dump", "Checkpoint method (default: configured, else db)"},
 			{"  rm [<name>]", "Delete a checkpoint (picker when no name); --all for every one"},
 			{"  rm --force", "Skip the confirmation prompt"},
+			{"actions [list]", "Manage [[deploy.actions]] interactively (list/add/edit/rm)"},
+			{"  add", "Wizard: name → phase → where → exec dir (picker) → command"},
+			{"  edit [<name>]", "Edit an action in place (picker when no name)"},
+			{"  rm [<name>] [--force]", "Delete an action (picker when no name)"},
+			{"  --from <target>/--remote", "Show the server list / target for the remote picker & upload"},
+			{"  --json", "Emit the action list as JSON to stdout (with list)"},
 		}},
 		{"Session", []helpEntry{
 			{"copy-last", "Copy the last command's output to clipboard"},
@@ -499,6 +515,7 @@ func helpSections() []helpSection {
 			{"  --copy", "Copy the matched lines (default: print)"},
 			{"logview", "Browse past commands' logs (filter by text and level)"},
 			{"  --list", "Print the run list without the interactive browser"},
+			{"  --json", "Dump the run list as JSON to stdout (headless / agents)"},
 			{"  --last", "Open the most recent run directly"},
 			{"  --clear", "Delete this project's log history (--force skips confirm)"},
 			{"sequence", "Pick several commands in order and run them (tri-state Tab)"},

@@ -196,14 +196,17 @@ func isDir(path string) bool {
 // compose project (using cwd as the working directory). These commands
 // reach a remote instance and only read/write local files — they never
 // drive a local docker stack, so a missing docker-compose.yml is fine.
-// `help` is purely informational and needs nothing; the remote-mode group
+// `help` is purely informational and needs nothing; `logview`/`report`
+// only read the local command-history / run-report store keyed by cwd
+// (browsing history must not require a live project — the deploy that wrote
+// it already ran projectless); the remote-mode group
 // (`shell`/`shell-run`/`update`/`sequence`/…) qualifies only with
 // `--from`/`--remote` — locally they need the compose project as always.
 func projectlessOneShot(name string, args []string) bool {
 	switch name {
-	case "help", "i18n-pull", "link", "deploy", "push", "watch", "checkpoint":
+	case "help", "i18n-pull", "link", "deploy", "push", "watch", "checkpoint", "actions", "logview", "report":
 		return true
-	case "shell", "shell-run", "up", "stop", "restart", "logs", "logview", "sequence", "update", "test", "view", "compare":
+	case "shell", "shell-run", "up", "stop", "restart", "logs", "sequence", "update", "test", "view", "compare":
 		return hasRemoteFlag(args)
 	}
 	return false

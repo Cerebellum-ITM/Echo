@@ -1,6 +1,9 @@
 package repl
 
 import (
+	"encoding/json"
+	"io"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -10,13 +13,80 @@ import (
 	"github.com/pascualchavez/echo/internal/theme"
 )
 
+// captureStdout runs fn with os.Stdout redirected to a pipe and returns what
+// it wrote — the headless JSON path writes straight to os.Stdout.
+func captureStdout(t *testing.T, fn func()) string {
+	t.Helper()
+	orig := os.Stdout
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe: %v", err)
+	}
+	os.Stdout = w
+	fn()
+	w.Close()
+	os.Stdout = orig
+	out, _ := io.ReadAll(r)
+	return string(out)
+}
+
+func TestLogviewPrintJSON(t *testing.T) {
+	sess := cmdLogSession(t)
+
+	metas := []config.CmdLogMeta{
+		{Command: "watch-deploy", Cmd: "deploy --commits abc123", Stage: "staging",
+			Exit: 0, DeployedTip: "abc123def", Started: time.Now()},
+		{Command: "update", Cmd: "update sale", Stage: "dev", Exit: 1, Started: time.Now()},
+	}
+	out := captureStdout(t, func() { sess.logviewPrintJSON(metas) })
+
+	var got []map[string]any
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatalf("output is not valid JSON: %v\n%s", err, out)
+	}
+	if len(got) != 2 {
+		t.Fatalf("expected 2 entries, got %d", len(got))
+	}
+	if got[0]["command"] != "watch-deploy" || got[0]["deployed_tip"] != "abc123def" {
+		t.Fatalf("agent-facing keys wrong: %+v", got[0])
+	}
+	// The non-watch record omits deployed_tip entirely (omitempty), and never
+	// leaks the local record path.
+	if _, ok := got[1]["deployed_tip"]; ok {
+		t.Fatalf("deployed_tip should be omitted on non-watch record: %+v", got[1])
+	}
+	if _, ok := got[0]["Path"]; ok {
+		t.Fatalf("local record Path must not be serialized: %+v", got[0])
+	}
+	if sess.exitCode != exitOK {
+		t.Fatalf("exit = %d, want exitOK", sess.exitCode)
+	}
+}
+
+func TestLogviewPrintJSONEmpty(t *testing.T) {
+	sess := cmdLogSession(t)
+	out := captureStdout(t, func() { sess.logviewPrintJSON(nil) })
+	if strings.TrimSpace(out) != "[]" {
+		t.Fatalf("empty history should print []: %q", out)
+	}
+	if sess.exitCode != exitOK {
+		t.Fatalf("exit = %d, want exitOK", sess.exitCode)
+	}
+}
+
+// lvLines models a real captured excerpt: a plain INFO, a WARNING with a
+// two-line traceback, then an ERROR. Headers carry the timestamped Odoo
+// prefix; the traceback lines have NO timestamp but DO carry an inherited
+// WARNING level (color inheritance during capture) — exactly the case that
+// used to split each frame into its own block. Blocks (by timestamp header):
+// [INFO], [WARNING + 2 traceback lines], [ERROR].
 func lvLines() []config.ReportLine {
 	return []config.ReportLine{
-		{Level: "DEBUG", Text: "debug detail cache miss"},
-		{Level: "INFO", Text: "loading registry"},
-		{Level: "WARNING", Text: "deprecated field cache"},
-		{Level: "ERROR", Text: "boom traceback"},
-		{Level: "", Text: "unleveled tail line"},
+		{Level: "INFO", Text: "2026-07-13 22:19:29,410 17 INFO habitta_prod odoo: loading registry"},
+		{Level: "WARNING", Text: "2026-07-13 22:19:32,852 17 WARNING habitta_prod py.warnings: deprecated field cache"},
+		{Level: "WARNING", Text: `  File "fields.py", line 830`},
+		{Level: "WARNING", Text: "    warnings.warn()"},
+		{Level: "ERROR", Text: "2026-07-13 22:19:33,000 17 ERROR habitta_prod odoo: boom traceback"},
 	}
 }
 
@@ -28,46 +98,65 @@ func TestFilterLogLinesEmpty(t *testing.T) {
 	}
 }
 
-func TestFilterLogLinesTextOnly(t *testing.T) {
+func TestFilterLogLinesTextKeepsWholeBlock(t *testing.T) {
+	// "cache" appears only in the WARNING header, but the whole 3-line block
+	// (header + traceback) must survive — the traceback stays attached.
 	got := filterLogLines(lvLines(), "cache", "")
-	// "cache" appears in the DEBUG and WARNING lines.
-	if len(got) != 2 {
-		t.Fatalf("expected 2 matches for 'cache', got %d: %+v", len(got), got)
+	if len(got) != 3 {
+		t.Fatalf("text match should keep the whole 3-line block, got %d: %+v", len(got), got)
+	}
+	if got[0].Level != "WARNING" || got[2].Text != "    warnings.warn()" {
+		t.Fatalf("block not kept intact: %+v", got)
 	}
 }
 
-func TestFilterLogLinesLevelThreshold(t *testing.T) {
+func TestFilterLogLinesTextMatchesDeepFrame(t *testing.T) {
+	// A query that only matches a deep traceback frame still keeps the block,
+	// including its WARNING header.
+	got := filterLogLines(lvLines(), "fields.py", "")
+	if len(got) != 3 || got[0].Level != "WARNING" {
+		t.Fatalf("deep-frame match should keep the whole block with its header: %+v", got)
+	}
+}
+
+func TestFilterLogLinesLevelThresholdKeepsTraceback(t *testing.T) {
 	got := filterLogLines(lvLines(), "", "WARNING")
-	// WARNING+ keeps WARNING and ERROR; hides DEBUG/INFO and the unleveled.
-	if len(got) != 2 {
-		t.Fatalf("WARNING+ should keep 2 lines, got %d: %+v", len(got), got)
+	// WARNING+ keeps the WARNING block (3 lines incl. its traceback) and the
+	// ERROR block (1 line); the traceback continuation lines travel with the
+	// WARNING header instead of being dropped.
+	if len(got) != 4 {
+		t.Fatalf("WARNING+ should keep 4 lines (3-line WARNING block + ERROR), got %d: %+v", len(got), got)
 	}
+	var sawContinuation bool
 	for _, l := range got {
-		if l.Level != "WARNING" && l.Level != "ERROR" {
-			t.Fatalf("unexpected level survived WARNING+: %q", l.Level)
+		if strings.Contains(l.Text, "warnings.warn") {
+			sawContinuation = true
 		}
+	}
+	if !sawContinuation {
+		t.Fatal("traceback continuation must survive under WARNING+ (attached to its header)")
 	}
 }
 
-func TestFilterLogLinesUnleveledOnlyOnAll(t *testing.T) {
-	// Unleveled line survives on "all"...
-	all := filterLogLines(lvLines(), "unleveled", "")
-	if len(all) != 1 {
-		t.Fatalf("unleveled line should show on all, got %d", len(all))
+func TestFilterLogLinesLeadingHeaderlessBlockOnlyOnAll(t *testing.T) {
+	lines := []config.ReportLine{
+		{Level: "", Text: "headerless intro"},
+		{Level: "INFO", Text: "2026-07-13 22:19:29,410 17 INFO db odoo: started"},
 	}
-	// ...but never under any threshold.
-	for _, lv := range []string{"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"} {
-		if got := filterLogLines(lvLines(), "unleveled", lv); len(got) != 0 {
-			t.Fatalf("unleveled line must be hidden under %s, got %d", lv, len(got))
-		}
+	if all := filterLogLines(lines, "", ""); len(all) != 2 {
+		t.Fatalf("all should keep both, got %d", len(all))
+	}
+	got := filterLogLines(lines, "", "INFO")
+	if len(got) != 1 || !strings.Contains(got[0].Text, "started") {
+		t.Fatalf("threshold should drop the leading headerless block: %+v", got)
 	}
 }
 
 func TestFilterLogLinesComposedAnd(t *testing.T) {
-	// text "cache" + WARNING+ → only the WARNING "deprecated field cache".
+	// text "cache" + WARNING+ → the whole WARNING block (header + traceback).
 	got := filterLogLines(lvLines(), "cache", "WARNING")
-	if len(got) != 1 || got[0].Level != "WARNING" {
-		t.Fatalf("composed AND filter wrong: %+v", got)
+	if len(got) != 3 || got[0].Level != "WARNING" {
+		t.Fatalf("composed AND filter should keep the whole WARNING block: %+v", got)
 	}
 }
 
@@ -140,22 +229,25 @@ func TestLogviewTimeLabel(t *testing.T) {
 }
 
 func TestParseLogviewArgs(t *testing.T) {
-	list, last, clear, force, remote, from, unknown := parseLogviewArgs([]string{"--clear", "--force"})
-	if !clear || !force || list || last || remote || from != "" || unknown != "" {
-		t.Fatalf("parse --clear --force wrong: %v %v %v %v %v %q %q", list, last, clear, force, remote, from, unknown)
+	list, last, clear, force, remote, jsonOut, from, unknown := parseLogviewArgs([]string{"--clear", "--force"})
+	if !clear || !force || list || last || remote || jsonOut || from != "" || unknown != "" {
+		t.Fatalf("parse --clear --force wrong: %v %v %v %v %v %v %q %q", list, last, clear, force, remote, jsonOut, from, unknown)
 	}
-	if _, _, _, _, _, _, u := parseLogviewArgs([]string{"--bogus"}); u != "--bogus" {
+	if _, _, _, _, _, _, _, u := parseLogviewArgs([]string{"--bogus"}); u != "--bogus" {
 		t.Fatalf("unknown flag not surfaced: %q", u)
 	}
 	// --from consumes its value token; --remote is a bare switch.
-	if _, _, _, _, _, f, u := parseLogviewArgs([]string{"--from", "prod"}); f != "prod" || u != "" {
+	if _, _, _, _, _, _, f, u := parseLogviewArgs([]string{"--from", "prod"}); f != "prod" || u != "" {
 		t.Fatalf("--from prod → from=%q unknown=%q", f, u)
 	}
-	if _, _, _, _, _, f, _ := parseLogviewArgs([]string{"--from=staging"}); f != "staging" {
+	if _, _, _, _, _, _, f, _ := parseLogviewArgs([]string{"--from=staging"}); f != "staging" {
 		t.Fatalf("--from=staging → from=%q", f)
 	}
-	if _, _, _, _, r, _, _ := parseLogviewArgs([]string{"--remote"}); !r {
+	if _, _, _, _, r, _, _, _ := parseLogviewArgs([]string{"--remote"}); !r {
 		t.Fatalf("--remote not parsed")
+	}
+	if _, _, _, _, _, j, _, _ := parseLogviewArgs([]string{"--json"}); !j {
+		t.Fatalf("--json not parsed")
 	}
 }
 
@@ -221,13 +313,15 @@ func TestPageBack(t *testing.T) {
 
 func blockLines() []config.ReportLine {
 	// An INFO entry with no continuation, an ERROR entry with a 2-line
-	// traceback (unleveled), then a WARNING entry.
+	// traceback, then a WARNING entry. Headers are timestamped; the traceback
+	// lines carry an inherited ERROR level but no timestamp (the real capture
+	// shape) — blocks group by the timestamp, not the level.
 	return []config.ReportLine{
-		{Level: "INFO", Text: "starting"},      // 0 block 0
-		{Level: "ERROR", Text: "boom"},         // 1 block 1
-		{Text: "  File x.py line 3"},           // 2 block 1 (continuation)
-		{Text: "  ValueError: nope"},           // 3 block 1 (continuation)
-		{Level: "WARNING", Text: "slow query"}, // 4 block 4
+		{Level: "INFO", Text: "2026-07-13 10:00:00,000 1 INFO db odoo: starting"},         // 0 block 0
+		{Level: "ERROR", Text: "2026-07-13 10:00:01,000 1 ERROR db odoo: boom"},           // 1 block 1
+		{Level: "ERROR", Text: "  File x.py line 3"},                                      // 2 block 1 (continuation)
+		{Level: "ERROR", Text: "  ValueError: nope"},                                      // 3 block 1 (continuation)
+		{Level: "WARNING", Text: "2026-07-13 10:00:02,000 1 WARNING db odoo: slow query"}, // 4 block 4
 	}
 }
 
@@ -248,7 +342,8 @@ func TestBlockStartEnd(t *testing.T) {
 
 func TestBlockLeadingUnleveled(t *testing.T) {
 	l := []config.ReportLine{
-		{Text: "preamble a"}, {Text: "preamble b"}, {Level: "INFO", Text: "go"},
+		{Text: "preamble a"}, {Text: "preamble b"},
+		{Level: "INFO", Text: "2026-07-13 10:00:00,000 1 INFO db odoo: go"},
 	}
 	// Leading unleveled lines anchor to block 0.
 	if blockStartOf(l, 0) != 0 || blockStartOf(l, 1) != 0 {
@@ -266,7 +361,7 @@ func TestSelectedLines(t *testing.T) {
 	l := blockLines()
 	// Select the ERROR block (start index 1) → its 3 lines come back in order.
 	got := selectedLines(l, map[int]bool{1: true})
-	if len(got) != 3 || got[0].Text != "boom" || got[2].Text != "  ValueError: nope" {
+	if len(got) != 3 || !strings.Contains(got[0].Text, "boom") || got[2].Text != "  ValueError: nope" {
 		t.Fatalf("selected ERROR block wrong: %#v", got)
 	}
 	// No selection → nil (caller falls back to copying everything).

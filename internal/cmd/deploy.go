@@ -33,6 +33,12 @@ type DeployOpts struct {
 	// OnSync, when set, receives each --push module's file changes so the
 	// caller can render the change tree (same as the standalone `push`).
 	OnSync func(changes []FileChange)
+	// PushSrcRoot overrides the local directory --push reads module files
+	// from (default: Root). `watch` sets it to its git-archive scratch dir so
+	// the deploy pushes the committed content at the target ref — and so the
+	// push and its pre_push/post_push actions run in order inside the deploy
+	// pipeline instead of being done separately by the watcher.
+	PushSrcRoot string
 }
 
 // log emits a progress line when a logger is set; a no-op otherwise.
@@ -82,6 +88,15 @@ type deployArgs struct {
 	// rollback restores the target's most recent checkpoint instead of
 	// deploying (deploy --rollback). Mutually exclusive with any selection.
 	rollback bool
+	// noActions skips all declared deploy actions (Unit 92) for this run —
+	// the escape hatch when a server-declared action is broken.
+	noActions bool
+	// noPush forces the code push off even when `[deploy] push` makes it the
+	// configured default (Unit 95). Mutually exclusive with --push.
+	noPush bool
+	// setPush, when non-nil, is a config-only request to persist `[deploy]
+	// push` locally and exit (deploy --set-push[=true|false]).
+	setPush *bool
 }
 
 // parseDeployArgs extracts --from/--limit/--dry-run/--force/--i18n/--no-i18n
@@ -141,6 +156,18 @@ func parseDeployArgs(args []string) (deployArgs, error) {
 			out.auto = true
 		case a == "--push":
 			out.push = true
+		case a == "--no-push":
+			out.noPush = true
+		case a == "--set-push":
+			t := true
+			out.setPush = &t
+		case strings.HasPrefix(a, "--set-push="):
+			v := strings.TrimPrefix(a, "--set-push=")
+			b, berr := strconv.ParseBool(v)
+			if berr != nil {
+				return out, fmt.Errorf("%w: --set-push takes true or false, got %q", ErrUsage, v)
+			}
+			out.setPush = &b
 		case a == "--checkpoint":
 			out.checkpointSet = true
 		case strings.HasPrefix(a, "--checkpoint="):
@@ -154,6 +181,8 @@ func parseDeployArgs(args []string) (deployArgs, error) {
 			out.noCheckpoint = true
 		case a == "--rollback":
 			out.rollback = true
+		case a == "--no-actions":
+			out.noActions = true
 		case a == "--json":
 			out.jsonOut = true
 		case a == "--dry-run":
@@ -175,10 +204,30 @@ func parseDeployArgs(args []string) (deployArgs, error) {
 	if out.checkpointSet && out.noCheckpoint {
 		return out, fmt.Errorf("%w: --checkpoint and --no-checkpoint are mutually exclusive", ErrUsage)
 	}
+	if out.push && out.noPush {
+		return out, fmt.Errorf("%w: --push and --no-push are mutually exclusive", ErrUsage)
+	}
 	if out.rollback && (out.auto || len(out.commits) > 0 || len(out.modules) > 0 || out.push) {
 		return out, fmt.Errorf("%w: --rollback cannot be combined with --commits/--modules/--auto/--push", ErrUsage)
 	}
 	return out, nil
+}
+
+// resolveDeployPush computes whether this deploy ships code: an explicit
+// --push/--no-push wins; otherwise the server [deploy] push, then the local
+// one, then false (Unit 95).
+func resolveDeployPush(p deployArgs, prof config.RemoteProfile, cfg *config.Config) bool {
+	switch {
+	case p.noPush:
+		return false
+	case p.push:
+		return true
+	case prof.DeployPush != nil:
+		return *prof.DeployPush
+	case cfg != nil && cfg.DeployPush != nil:
+		return *cfg.DeployPush
+	}
+	return false
 }
 
 // stageWantsCheckpoint reports whether a stage is checkpoint-worthy under the
@@ -342,6 +391,20 @@ func RunDeploy(ctx context.Context, opts DeployOpts) (DeployResult, error) {
 	p, err := parseDeployArgs(opts.Args)
 	if err != nil {
 		return DeployResult{}, err
+	}
+
+	// deploy --set-push is config-only: persist the local [deploy] push
+	// default and exit — no remote resolution, no deploy.
+	if p.setPush != nil {
+		cfgCopy := *opts.Cfg
+		cfgCopy.DeployPush = p.setPush
+		if serr := config.SaveProject(&cfgCopy); serr != nil {
+			return DeployResult{}, fmt.Errorf("save deploy push default: %w", serr)
+		}
+		opts.Cfg.DeployPush = p.setPush
+		opts.log("INFO", "", "deploy push default set", opts.Cfg.DBName,
+			[2]string{"push", strconv.FormatBool(*p.setPush)})
+		return DeployResult{}, nil
 	}
 
 	// deploy --rollback is a standalone operation: restore the target's most
@@ -538,6 +601,12 @@ func RunDeploy(ctx context.Context, opts DeployOpts) (DeployResult, error) {
 		statusFields(target.odooVersion, prof.Stage,
 			statusProjectName(opts.Cfg, true, remotePath, fromName),
 			prof.DBName)...)
+
+	// Resolve the effective push default (Unit 95): explicit flags win, then
+	// the server [deploy] push, then the local one, then off. Setting p.push
+	// here lets every downstream check read it unchanged.
+	p.push = resolveDeployPush(p, prof, opts.Cfg)
+
 	conn := odoo.Conn{DB: target.dbName, Host: target.dbContainer}
 	pg := remotePullEnv(ctx, sshHost, remotePath)
 	conn.Port = pg["POSTGRES_PORT"]
@@ -605,6 +674,37 @@ func RunDeploy(ctx context.Context, opts DeployOpts) (DeployResult, error) {
 		[2]string{"i18n", i18nState},
 		[2]string{"skipped", strconv.Itoa(skipped)})
 
+	// Resolve declared deploy actions (Unit 92) once and list them in the
+	// plan. An invalid config surfaces here, before any deploy step runs.
+	actions, actionsSrc, aerr := resolveDeployActions(prof, opts.Cfg, p.noActions)
+	if aerr != nil {
+		return DeployResult{}, aerr
+	}
+	actEnv := actionEnv{
+		stage:      target.stage,
+		db:         prof.DBName,
+		remotePath: remotePath,
+		modules:    strings.Join(append(append([]string(nil), update...), install...), " "),
+	}
+	for _, a := range actions {
+		opts.log("INFO", "plan", "action", prof.DBName,
+			[2]string{"name", a.Name}, [2]string{"phase", a.Phase},
+			[2]string{"where", a.Where}, [2]string{"source", actionsSrc})
+	}
+	// runActions runs one phase; the two push phases are skipped (with a note)
+	// on a deploy that isn't pushing, so the same profile serves both flows.
+	runActions := func(phase string) error {
+		if len(actionsForPhase(actions, phase)) == 0 {
+			return nil
+		}
+		if (phase == config.PhasePrePush || phase == config.PhasePostPush) && !p.push {
+			opts.log("INFO", "action", "skipped — no push in this run", prof.DBName,
+				[2]string{"phase", phase})
+			return nil
+		}
+		return runDeployActions(ctx, rsc, opts, actions, phase, actEnv)
+	}
+
 	// --push shares the deploy's already-resolved target: sync the resolved
 	// modules' local code to the remote addons dir before the run. In dry-run
 	// it prints the rsync itemization; on a real run a push failure aborts
@@ -625,9 +725,23 @@ func RunDeploy(ctx context.Context, opts DeployOpts) (DeployResult, error) {
 			Cfg: opts.Cfg, Root: opts.Root, Palette: opts.Palette,
 			Log: opts.Log, StreamOut: opts.StreamOut, OnSync: opts.OnSync,
 		}
+		// Resolve an explicit destination (server/local [push], no picker in
+		// a headless deploy). Empty → per-module auto-detect.
+		destBase := ""
+		if dest, source, mkdir := resolvePushDest(pushArgs{}, prof, opts.Cfg); dest != "" {
+			resolved, derr := applyResolvedDest(ctx, pushRSC, pushOpts, dest, source, mkdir, dryRun)
+			if derr != nil {
+				return derr
+			}
+			destBase = resolved
+		}
+		srcRoot := opts.Root
+		if opts.PushSrcRoot != "" {
+			srcRoot = opts.PushSrcRoot
+		}
 		opts.log("INFO", "push", "syncing modules to remote", prof.DBName,
 			[2]string{"modules", strings.Join(pushMods, ",")})
-		_, perr := pushModuleSet(ctx, pushRSC, pushOpts, pushMods, opts.Root, dryRun, false)
+		_, perr := pushModuleSet(ctx, pushRSC, pushOpts, pushMods, srcRoot, destBase, dryRun, false)
 		return perr
 	}
 
@@ -646,8 +760,14 @@ func RunDeploy(ctx context.Context, opts DeployOpts) (DeployResult, error) {
 			return DeployResult{}, err
 		}
 	}
+	if err := runActions(config.PhasePrePush); err != nil {
+		return DeployResult{}, err
+	}
 	if err := runPush(false); err != nil {
 		return DeployResult{}, fmt.Errorf("push failed: %w", err)
+	}
+	if err := runActions(config.PhasePostPush); err != nil {
+		return DeployResult{}, err
 	}
 
 	// Disk preflight runs before any container stop, so a doomed deploy never
@@ -668,6 +788,12 @@ func RunDeploy(ctx context.Context, opts DeployOpts) (DeployResult, error) {
 		}
 		return nil
 	}
+	// pre_deploy runs right before the containers are touched — the last
+	// hook while the service is still up (maintenance page, job drain).
+	if err := runActions(config.PhasePreDeploy); err != nil {
+		return DeployResult{}, err
+	}
+
 	// Stop before the run. With a checkpoint we stop ONLY the Odoo app service
 	// so the Postgres container stays up for the copy (the source DB then has no
 	// app sessions but is still queryable); without one, stop everything as
@@ -747,11 +873,30 @@ func RunDeploy(ctx context.Context, opts DeployOpts) (DeployResult, error) {
 		}
 	}
 
+	// post_deploy runs after verify passed and the code is live. A failure
+	// here marks the run failed but never rolls back a healthy deploy —
+	// undoing a verified-green deploy for a notification hook is worse.
+	if err := runActions(config.PhasePostDeploy); err != nil {
+		opts.log("ERROR", "", "deploy succeeded, post_deploy action failed", prof.DBName,
+			[2]string{"action", deployActionName(err)})
+		return result, err
+	}
+
 	opts.log("INFO", "", "deploy complete", prof.DBName,
 		[2]string{"update", strconv.Itoa(len(update))},
 		[2]string{"install", strconv.Itoa(len(install))},
 		[2]string{"skipped", strconv.Itoa(skipped)})
 	return result, nil
+}
+
+// deployActionName extracts the failing action's name from a deploy-action
+// error, or "" for any other error.
+func deployActionName(err error) string {
+	var ae *deployActionError
+	if errors.As(err, &ae) {
+		return ae.name
+	}
+	return ""
 }
 
 // deployRunError wraps the odoo-run outcome into a deploy error: the SSH

@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"reflect"
 	"testing"
+
+	"github.com/pascualchavez/echo/internal/config"
 )
 
 func TestParseDeployArgs(t *testing.T) {
@@ -235,11 +237,60 @@ func TestParseDeployArgsUsageErrors(t *testing.T) {
 		{"--i18n", "--no-i18n"},
 		{"--auto", "--modules=sale"},
 		{"--auto", "--commits=a1b2"},
+		{"--push", "--no-push"},
+		{"--set-push=maybe"},
 	} {
 		_, err := parseDeployArgs(in)
 		if !errors.Is(err, ErrUsage) {
 			t.Errorf("parseDeployArgs(%v) err = %v, want wraps ErrUsage", in, err)
 		}
+	}
+}
+
+func TestParseDeployArgsPushFlags(t *testing.T) {
+	t.Run("no-push", func(t *testing.T) {
+		p, err := parseDeployArgs([]string{"--no-push"})
+		if err != nil || !p.noPush {
+			t.Fatalf("got noPush=%v err=%v", p.noPush, err)
+		}
+	})
+	t.Run("set-push bare = true", func(t *testing.T) {
+		p, err := parseDeployArgs([]string{"--set-push"})
+		if err != nil || p.setPush == nil || !*p.setPush {
+			t.Fatalf("got setPush=%v err=%v", p.setPush, err)
+		}
+	})
+	t.Run("set-push=false", func(t *testing.T) {
+		p, err := parseDeployArgs([]string{"--set-push=false"})
+		if err != nil || p.setPush == nil || *p.setPush {
+			t.Fatalf("got setPush=%v err=%v", p.setPush, err)
+		}
+	})
+}
+
+func TestResolveDeployPush(t *testing.T) {
+	tru, fls := true, false
+	tests := []struct {
+		name string
+		p    deployArgs
+		prof config.RemoteProfile
+		cfg  *config.Config
+		want bool
+	}{
+		{"no flag no config → off", deployArgs{}, config.RemoteProfile{}, &config.Config{}, false},
+		{"--push wins", deployArgs{push: true}, config.RemoteProfile{DeployPush: &fls}, &config.Config{DeployPush: &fls}, true},
+		{"--no-push wins", deployArgs{noPush: true}, config.RemoteProfile{DeployPush: &tru}, &config.Config{DeployPush: &tru}, false},
+		{"server default on", deployArgs{}, config.RemoteProfile{DeployPush: &tru}, &config.Config{DeployPush: &fls}, true},
+		{"local default when no server", deployArgs{}, config.RemoteProfile{}, &config.Config{DeployPush: &tru}, true},
+		{"explicit local false", deployArgs{}, config.RemoteProfile{}, &config.Config{DeployPush: &fls}, false},
+		{"nil cfg safe", deployArgs{}, config.RemoteProfile{}, nil, false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := resolveDeployPush(tc.p, tc.prof, tc.cfg); got != tc.want {
+				t.Errorf("resolveDeployPush = %v, want %v", got, tc.want)
+			}
+		})
 	}
 }
 

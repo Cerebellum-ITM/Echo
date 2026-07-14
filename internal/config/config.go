@@ -2,9 +2,11 @@ package config
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/BurntSushi/toml"
@@ -107,6 +109,79 @@ type Config struct {
 	CheckpointMode   string
 	CheckpointMethod string
 	CheckpointKeep   int
+
+	// Push ([push], global + per-project, project wins) — the explicit
+	// destination directory for `push` (Unit 91). PushPath, when set,
+	// overrides the auto-detected addons dir: every module lands at
+	// <PushPath>/<module>. A relative path is joined under the target's
+	// remotePath; an absolute one is used as-is. PushMkdir (pointer to
+	// distinguish unset from explicit false) requests `mkdir -p` of the
+	// destination before syncing.
+	PushPath  string
+	PushMkdir *bool
+
+	// DeployActions ([[deploy.actions]], global + per-project) — named
+	// local/remote commands hooked into fixed points of `deploy` (Unit 92).
+	// The list is wholesale: a non-empty project list replaces the global
+	// one (order across machines must stay predictable).
+	DeployActions []DeployAction
+
+	// DeployPush ([deploy] push, global + per-project, project wins) — when
+	// set, makes `deploy` ship code by default without `--push` (Unit 95).
+	// Pointer to distinguish unset (fall through) from an explicit false.
+	DeployPush *bool
+}
+
+// DeployAction is one declared step in the deploy lifecycle. Phase is
+// pre_push | post_push | pre_deploy | post_deploy; Where is local |
+// remote; Run is an `sh -c` command string. Name is unique within a list.
+// ExecPath is the directory Run executes in (empty = the root: remotePath
+// for a remote action, the project root for a local one; relative = joined
+// under that root; absolute = as-is).
+type DeployAction struct {
+	Name     string
+	Phase    string
+	Where    string
+	ExecPath string
+	Run      string
+}
+
+// Deploy-action phase and where enums.
+const (
+	PhasePrePush    = "pre_push"
+	PhasePostPush   = "post_push"
+	PhasePreDeploy  = "pre_deploy"
+	PhasePostDeploy = "post_deploy"
+	WhereLocal      = "local"
+	WhereRemote     = "remote"
+)
+
+// ValidateDeployActions checks a decoded action list: unique non-empty
+// names, a known phase and where, and a non-empty run. Returns the first
+// problem found so a misconfiguration surfaces before any deploy step runs.
+func ValidateDeployActions(actions []DeployAction) error {
+	seen := map[string]bool{}
+	phases := map[string]bool{PhasePrePush: true, PhasePostPush: true, PhasePreDeploy: true, PhasePostDeploy: true}
+	wheres := map[string]bool{WhereLocal: true, WhereRemote: true}
+	for i, a := range actions {
+		if strings.TrimSpace(a.Name) == "" {
+			return fmt.Errorf("deploy action #%d: name is required", i+1)
+		}
+		if seen[a.Name] {
+			return fmt.Errorf("deploy action %q: duplicate name", a.Name)
+		}
+		seen[a.Name] = true
+		if !phases[a.Phase] {
+			return fmt.Errorf("deploy action %q: invalid phase %q (want pre_push|post_push|pre_deploy|post_deploy)", a.Name, a.Phase)
+		}
+		if !wheres[a.Where] {
+			return fmt.Errorf("deploy action %q: invalid where %q (want local|remote)", a.Name, a.Where)
+		}
+		if strings.TrimSpace(a.Run) == "" {
+			return fmt.Errorf("deploy action %q: run is required", a.Name)
+		}
+	}
+	return nil
 }
 
 type globalFile struct {
@@ -119,8 +194,72 @@ type globalFile struct {
 	Prompt         *promptFile                   `toml:"prompt"`
 	CmdLogs        *cmdLogsFile                  `toml:"cmd_logs"`
 	Checkpoint     *checkpointConfig             `toml:"checkpoint"`
+	Push           *pushConfig                   `toml:"push"`
+	Deploy         *deployFile                   `toml:"deploy"`
 	ConnectTargets map[string]*connectTargetFile `toml:"connect_targets"`
 	ProjectAliases map[string]string             `toml:"project_aliases"`
+}
+
+// pushConfig is the [push] table, valid in both global.toml and a project
+// profile. A nil pointer (section absent) leaves push on auto-detect; a
+// present table declares the explicit destination, project over global.
+// Mkdir is a pointer so an explicit `mkdir = false` is distinguishable from
+// an absent key (which falls through to the other side of the merge).
+type pushConfig struct {
+	Path  string `toml:"path"`
+	Mkdir *bool  `toml:"mkdir"`
+}
+
+// deployFile is the [deploy] table: its `actions` array of tables carries
+// the declared deploy-lifecycle steps, and `push` sets whether `deploy`
+// ships code by default. A nil pointer (section absent) means neither is
+// declared on that side of the merge.
+type deployFile struct {
+	Push    *bool              `toml:"push,omitempty"`
+	Actions []deployActionFile `toml:"actions"`
+}
+
+type deployActionFile struct {
+	Name     string `toml:"name"`
+	Phase    string `toml:"phase"`
+	Where    string `toml:"where"`
+	ExecPath string `toml:"exec_path,omitempty"`
+	Run      string `toml:"run"`
+}
+
+// deployActionsFrom converts a decoded [deploy] table into the exported
+// slice, preserving declared order. Nil-safe.
+func deployActionsFrom(f *deployFile) []DeployAction {
+	if f == nil || len(f.Actions) == 0 {
+		return nil
+	}
+	out := make([]DeployAction, 0, len(f.Actions))
+	for _, a := range f.Actions {
+		out = append(out, DeployAction{Name: a.Name, Phase: a.Phase, Where: a.Where, ExecPath: a.ExecPath, Run: a.Run})
+	}
+	return out
+}
+
+// deployActionsToFile converts the exported slice back into the TOML file
+// shape for serialization (SaveProject / the actions upload).
+func deployActionsToFile(actions []DeployAction) []deployActionFile {
+	if len(actions) == 0 {
+		return nil
+	}
+	out := make([]deployActionFile, 0, len(actions))
+	for _, a := range actions {
+		out = append(out, deployActionFile{Name: a.Name, Phase: a.Phase, Where: a.Where, ExecPath: a.ExecPath, Run: a.Run})
+	}
+	return out
+}
+
+// mergeDeployActions applies the wholesale rule: a non-empty project list
+// replaces the global one; otherwise the global list stands.
+func mergeDeployActions(global, project []DeployAction) []DeployAction {
+	if len(project) > 0 {
+		return project
+	}
+	return global
 }
 
 // checkpointConfig is the [checkpoint] table, valid in both global.toml and a
@@ -170,6 +309,8 @@ type projectFile struct {
 	FilestorePath  string            `toml:"filestore_path"`
 	Connect        *connectFile      `toml:"connect"`
 	Checkpoint     *checkpointConfig `toml:"checkpoint"`
+	Push           *pushConfig       `toml:"push"`
+	Deploy         *deployFile       `toml:"deploy"`
 }
 
 type connectFile struct {
@@ -241,6 +382,7 @@ func Load(projectPath string) (*Config, error) {
 	cfg.LogDBMax = g.LogDBMax
 	applyCmdLogs(cfg, g.CmdLogs)
 	applyCheckpoint(cfg, g.Checkpoint)
+	applyPush(cfg, g.Push)
 	cfg.ConnectTargets = sortedConnectTargets(g.ConnectTargets)
 	cfg.ProjectAliases = g.ProjectAliases
 	if g.Prompt != nil {
@@ -287,6 +429,25 @@ func Load(projectPath string) (*Config, error) {
 			cfg.CheckpointKeep = p.Checkpoint.Keep
 		}
 	}
+	// The project [push] overrides the global one field by field (a blank
+	// path / absent mkdir leaves the global/default value untouched).
+	if p.Push != nil {
+		if p.Push.Path != "" {
+			cfg.PushPath = p.Push.Path
+		}
+		if p.Push.Mkdir != nil {
+			cfg.PushMkdir = p.Push.Mkdir
+		}
+	}
+	// Deploy actions: wholesale — a project list replaces the global one.
+	cfg.DeployActions = mergeDeployActions(deployActionsFrom(g.Deploy), deployActionsFrom(p.Deploy))
+	// [deploy] push default: project overrides global (nil stays nil).
+	if g.Deploy != nil && g.Deploy.Push != nil {
+		cfg.DeployPush = g.Deploy.Push
+	}
+	if p.Deploy != nil && p.Deploy.Push != nil {
+		cfg.DeployPush = p.Deploy.Push
+	}
 	if p.Connect != nil {
 		cfg.ConnectSSHHost = p.Connect.SSHHost
 		cfg.ConnectRemotePath = p.Connect.RemotePath
@@ -295,6 +456,18 @@ func Load(projectPath string) (*Config, error) {
 
 	applyDefaults(cfg)
 	return cfg, nil
+}
+
+// applyPush maps the global [push] table onto the config. A nil table
+// (section absent) leaves push on auto-detect (empty path, nil mkdir); a
+// present table is honored verbatim. The project profile refines this
+// further in Load.
+func applyPush(cfg *Config, f *pushConfig) {
+	if f == nil {
+		return
+	}
+	cfg.PushPath = f.Path
+	cfg.PushMkdir = f.Mkdir
 }
 
 // RemoteProfile is the subset of a server-side Echo configuration the
@@ -323,6 +496,24 @@ type RemoteProfile struct {
 	CheckpointMode   string
 	CheckpointMethod string
 	CheckpointKeep   int
+
+	// Push destination declared on the SERVER ([push] in the remote
+	// global.toml + project profile, project wins). Empty PushPath / nil
+	// PushMkdir when the server doesn't declare it — the client then falls
+	// back to its own local [push] (Unit 91). No defaults are applied here.
+	PushPath  string
+	PushMkdir *bool
+
+	// DeployActions declared on the SERVER ([[deploy.actions]] in the remote
+	// global.toml + project profile). Wholesale: a non-empty server list
+	// wins over the client's local list (Unit 92); empty when the server
+	// declares none.
+	DeployActions []DeployAction
+
+	// DeployPush declared on the SERVER ([deploy] push). When set, wins over
+	// the client's local [deploy] push for the effective default (Unit 95);
+	// nil when the server doesn't declare it.
+	DeployPush *bool
 }
 
 // ParseRemoteProfile decodes a remote host's `global.toml` and
@@ -360,6 +551,21 @@ func ParseRemoteProfile(globalTOML, projectTOML []byte) RemoteProfile {
 			cp.Keep = p.Checkpoint.Keep
 		}
 	}
+	// Server-side [push] destination: global table, then project override
+	// field-by-field. No defaults — an absent section stays empty so the
+	// client falls back to its own local config.
+	var push pushConfig
+	if g.Push != nil {
+		push = *g.Push
+	}
+	if p.Push != nil {
+		if p.Push.Path != "" {
+			push.Path = p.Push.Path
+		}
+		if p.Push.Mkdir != nil {
+			push.Mkdir = p.Push.Mkdir
+		}
+	}
 	return RemoteProfile{
 		ComposeCmd:       compose,
 		OdooContainer:    p.OdooContainer,
@@ -373,7 +579,48 @@ func ParseRemoteProfile(globalTOML, projectTOML []byte) RemoteProfile {
 		CheckpointMode:   cp.Mode,
 		CheckpointMethod: cp.Method,
 		CheckpointKeep:   cp.Keep,
+		PushPath:         push.Path,
+		PushMkdir:        push.Mkdir,
+		DeployActions:    mergeDeployActions(deployActionsFrom(g.Deploy), deployActionsFrom(p.Deploy)),
+		DeployPush:       mergeDeployPush(g.Deploy, p.Deploy),
 	}
+}
+
+// mergeDeployPush resolves the server-side [deploy] push: project over
+// global, nil when neither declares it.
+func mergeDeployPush(global, project *deployFile) *bool {
+	if project != nil && project.Push != nil {
+		return project.Push
+	}
+	if global != nil && global.Push != nil {
+		return global.Push
+	}
+	return nil
+}
+
+// WithDeployActions returns the TOML bytes of a project profile with its
+// [[deploy.actions]] replaced by the given list (removed when empty),
+// preserving every other known key. Used by the `actions` command to
+// upload a local action set to a server's projects/<key>.toml over SSH
+// without hand-splicing TOML. An empty input yields a profile carrying
+// only the actions.
+func WithDeployActions(existingTOML []byte, actions []DeployAction) ([]byte, error) {
+	var p projectFile
+	if len(existingTOML) > 0 {
+		if err := toml.Unmarshal(existingTOML, &p); err != nil {
+			return nil, err
+		}
+	}
+	if len(actions) > 0 {
+		p.Deploy = &deployFile{Actions: deployActionsToFile(actions)}
+	} else {
+		p.Deploy = nil
+	}
+	var buf bytes.Buffer
+	if err := toml.NewEncoder(&buf).Encode(p); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
 }
 
 // SaveGlobal writes theme and logo to global.toml atomically.
@@ -455,6 +702,16 @@ func SaveProject(cfg *Config) error {
 			RemotePath: cfg.ConnectRemotePath,
 			ChromePath: cfg.ConnectChromePath,
 		}
+	}
+	// Persist a declared [push] destination so a picked/configured path
+	// survives across sessions; a pure auto-detect config leaves it out.
+	if cfg.PushPath != "" || cfg.PushMkdir != nil {
+		p.Push = &pushConfig{Path: cfg.PushPath, Mkdir: cfg.PushMkdir}
+	}
+	// Persist the [deploy] section when either the actions list or the push
+	// default is set; a pure-default config leaves it out.
+	if len(cfg.DeployActions) > 0 || cfg.DeployPush != nil {
+		p.Deploy = &deployFile{Push: cfg.DeployPush, Actions: deployActionsToFile(cfg.DeployActions)}
 	}
 	var buf bytes.Buffer
 	if err := toml.NewEncoder(&buf).Encode(p); err != nil {

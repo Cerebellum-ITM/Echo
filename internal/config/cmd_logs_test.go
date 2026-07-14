@@ -59,6 +59,41 @@ func TestCmdLogSaveListRoundTrip(t *testing.T) {
 	}
 }
 
+func TestCmdLogDeployedTipRoundTrip(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	root := "/some/project"
+
+	rec := CmdLogRecord{
+		Cmd:         "deploy --commits abc123",
+		Command:     "watch-deploy",
+		DB:          "muutrade",
+		Stage:       "staging",
+		Exit:        0,
+		Started:     time.Now().Truncate(time.Millisecond),
+		DeployedTip: "abc123def456",
+		Lines:       []ReportLine{{Level: "INFO", Text: "ok"}},
+	}
+	if err := SaveCmdLog(root, rec); err != nil {
+		t.Fatalf("SaveCmdLog: %v", err)
+	}
+
+	metas, err := ListCmdLogs(root)
+	if err != nil {
+		t.Fatalf("ListCmdLogs: %v", err)
+	}
+	if len(metas) != 1 {
+		t.Fatalf("expected 1 record, got %d", len(metas))
+	}
+	if metas[0].DeployedTip != "abc123def456" || metas[0].Command != "watch-deploy" {
+		t.Fatalf("DeployedTip not carried into meta: %+v", metas[0])
+	}
+	// A record with no tip omits it entirely (omitempty), and the meta stays "".
+	full, ok := LoadCmdLog(metas[0].Path)
+	if !ok || full.DeployedTip != "abc123def456" {
+		t.Fatalf("DeployedTip not persisted in record: ok=%v tip=%q", ok, full.DeployedTip)
+	}
+}
+
 func TestCmdLogListMissingDir(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	metas, err := ListCmdLogs("/never/saved")

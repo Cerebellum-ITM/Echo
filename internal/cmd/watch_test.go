@@ -247,6 +247,72 @@ func fakeRemoteShell() remoteShellContext {
 	}
 }
 
+// TestSaveWatchDeployRecord: a finished cycle lands one `watch-deploy` record
+// under the LOCAL project history, carrying the deployed tip, the SHAs in the
+// command line, and an exit that reflects the deploy result.
+func TestSaveWatchDeployRecord(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	root := "/some/project"
+	opts := WatchOpts{
+		Cfg:       &config.Config{DBName: "muutrade"},
+		Root:      root,
+		Log:       func(string, string, string, string, ...[2]string) {},
+		StreamOut: func(string) {},
+	}
+	rsc := remoteShellContext{
+		prof:   config.RemoteProfile{DBName: "muutrade"},
+		target: connectTarget{stage: "staging"},
+	}
+
+	// Two cycles a couple of seconds apart (distinct millis → distinct records).
+	now := time.Now()
+	// Success cycle (older).
+	saveWatchDeployRecord(opts, rsc, "staging",
+		[]string{"abc1234", "def5678"}, []string{"sale_ext"}, "abc1234def5678cafebabe", nil, now.Add(-2*time.Second))
+	// Failed cycle (newer).
+	saveWatchDeployRecord(opts, rsc, "staging",
+		[]string{"bad9999"}, []string{"sale_ext"}, "bad9999ffffffff", context.DeadlineExceeded, now)
+
+	metas, err := config.ListCmdLogs(root)
+	if err != nil {
+		t.Fatalf("ListCmdLogs: %v", err)
+	}
+	if len(metas) != 2 {
+		t.Fatalf("expected 2 watch-deploy records, got %d", len(metas))
+	}
+	for _, m := range metas {
+		if m.Command != "watch-deploy" || m.Stage != "staging" || m.DeployedTip == "" {
+			t.Fatalf("record fields wrong: %+v", m)
+		}
+	}
+	// The success record carries both SHAs in its command line and exit 0; the
+	// failed one exits non-zero. Order is newest-first, so the failed cycle is [0].
+	if metas[0].Exit == 0 {
+		t.Fatalf("failed cycle should exit non-zero: %+v", metas[0])
+	}
+	if metas[1].Exit != 0 || !strings.Contains(metas[1].Cmd, "abc1234") || !strings.Contains(metas[1].Cmd, "def5678") {
+		t.Fatalf("success cycle record wrong: %+v", metas[1])
+	}
+}
+
+// TestSaveWatchDeployRecordDisabled: a nil or disabled cmd-log config writes
+// nothing — mirrors repl.saveCmdLog's guard.
+func TestSaveWatchDeployRecordDisabled(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	root := "/some/project"
+	opts := WatchOpts{
+		Cfg:       &config.Config{CmdLogsDisabled: true},
+		Root:      root,
+		Log:       func(string, string, string, string, ...[2]string) {},
+		StreamOut: func(string) {},
+	}
+	saveWatchDeployRecord(opts, fakeRemoteShell(), "", []string{"abc"}, []string{"m"}, "abctip", nil, time.Now())
+	metas, _ := config.ListCmdLogs(root)
+	if len(metas) != 0 {
+		t.Fatalf("disabled config should write nothing, got %d", len(metas))
+	}
+}
+
 // TestStartWatchLogsLifecycle: the follower opens the stream with the given
 // --tail, and stop() cancels it and blocks until the stream goroutine has
 // actually returned (the "no interleaving" guarantee).
