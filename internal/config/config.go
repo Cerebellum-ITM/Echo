@@ -130,6 +130,12 @@ type Config struct {
 	// set, makes `deploy` ship code by default without `--push` (Unit 95).
 	// Pointer to distinguish unset (fall through) from an explicit false.
 	DeployPush *bool
+
+	// PromoteBranch ([promote] branch, global + per-project, project wins) —
+	// the single accumulation branch `promote` funnels worktree changes into
+	// (Unit 97). Empty falls back to "develop". Read repo-wide from global so
+	// every worktree of the repo resolves the same destination.
+	PromoteBranch string
 }
 
 // DeployAction is one declared step in the deploy lifecycle. Phase is
@@ -196,8 +202,16 @@ type globalFile struct {
 	Checkpoint     *checkpointConfig             `toml:"checkpoint"`
 	Push           *pushConfig                   `toml:"push"`
 	Deploy         *deployFile                   `toml:"deploy"`
+	Promote        *promoteConfig                `toml:"promote"`
 	ConnectTargets map[string]*connectTargetFile `toml:"connect_targets"`
 	ProjectAliases map[string]string             `toml:"project_aliases"`
+}
+
+// promoteConfig is the [promote] table, valid in global.toml and a project
+// profile. Branch names the single accumulation branch `promote` funnels
+// into; a nil pointer (section absent) leaves it on the "develop" default.
+type promoteConfig struct {
+	Branch string `toml:"branch"`
 }
 
 // pushConfig is the [push] table, valid in both global.toml and a project
@@ -311,6 +325,7 @@ type projectFile struct {
 	Checkpoint     *checkpointConfig `toml:"checkpoint"`
 	Push           *pushConfig       `toml:"push"`
 	Deploy         *deployFile       `toml:"deploy"`
+	Promote        *promoteConfig    `toml:"promote"`
 }
 
 type connectFile struct {
@@ -383,6 +398,9 @@ func Load(projectPath string) (*Config, error) {
 	applyCmdLogs(cfg, g.CmdLogs)
 	applyCheckpoint(cfg, g.Checkpoint)
 	applyPush(cfg, g.Push)
+	if g.Promote != nil {
+		cfg.PromoteBranch = g.Promote.Branch
+	}
 	cfg.ConnectTargets = sortedConnectTargets(g.ConnectTargets)
 	cfg.ProjectAliases = g.ProjectAliases
 	if g.Prompt != nil {
@@ -447,6 +465,11 @@ func Load(projectPath string) (*Config, error) {
 	}
 	if p.Deploy != nil && p.Deploy.Push != nil {
 		cfg.DeployPush = p.Deploy.Push
+	}
+	// [promote] branch: project overrides global (a blank branch leaves the
+	// global value untouched).
+	if p.Promote != nil && p.Promote.Branch != "" {
+		cfg.PromoteBranch = p.Promote.Branch
 	}
 	if p.Connect != nil {
 		cfg.ConnectSSHHost = p.Connect.SSHHost
@@ -668,6 +691,37 @@ func SaveGlobal(cfg *Config) error {
 		return err
 	}
 	return writeAtomic(filepath.Join(root, "global.toml"), buf.Bytes())
+}
+
+// SavePromoteBranch persists the [promote] branch into global.toml via a
+// lossless read-modify-write: it decodes the existing file into globalFile
+// (preserving every known section — theme, push, connect_targets, …), sets
+// the promote branch, and re-encodes. Repo-wide by design, so every worktree
+// of a repo resolves the same `promote` destination. An empty branch clears
+// the section.
+func SavePromoteBranch(branch string) error {
+	root, err := configRoot()
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(root, 0o700); err != nil {
+		return err
+	}
+	path := filepath.Join(root, "global.toml")
+	var g globalFile
+	if data, err := os.ReadFile(path); err == nil {
+		_ = toml.Unmarshal(data, &g)
+	}
+	if branch == "" {
+		g.Promote = nil
+	} else {
+		g.Promote = &promoteConfig{Branch: branch}
+	}
+	var buf bytes.Buffer
+	if err := toml.NewEncoder(&buf).Encode(g); err != nil {
+		return err
+	}
+	return writeAtomic(path, buf.Bytes())
 }
 
 // SaveProject writes per-project fields to projects/<key>.toml atomically.

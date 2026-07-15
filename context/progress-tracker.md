@@ -6,8 +6,11 @@
 
 ## Current Goal
 
-Unit 14 (meta-commands: `theme`, `logo`, `version`, `stage`) — único pendiente
-del plan original. Unit 15 (banner) entregada: banner del header con dos estilos
+Unit 97 (promote-worktree-funnel) entregada: comando local `promote` que embuda
+un worktree a la rama de despliegue (dirty por carpeta / commits cherry-pick),
+projectless, sin tocar el servidor. Pendiente del plan original: Unit 14
+(meta-commands: `theme`, `logo`, `version`, `stage`). Unit 15 (banner) entregada:
+banner del header con dos estilos
 figlet del wordmark `echo` (soundwave / shadow) elegidos al azar y coloreados
 por el stage activo.
 
@@ -22,6 +25,49 @@ _(siguiente: Unit 14 — meta-commands. Fix deploy-build-muting: el builder de `
 
 
 ## Completed
+
+- [x] Unit 97 — promote-worktree-funnel. Comando local `promote` que embuda los
+  cambios del worktree actual a la **rama única de despliegue**, sin tocar el
+  servidor (sin SSH/push/deploy/auto-commit). Motivación: la instancia se
+  alimenta de una sola rama (historial de SHAs por target en `deploy`, `watch`
+  sigue una rama) → desplegar desde ramas divergentes rompe la instancia; y se
+  trabaja en git worktrees (el CLI corre enraizado en su checkout, sin conciencia
+  de otros worktrees). `promote` cierra ese hueco. Dos modos: **dirty** (patch sin
+  commitear —modificados **+ untracked**— por carpeta/módulo, aplicado con
+  `git apply` all-or-nothing en el worktree destino, **queda dirty** para
+  acumular) y **commits** (`git cherry-pick` de commits de otra rama, dedup con
+  `git cherry`). Interactivo (origen → qué mover → preview `BuildSyncTree` →
+  aplicar) y headless (`--dirty <carpetas>` / `<rama> --commits <shas>`),
+  fail-closed sin TTY. **Projectless** (grupo incondicional en `projectlessOneShot`
+  como `link`): corre sin `docker-compose.yml`, se enraíza con
+  `git rev-parse --show-toplevel`; el destino se descubre con `git worktree list`
+  (el checkout principal cuenta → cero fricción), con cascada de resolución
+  `--to` › `[promote] branch` guardado (**sin default hardcodeado**: si no hay
+  ninguno, pide seleccionar un worktree destino en TTY, o falla cerrado headless).
+  Worktree destino ausente → crear
+  (`--create-dest <ruta>` headless / prompt interactivo create-pick-cancel) o
+  error headless con guía; destino sucio **no** bloquea (acumular es el objetivo),
+  solo conflicto real de patch/cherry-pick aborta limpio (destino intacto, archivos
+  reportados) vía nuevo `ErrPromoteConflict`. `promote --set-branch <nombre>`
+  config-only persiste `[promote] branch` repo-wide en `global.toml` con
+  **escritura sin pérdida** (`SavePromoteBranch`: decodifica el globalFile
+  completo, setea, re-encoda — preserva theme/push/connect_targets…). Cada
+  promoción exitosa graba un record `promote` en el cmd-log local (visible en
+  `logview`). Config `[promote] branch` (global + proyecto, proyecto gana),
+  `Config.PromoteBranch`. Archivos: `internal/cmd/promote.go` (+`_git.go`
+  +`_resolve.go`) y `internal/repl/promote.go`; config; registro
+  Registry/dispatchNames/dispatch/commandFlags/help/`projectlessOneShot`; README
+  (sección "Promote (worktree funnel)") + CHANGELOG `[Unreleased]`. Tests
+  `promote_test.go` (parse, `parseWorktrees`, `worktreeForBranch`,
+  `promoteDestBranch`, `filterCommits`, `sameWorktree` + integración con repo git
+  temporal real: dirty aplica tracked+untracked y deja dirty sin commit, commits
+  cherry-pickea y dedup, conflicto deja destino intacto) y `config_test.go`
+  (round-trip `SavePromoteBranch` sin pérdida + override de proyecto). build/vet/
+  test verdes. **Verificado EN VIVO** con el binario en repos temporales:
+  dirty dry-run + real (develop dirty, sin commit), commits (cherry-pick),
+  `--set-branch` (persist sin perder `compose_cmd`), error headless sin worktree
+  (exit 2). Pendiente: `promote --deploy` y compartir config entre worktrees
+  quedaron fuera de v1 (documentados en el spec).
 
 - [x] Unit 95 — deploy-push-default. `deploy --push` puede ser el default vía
   config `[deploy] push` (bool), resuelto **server-first con fallback local**

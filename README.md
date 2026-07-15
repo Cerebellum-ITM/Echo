@@ -492,6 +492,75 @@ echo deploy                       # the real thing (red confirm if the remote st
 `ir_module_module`, not from the commit tags. `stock_extra` was picked from
 the working tree (`via=dirty`) and joins the update set.
 
+### Promote (worktree funnel)
+
+`promote` is a **purely-local** git helper: it funnels the changes from the
+worktree you're standing in onto the **single branch your instance deploys
+from** (the "deploy branch"). This keeps one source of truth — you never
+deploy from divergent feature branches — while letting you work in as many
+worktrees as you like.
+
+It does nothing but the local move: **no SSH, no push, no deploy, no
+auto-commit.** After the changes land on the deploy branch you run `deploy` /
+`watch` from that branch's checkout as usual.
+
+Two source modes:
+
+- **Dirty** — move the current worktree's *uncommitted* patch (modified **+
+  untracked**), selected **by folder (module)**. It lands in the deploy
+  branch's worktree and **stays uncommitted** there, so you can accumulate
+  several features before deploying:
+
+  ```
+  promote --dirty stock_extra              # this worktree's dirty stock_extra → deploy branch
+  promote --dirty                          # interactive: pick which dirty modules
+  promote --dirty stock_extra --dry-run    # preview the change tree, move nothing
+  ```
+
+- **Commits** — cherry-pick selected commits from another branch (deduped
+  against what's already on the deploy branch):
+
+  ```
+  promote feature-x --commits a1b2c3d      # cherry-pick one commit onto the deploy branch
+  promote feature-x                        # interactive: pick which commits
+  ```
+
+With no arguments, `promote` walks a picker: source (this worktree's dirty
+changes, or a branch) → what to move → preview → apply.
+
+**The deploy branch.** The destination is `--to <branch>` › the saved
+`[promote] branch`. There is **no default** — if none is configured, `promote`
+asks you to pick a destination worktree (and offers to remember its branch); a
+headless run without `--to` fails closed. Save your real one once so it stops
+asking:
+
+```
+promote --set-branch pruebas             # persist [promote] branch = "pruebas"
+```
+
+Because the deploy branch is normally checked out in your **main directory**
+(where the `docker-compose.yml` and Echo config live, and where you run
+`deploy`/`watch`), `promote` finds it automatically via `git worktree list` —
+the main checkout counts as a worktree, so you don't need a dedicated one. If
+the branch has no checkout anywhere, `promote` offers to create one (or use
+`--create-dest <path>` headless).
+
+`promote` runs **projectless** — it works from a feature worktree that has no
+`docker-compose.yml`, rooted at the git worktree. A dirty deploy branch never
+blocks a promote (accumulation is the point); only a genuine patch or
+cherry-pick **conflict** aborts, cleanly, leaving the deploy branch untouched
+and reporting the conflicting files.
+
+```
+echo_cli promote --dirty stock_extra --to pruebas
+  … INFO  echo.promote: promoting source="dirty (this worktree)" dest=pruebas dest_path=/srv/odoo/my-shop
+  └─ stock_extra/
+       ~ models/stock_move.py
+       + views/stock_views.xml
+  … INFO  echo.promote: promote complete dest=pruebas modules=1 files=2 new=1 changed=1
+  ✓ promote completed
+```
+
 ### Sync & compare
 
 Where `deploy` handles the container and module state on a server that has

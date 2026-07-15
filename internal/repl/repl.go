@@ -211,7 +211,7 @@ func (sess *session) renderPrompt() string {
 var dispatchNames = []string{
 	"help", "clear", "copy-last", "report", "logview", "sequence",
 	"init", "reset", "alias", "link",
-	"up", "down", "stop", "restart", "ps", "logs", "push", "deploy", "watch", "checkpoint", "actions",
+	"up", "down", "stop", "restart", "ps", "logs", "push", "deploy", "watch", "checkpoint", "actions", "promote",
 	"install", "update", "uninstall", "test", "modules", "modinfo", "modstate", "view", "compare",
 	"i18n-export", "i18n-update", "i18n-pull",
 	"db-admin", "db-backup", "db-restore", "db-pull", "db-drop", "db-neutralize", "db-list", "db-use",
@@ -319,6 +319,8 @@ func (sess *session) dispatchParsed(ctx context.Context, cmd string, args []stri
 		sess.runCheckpoint(ctx, args)
 	case "actions":
 		sess.runActions(ctx, args)
+	case "promote":
+		sess.runPromote(ctx, args)
 	default:
 		sess.print(Line{Kind: "warn", Text: "unknown command: " + cmd + " — try help"})
 		sess.exitCode = exitUsage
@@ -504,6 +506,13 @@ func helpSections() []helpSection {
 			{"  rm [<name>] [--force]", "Delete an action (picker when no name)"},
 			{"  --from <target>/--remote", "Show the server list / target for the remote picker & upload"},
 			{"  --json", "Emit the action list as JSON to stdout (with list)"},
+			{"promote [<branch>]", "Funnel this worktree's changes onto the deploy branch (no args: picker)"},
+			{"  --dirty [<folder>...]", "Move the current worktree's dirty patch (by folder); stays uncommitted"},
+			{"  --commits <shas>", "Cherry-pick these commits from the source branch"},
+			{"  --to <branch>", "Destination branch (else saved [promote] branch; prompts to pick if unset)"},
+			{"  --set-branch <name>", "Persist the default promote branch and exit"},
+			{"  --create-dest <path>", "Create the destination branch's worktree if none exists"},
+			{"  --dry-run", "Preview the change tree / commit list; move nothing"},
 		}},
 		{"Session", []helpEntry{
 			{"copy-last", "Copy the last command's output to clipboard"},

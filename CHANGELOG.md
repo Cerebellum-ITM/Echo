@@ -5,6 +5,35 @@ All notable changes to Echo are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- **`promote`: embudo local de un worktree a la rama de despliegue, sin tocar el
+  servidor.** Resuelve el hueco de trabajar con git worktrees cuando la instancia
+  se alimenta de **una sola rama**: `deploy` lleva historial de SHAs por target y
+  `watch` sigue una rama, así que desplegar desde ramas divergentes rompe la
+  instancia. `promote` mueve **localmente** los cambios del worktree actual a esa
+  rama única (la "rama de despliegue") y nada más — **sin SSH, sin push, sin
+  deploy, sin auto-commit**; luego corres `deploy`/`watch` desde esa rama como
+  siempre. Dos modos: **dirty** (mueve el patch sin commitear —modificados **+
+  untracked**— elegido **por carpeta/módulo**, y lo deja dirty en el worktree
+  destino para acumular varias features) y **commits** (cherry-pick de commits de
+  otra rama, deduplicados con `git cherry`). Flujo interactivo (origen → qué mover
+  → preview con árbol de cambios → aplicar) y headless
+  (`promote --dirty <carpetas>` / `promote <rama> --commits <shas>`), fail-closed
+  sin TTY. **Projectless**: corre desde un worktree feature sin
+  `docker-compose.yml`, enraizado en el worktree git; encuentra el checkout de la
+  rama destino con `git worktree list` (el directorio principal cuenta como
+  worktree), ofrece crear uno si no existe (`--create-dest <ruta>`), y un destino
+  sucio **no** bloquea (acumular es el objetivo) — solo un conflicto real de patch/
+  cherry-pick aborta limpio dejando el destino intacto. Destino =
+  `--to <rama>` › `[promote] branch` guardado — **sin default hardcodeado**: si
+  no hay ninguno, pide seleccionar un worktree destino (TTY) o falla cerrado
+  (headless). Se fija con `promote --set-branch <nombre>` (persistido repo-wide
+  en `global.toml` con
+  escritura sin pérdida). Cada promoción exitosa queda registrada en el historial
+  local (`logview`). Config `[promote] branch` (global + proyecto, proyecto gana).
+
 ## [0.24.0] — 2026-07-13
 
 ### Added

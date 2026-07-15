@@ -11,7 +11,7 @@ var Registry = []string{
 	"i18n-export", "i18n-update", "i18n-pull",
 	"db-admin", "db-backup", "db-restore", "db-pull", "db-drop", "db-neutralize", "db-list", "db-use",
 	"bash", "psql", "shell", "shell-run", "connect",
-	"up", "down", "stop", "restart", "ps", "logs", "push", "deploy", "watch", "checkpoint", "actions",
+	"up", "down", "stop", "restart", "ps", "logs", "push", "deploy", "watch", "checkpoint", "actions", "promote",
 	"copy-last", "report", "logview", "sequence",
 	"clear", "help", "exit", "quit",
 }
@@ -52,6 +52,7 @@ var commandFlags = map[string][]string{
 	"push":          {"--from", "--remote", "--dirty", "--dry-run", "--delete", "--force", "--dest", "--pick-dest", "--set-dest", "--mkdir"},
 	"deploy":        {"--from", "--limit", "--dry-run", "--force", "--i18n", "--no-i18n", "--commits", "--modules", "--auto", "--push", "--no-push", "--set-push", "--json", "--checkpoint", "--no-checkpoint", "--rollback", "--no-actions"},
 	"watch":         {"--from", "--remote", "--interval", "--force", "--no-logs", "--no-checkpoint", "--no-actions"},
+	"promote":       {"--dirty", "--commits", "--to", "--set-branch", "--create-dest", "--dry-run", "--force"},
 	"checkpoint":    {"--from", "--remote", "--method", "--all", "--force", "--json"},
 	"actions":       {"--from", "--remote", "--json", "--force"},
 	"copy-last":     {"--errors"},

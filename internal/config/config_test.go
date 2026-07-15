@@ -53,6 +53,73 @@ func TestDifferentPaths(t *testing.T) {
 	}
 }
 
+func TestSavePromoteBranch(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
+
+	// Seed global.toml with an unrelated key so we can prove the lossless
+	// read-modify-write preserves it.
+	cfg, _ := Load("/test/project")
+	cfg.Theme = "tokyo"
+	if err := SaveGlobal(cfg); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := SavePromoteBranch("pruebas"); err != nil {
+		t.Fatal(err)
+	}
+	reloaded, err := Load("/test/project")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reloaded.PromoteBranch != "pruebas" {
+		t.Errorf("PromoteBranch = %q, want pruebas", reloaded.PromoteBranch)
+	}
+	if reloaded.Theme != "tokyo" {
+		t.Errorf("Theme lost by SavePromoteBranch: %q", reloaded.Theme)
+	}
+
+	// Clearing resets it.
+	if err := SavePromoteBranch(""); err != nil {
+		t.Fatal(err)
+	}
+	cleared, err := Load("/test/project")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cleared.PromoteBranch != "" {
+		t.Errorf("PromoteBranch = %q after clear, want empty", cleared.PromoteBranch)
+	}
+	if cleared.Theme != "tokyo" {
+		t.Errorf("Theme lost by clearing promote branch: %q", cleared.Theme)
+	}
+}
+
+func TestPromoteBranchProjectOverride(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
+
+	if err := SavePromoteBranch("global-br"); err != nil {
+		t.Fatal(err)
+	}
+	// Hand-write a project profile with its own [promote] branch.
+	root, _ := configRoot()
+	projDir := filepath.Join(root, "projects")
+	if err := os.MkdirAll(projDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	cfg, _ := Load("/test/project")
+	key := cfg.ProjectKey
+	if err := os.WriteFile(filepath.Join(projDir, key+".toml"),
+		[]byte("[promote]\nbranch = \"proj-br\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	reloaded, _ := Load("/test/project")
+	if reloaded.PromoteBranch != "proj-br" {
+		t.Errorf("PromoteBranch = %q, want proj-br (project overrides global)", reloaded.PromoteBranch)
+	}
+}
+
 func TestSaveAndReload(t *testing.T) {
 	// Redirect config root to a temp dir for isolation.
 	tmp := t.TempDir()
