@@ -39,7 +39,7 @@ func TestParseDeployArgs(t *testing.T) {
 		{[]string{"--auto"}, deployArgs{limit: 20, auto: true}, false},
 		{[]string{"--json"}, deployArgs{limit: 20, jsonOut: true}, false},
 		{[]string{"--auto", "--json", "--dry-run"}, deployArgs{limit: 20, auto: true, jsonOut: true, dryRun: true}, false},
-		{[]string{"--auto", "--modules=sale"}, deployArgs{}, true},  // mutually exclusive
+		{[]string{"--auto", "--modules=sale"}, deployArgs{}, true}, // mutually exclusive
 		{[]string{"--auto", "--commits=a1b2"}, deployArgs{}, true}, // mutually exclusive
 	}
 	for _, tc := range cases {
@@ -330,15 +330,66 @@ func TestParseDeployArgsTestFlags(t *testing.T) {
 
 func TestParseDeployArgsTestUsageErrors(t *testing.T) {
 	for _, in := range [][]string{
-		{"--test", "--no-test"},                 // mutually exclusive
-		{"--test-modules", "--test-modules=a"},  // picker + explicit set
-		{"--test-toggle", "--commits=a1b2"},     // management + selection
-		{"--test-clear", "--test-add=sale"},     // two management ops
-		{"--test-toggle", "--test"},             // management + per-run test
+		{"--test", "--no-test"},                // mutually exclusive
+		{"--test-modules", "--test-modules=a"}, // picker + explicit set
+		{"--test-toggle", "--commits=a1b2"},    // management + selection
+		{"--test-clear", "--test-add=sale"},    // two management ops
+		{"--test-toggle", "--test"},            // management + per-run test
 	} {
 		if _, err := parseDeployArgs(in); !errors.Is(err, ErrUsage) {
 			t.Errorf("parseDeployArgs(%v) err = %v, want wraps ErrUsage", in, err)
 		}
+	}
+}
+
+func TestParseDeployArgsRollbackOnFail(t *testing.T) {
+	t.Run("--rollback-on-fail = true", func(t *testing.T) {
+		p, err := parseDeployArgs([]string{"--rollback-on-fail"})
+		if err != nil || p.rollbackOnFail == nil || !*p.rollbackOnFail {
+			t.Fatalf("got %v err=%v", p.rollbackOnFail, err)
+		}
+	})
+	t.Run("--no-rollback-on-fail = false", func(t *testing.T) {
+		p, err := parseDeployArgs([]string{"--no-rollback-on-fail"})
+		if err != nil || p.rollbackOnFail == nil || *p.rollbackOnFail {
+			t.Fatalf("got %v err=%v", p.rollbackOnFail, err)
+		}
+	})
+	t.Run("both together → ErrUsage", func(t *testing.T) {
+		if _, err := parseDeployArgs([]string{"--rollback-on-fail", "--no-rollback-on-fail"}); !errors.Is(err, ErrUsage) {
+			t.Fatalf("want ErrUsage, got %v", err)
+		}
+	})
+	t.Run("unspecified = nil", func(t *testing.T) {
+		p, err := parseDeployArgs(nil)
+		if err != nil || p.rollbackOnFail != nil {
+			t.Fatalf("got %v err=%v", p.rollbackOnFail, err)
+		}
+	})
+}
+
+func TestRollbackDecision(t *testing.T) {
+	tru, fls := true, false
+	tests := []struct {
+		name        string
+		p           deployArgs
+		tty         bool
+		wantDecided bool
+		wantDo      bool
+	}{
+		{"explicit true wins over tty", deployArgs{rollbackOnFail: &tru}, true, true, true},
+		{"explicit false wins over force", deployArgs{rollbackOnFail: &fls, force: true}, false, true, false},
+		{"force → rollback, no prompt", deployArgs{force: true}, true, true, true},
+		{"tty, no flags → defer to confirm", deployArgs{}, true, false, false},
+		{"headless, no flags → rollback", deployArgs{}, false, true, true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			decided, do := rollbackDecision(tc.p, tc.tty)
+			if decided != tc.wantDecided || do != tc.wantDo {
+				t.Errorf("rollbackDecision = (%v,%v), want (%v,%v)", decided, do, tc.wantDecided, tc.wantDo)
+			}
+		})
 	}
 }
 

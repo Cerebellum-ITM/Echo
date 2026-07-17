@@ -483,6 +483,7 @@ func helpSections() []helpSection {
 			{"  --json", "Emit a machine-readable deploy summary to stdout (logs to stderr)"},
 			{"  --checkpoint[=db|dump]", "Force a DB checkpoint before the run (default: auto on staging/prod)"},
 			{"  --no-checkpoint", "Skip the DB checkpoint even on staging/prod"},
+			{"  --rollback-on-fail / --no-rollback-on-fail", "Fix the on-failure rollback decision headlessly (no prompt)"},
 			{"  --no-actions", "Skip declared [[deploy.actions]] for this run"},
 			{"  --test", "Run the deployed modules' tests this run; --no-test skips them"},
 			{"  --test-toggle", "Flip [deploy] test on/off (always-run) and print the result (no deploy)"},

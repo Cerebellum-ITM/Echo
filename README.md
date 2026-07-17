@@ -367,6 +367,7 @@ the code there — that's for the tool you use to sync the working tree.
 | `  --modules <names>` | Deploy these (dirty) modules non-interactively (skips the picker) |
 | `  --checkpoint[=db\|dump]` | Force a DB checkpoint before the run (default: auto on `staging`/`prod`) |
 | `  --no-checkpoint` | Skip the DB checkpoint even on `staging`/`prod`          |
+| `  --rollback-on-fail` / `--no-rollback-on-fail` | Fix the on-failure decision headlessly: restore, or keep the broken DB — no prompt |
 | `  --no-actions`   | Skip declared `[[deploy.actions]]` for this run          |
 | `  --push` / `--no-push` | Push the resolved modules before the run / skip it even when it's the default |
 | `  --set-push[=bool]` | Set `deploy` to push by default and exit (no deploy)  |
@@ -426,6 +427,12 @@ database back** to that checkpoint. In an interactive session it asks first (so
 you can inspect the broken DB); headless — under `--force` or `watch` — it
 restores automatically. A rolled-back deploy never marks its commits as
 deployed, so `deploy --auto` re-offers them once you've fixed the module.
+
+To fix that decision **deterministically** — for an agent or CI that shouldn't
+depend on whether a terminal is attached — pass `--rollback-on-fail` (always
+restore, no prompt) or `--no-rollback-on-fail` (always keep the broken DB for
+later inspection, no prompt). The explicit flag wins over `--force` and over the
+TTY prompt; without either flag, behavior is unchanged. `watch` always restores.
 
 Two methods: `db` (the default — `CREATE DATABASE … TEMPLATE`, a fast
 file-level copy, `STRATEGY FILE_COPY` on PostgreSQL 15+; rollback is a near-

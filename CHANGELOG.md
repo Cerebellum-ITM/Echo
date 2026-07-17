@@ -8,6 +8,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **`deploy --rollback-on-fail` / `--no-rollback-on-fail`: decisión de rollback
+  determinista y sin prompt.** El rollback tras un deploy fallido preguntaba
+  (`confirmRollback`) solo cuando había TTY y no se pasó `--force`; headless
+  revertía siempre. Eso dejaba dos huecos para un agente: si corre Echo dentro de
+  un pty **se colgaba** en la pregunta, y **no había forma** de decir "headless,
+  pero deja la DB rota para inspeccionar" (solo `--force`=revertir). Ahora un par
+  de flags fija la decisión sin depender de la TTY: `--rollback-on-fail`
+  (revierte siempre, sin preguntar) y `--no-rollback-on-fail` (deja la DB rota y
+  el checkpoint registrado para `deploy --rollback`, sin preguntar). El flag
+  explícito gana sobre `--force` y sobre el prompt; sin flag, el comportamiento
+  no cambia. `watch` sigue revirtiendo siempre. Nuevo helper puro
+  `rollbackDecision(p, tty)` (testeable sin terminal real).
 - **`deploy --test`: corre los tests de los módulos como parte del deploy.**
   Antes `deploy` y el comando `test` eran caminos separados: desplegabas y luego
   corrías `test` a mano. Ahora `deploy --test` inyecta los flags de test

@@ -116,6 +116,11 @@ type deployArgs struct {
 	testAdd        []string
 	testRm         []string
 	testClear      bool
+	// rollbackOnFail fixes the on-failure rollback decision without prompting
+	// (Unit 101): non-nil overrides the TTY-based default — true rolls back,
+	// false leaves the broken DB. nil = fall through to the confirm/headless
+	// default. Set by --rollback-on-fail / --no-rollback-on-fail.
+	rollbackOnFail *bool
 }
 
 // isTestManage reports whether the args carry a config-only test-management
@@ -130,6 +135,7 @@ func (p deployArgs) isTestManage() bool {
 // positionals — the commits come from the picker or those flags.
 func parseDeployArgs(args []string) (deployArgs, error) {
 	out := deployArgs{limit: 20}
+	var sawRB, sawNoRB bool
 	for i := 0; i < len(args); i++ {
 		a := args[i]
 		switch {
@@ -209,6 +215,14 @@ func parseDeployArgs(args []string) (deployArgs, error) {
 			out.rollback = true
 		case a == "--no-actions":
 			out.noActions = true
+		case a == "--rollback-on-fail":
+			t := true
+			out.rollbackOnFail = &t
+			sawRB = true
+		case a == "--no-rollback-on-fail":
+			f := false
+			out.rollbackOnFail = &f
+			sawNoRB = true
 		case a == "--test":
 			out.test = true
 		case a == "--no-test":
@@ -268,6 +282,9 @@ func parseDeployArgs(args []string) (deployArgs, error) {
 	}
 	if out.test && out.noTest {
 		return out, fmt.Errorf("%w: --test and --no-test are mutually exclusive", ErrUsage)
+	}
+	if sawRB && sawNoRB {
+		return out, fmt.Errorf("%w: --rollback-on-fail and --no-rollback-on-fail are mutually exclusive", ErrUsage)
 	}
 	if out.testPick && out.testModulesSet != nil {
 		return out, fmt.Errorf("%w: --test-modules picker and --test-modules=<list> are mutually exclusive", ErrUsage)
@@ -1151,22 +1168,48 @@ func deployRunError(runErr error) error {
 	return fmt.Errorf("odoo run reported errors in its output")
 }
 
+// rollbackDecision resolves whether a failed deploy rolls back WITHOUT a
+// prompt. Returns (decided, doRollback): decided=false means the caller must
+// fall back to the interactive confirm (the TTY case). An explicit
+// --rollback-on-fail/--no-rollback-on-fail wins outright; else --force means
+// roll back; else a TTY defers to the confirm; else (headless, no flags) the
+// default is to roll back. Pure — testable without a real terminal.
+func rollbackDecision(p deployArgs, tty bool) (decided, doRollback bool) {
+	switch {
+	case p.rollbackOnFail != nil:
+		return true, *p.rollbackOnFail
+	case p.force:
+		return true, true
+	case tty:
+		return false, false // defer to confirmRollback
+	default:
+		return true, true // headless default: roll back
+	}
+}
+
 // handleDeployFailure is the checkpoint-on failure path. In an interactive
 // session it asks before restoring (so the operator can inspect the broken
-// DB); headless (--force or no TTY) it rolls back automatically. Either way
-// the deploy's commits are never marked deployed. It returns the populated
-// result (RolledBack set when restored) alongside the deploy error, so a
-// headless caller like watch can read the outcome.
+// DB); headless (--force or no TTY) it rolls back automatically, and an
+// explicit --rollback-on-fail/--no-rollback-on-fail fixes the choice either
+// way without a prompt. Either way the deploy's commits are never marked
+// deployed. It returns the populated result (RolledBack set when restored)
+// alongside the deploy error, so a headless caller like watch can read the
+// outcome.
 func handleDeployFailure(ctx context.Context, opts DeployOpts, rsc remoteShellContext, p deployArgs, entry config.CheckpointEntry, result DeployResult, projectKey, targetKey string, runErr error) (DeployResult, error) {
-	// Interactive: offer to inspect instead of restoring. A decline keeps the
-	// broken DB and the checkpoint (recorded so `deploy --rollback` finds it).
-	if !p.force && stdinIsTTY() {
-		if !confirmRollback(opts.Palette, rsc.prof.DBName, entry) {
-			_ = config.AddCheckpoint(projectKey, targetKey, entry)
-			opts.log("WARNING", "rollback", "skipped — restore later with deploy --rollback", rsc.prof.DBName,
-				[2]string{"checkpoint", entry.Name})
-			return result, deployRunError(runErr)
-		}
+	// Decide whether to roll back. An explicit --rollback-on-fail /
+	// --no-rollback-on-fail wins outright (deterministic for agents/CI);
+	// otherwise fall back to the interactive confirm on a TTY, or the headless
+	// default (roll back). A decline / --no-rollback-on-fail keeps the broken DB
+	// and the checkpoint (recorded so `deploy --rollback` finds it).
+	decided, doRollback := rollbackDecision(p, stdinIsTTY())
+	if !decided {
+		doRollback = confirmRollback(opts.Palette, rsc.prof.DBName, entry)
+	}
+	if !doRollback {
+		_ = config.AddCheckpoint(projectKey, targetKey, entry)
+		opts.log("WARNING", "rollback", "skipped — restore later with deploy --rollback", rsc.prof.DBName,
+			[2]string{"checkpoint", entry.Name})
+		return result, deployRunError(runErr)
 	}
 
 	// Stop the app for a clean restore (the run left it up), keeping the DB
