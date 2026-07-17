@@ -290,24 +290,58 @@ func TestPromoteCommitsIntegration(t *testing.T) {
 	}
 }
 
-func TestApplyDirtyConflictLeavesDestClean(t *testing.T) {
+// promote is a file-level move: the source's current version of a changed file
+// overwrites the destination's, whatever git state the destination is in
+// (untracked, dirty, or divergent). No index consulted, so the "does not exist
+// in index" / "does not match index" failures a `git apply` produced can't
+// happen. Last-write-wins is the deliberate trade-off (the caller warns when it
+// clobbers uncommitted destination work — see destDirtyPaths).
+func TestApplyDirtyOverwritesDivergentDest(t *testing.T) {
 	main, feat := setupPromoteRepo(t)
 	ctx := context.Background()
 
-	// Diverge the same line on both sides so the patch cannot apply.
+	// The destination has committed a different version of the file …
 	writeFile(t, filepath.Join(main, "my_mod", "models.py"), "x = 999\n")
+	gitRun(t, main, "add", "-A")
+	gitRun(t, main, "commit", "-m", "diverge on develop")
+	// … and the module the source promotes is even brand-new to the destination
+	// (no index entry) — exactly what broke git apply.
 	writeFile(t, filepath.Join(feat, "my_mod", "models.py"), "x = 2\n")
+	writeFile(t, filepath.Join(feat, "new_mod", "__manifest__.py"), "{'name':'new_mod'}\n")
+	writeFile(t, filepath.Join(feat, "new_mod", "models.py"), "y = 1\n")
 
 	wts, _ := gitWorktrees(ctx, feat)
 	dest, _ := worktreeForBranch(wts, "develop")
 
-	_, err := applyDirty(ctx, feat, dest.path, []string{"my_mod"}, false)
-	if err == nil {
-		t.Fatal("expected a conflict error")
+	if _, err := applyDirty(ctx, feat, dest.path, []string{"my_mod", "new_mod"}, false); err != nil {
+		t.Fatalf("applyDirty overwrite: %v", err)
 	}
-	// Destination keeps its own content — nothing half-applied.
-	if got := readFile(t, filepath.Join(main, "my_mod", "models.py")); got != "x = 999\n" {
-		t.Errorf("destination mutated on conflict: %q", got)
+	// Modified file: source version wins (overwrite).
+	if got := readFile(t, filepath.Join(main, "my_mod", "models.py")); got != "x = 2\n" {
+		t.Errorf("modified file not overwritten: %q", got)
+	}
+	// Brand-new module (untracked in dest) landed too.
+	if got := readFile(t, filepath.Join(main, "new_mod", "__manifest__.py")); got != "{'name':'new_mod'}\n" {
+		t.Errorf("new module not copied: %q", got)
+	}
+}
+
+func TestApplyDirtyDeletionRemovesDest(t *testing.T) {
+	main, feat := setupPromoteRepo(t)
+	ctx := context.Background()
+
+	// Source deletes a tracked file; promote removes it from the destination.
+	if err := os.Remove(filepath.Join(feat, "my_mod", "models.py")); err != nil {
+		t.Fatal(err)
+	}
+	wts, _ := gitWorktrees(ctx, feat)
+	dest, _ := worktreeForBranch(wts, "develop")
+
+	if _, err := applyDirty(ctx, feat, dest.path, []string{"my_mod"}, false); err != nil {
+		t.Fatalf("applyDirty deletion: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(main, "my_mod", "models.py")); !os.IsNotExist(err) {
+		t.Errorf("deleted file still present on destination (err=%v)", err)
 	}
 }
 

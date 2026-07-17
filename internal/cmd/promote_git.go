@@ -145,8 +145,12 @@ func dirtyChangeSet(ctx context.Context, src string, dirs []string) (tracked []F
 }
 
 // applyDirty computes the change set for the selected module dirs and, unless
-// dryRun, applies the tracked patch (via `git apply`, all-or-nothing) and
-// copies the untracked files into the destination worktree — leaving it dirty.
+// dryRun, syncs those files into the destination worktree by copying their
+// CURRENT source content (new/changed → overwrite, deleted → remove). It never
+// goes through git's index, so it works regardless of whether the destination
+// tracks the module, is itself dirty, or is missing the file entirely — the
+// cases where a `git apply` patch fails ("does not exist in index" / "does not
+// match index"). The destination is left dirty (uncommitted), as intended.
 func applyDirty(ctx context.Context, srcRoot, destPath string, dirs []string, dryRun bool) ([]FileChange, error) {
 	tracked, untracked, err := dirtyChangeSet(ctx, srcRoot, dirs)
 	if err != nil {
@@ -160,40 +164,104 @@ func applyDirty(ctx context.Context, srcRoot, destPath string, dirs []string, dr
 		return changes, nil
 	}
 
-	patchArgs := append([]string{"diff", "--binary", "HEAD", "--"}, dirs...)
-	patch, err := gitOutput(ctx, srcRoot, patchArgs...)
-	if err != nil {
+	// Snapshot every touched destination path so a mid-sync failure rolls back
+	// cleanly (all-or-nothing), without disturbing the rest of the destination's
+	// uncommitted work.
+	rels := make([]string, 0, len(changes))
+	for _, c := range changes {
+		rels = append(rels, c.Path)
+	}
+	snap, serr := snapshotFiles(destPath, rels)
+	if serr != nil {
+		return nil, serr
+	}
+	if err := syncFiles(srcRoot, destPath, changes); err != nil {
+		restoreFiles(destPath, snap)
 		return nil, err
-	}
-	if len(bytes.TrimSpace(patch)) > 0 {
-		if err := gitApplyStdin(ctx, destPath, patch); err != nil {
-			return nil, err
-		}
-	}
-	for _, u := range untracked {
-		if err := copyFileInto(srcRoot, destPath, u); err != nil {
-			return nil, fmt.Errorf("copy %s: %w", u, err)
-		}
 	}
 	return changes, nil
 }
 
-// gitApplyStdin pipes a patch into `git -C dest apply`. Without --3way, git
-// apply is all-or-nothing: on any hunk that doesn't apply it fails and leaves
-// the working tree untouched → a clean conflict abort. Failure maps to
-// ErrPromoteConflict with git's stderr.
-func gitApplyStdin(ctx context.Context, dest string, patch []byte) error {
-	c := exec.CommandContext(ctx, "git", "-C", dest, "apply", "--whitespace=nowarn")
-	c.Stdin = bytes.NewReader(patch)
-	var stderr bytes.Buffer
-	c.Stderr = &stderr
-	if err := c.Run(); err != nil {
-		if msg := strings.TrimSpace(stderr.String()); msg != "" {
-			return fmt.Errorf("%w: %s", ErrPromoteConflict, msg)
+// syncFiles moves the change set into the destination by file: new/changed
+// files are copied from the source worktree (overwriting the destination's
+// version), deleted files are removed. A plain file-level move — no git index
+// involved, so a dirty or untracked destination is fine.
+func syncFiles(srcRoot, destPath string, changes []FileChange) error {
+	for _, c := range changes {
+		if c.Op == "deleted" {
+			p := filepath.Join(destPath, filepath.FromSlash(c.Path))
+			if err := os.Remove(p); err != nil && !os.IsNotExist(err) {
+				return fmt.Errorf("remove %s: %w", c.Path, err)
+			}
+			continue
 		}
-		return fmt.Errorf("%w: %v", ErrPromoteConflict, err)
+		if err := copyFileInto(srcRoot, destPath, c.Path); err != nil {
+			return fmt.Errorf("copy %s: %w", c.Path, err)
+		}
 	}
 	return nil
+}
+
+// destDirtyPaths returns the set of repo-relative paths under dirs that already
+// have uncommitted changes in the destination worktree. promote uses it to warn
+// before overwriting them — their accumulated work is replaced by the source's
+// version. Best-effort: a git error yields an empty set (no warning).
+func destDirtyPaths(ctx context.Context, destPath string, dirs []string) map[string]bool {
+	out, err := gitOutput(ctx, destPath, append([]string{"status", "--porcelain", "--"}, dirs...)...)
+	if err != nil {
+		return nil
+	}
+	set := map[string]bool{}
+	for _, p := range parsePorcelainPaths(string(out)) {
+		set[p] = true
+	}
+	return set
+}
+
+// fileSnapshot is a destination file's content and mode captured before a
+// sync, or absent==true when the file didn't exist yet.
+type fileSnapshot struct {
+	data   []byte
+	mode   os.FileMode
+	absent bool
+}
+
+// snapshotFiles records the destination's current bytes+mode for each rel path
+// so restoreFiles can undo a partial sync without disturbing whatever else
+// the destination worktree already had uncommitted.
+func snapshotFiles(root string, rels []string) (map[string]fileSnapshot, error) {
+	snap := make(map[string]fileSnapshot, len(rels))
+	for _, rel := range rels {
+		p := filepath.Join(root, filepath.FromSlash(rel))
+		info, err := os.Stat(p)
+		if os.IsNotExist(err) {
+			snap[rel] = fileSnapshot{absent: true}
+			continue
+		}
+		if err != nil {
+			return nil, fmt.Errorf("snapshot %s: %w", rel, err)
+		}
+		data, err := os.ReadFile(p)
+		if err != nil {
+			return nil, fmt.Errorf("snapshot %s: %w", rel, err)
+		}
+		snap[rel] = fileSnapshot{data: data, mode: info.Mode().Perm()}
+	}
+	return snap, nil
+}
+
+// restoreFiles rewinds the snapshotted files to their captured state: rewrite
+// the ones that existed, remove the ones that didn't. Best-effort — a conflict
+// abort shouldn't itself error out.
+func restoreFiles(root string, snap map[string]fileSnapshot) {
+	for rel, s := range snap {
+		p := filepath.Join(root, filepath.FromSlash(rel))
+		if s.absent {
+			_ = os.Remove(p)
+			continue
+		}
+		_ = os.WriteFile(p, s.data, s.mode)
+	}
 }
 
 // copyFileInto copies srcRoot/rel to destRoot/rel, creating parent dirs and

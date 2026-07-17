@@ -228,12 +228,29 @@ func promoteDirty(ctx context.Context, opts PromoteOpts, p promoteArgs, srcRoot 
 		return promoteSummary{mode: "dirty"}, nil
 	}
 
+	// Files that already carry uncommitted work on the destination will be
+	// overwritten by the source's version — surface that before it happens.
+	destDirty := destDirtyPaths(ctx, dest.path, selected)
+
 	changes, err := applyDirty(ctx, srcRoot, dest.path, selected, p.dryRun)
 	if err != nil {
 		return promoteSummary{}, err
 	}
 	if opts.OnSync != nil {
 		opts.OnSync(changes)
+	}
+	var clobbered []string
+	for _, c := range changes {
+		if c.Op != "deleted" && destDirty[c.Path] {
+			clobbered = append(clobbered, c.Path)
+		}
+	}
+	if len(clobbered) > 0 {
+		msg := "overwrote files that had uncommitted changes on the destination"
+		if p.dryRun {
+			msg = "would overwrite files that have uncommitted changes on the destination"
+		}
+		opts.log("WARNING", "", msg, "", [2]string{"files", strings.Join(clobbered, ",")})
 	}
 	verb := "promote complete"
 	if p.dryRun {

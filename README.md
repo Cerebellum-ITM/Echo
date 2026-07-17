@@ -506,10 +506,12 @@ auto-commit.** After the changes land on the deploy branch you run `deploy` /
 
 Two source modes:
 
-- **Dirty** — move the current worktree's *uncommitted* patch (modified **+
-  untracked**), selected **by folder (module)**. It lands in the deploy
-  branch's worktree and **stays uncommitted** there, so you can accumulate
-  several features before deploying:
+- **Dirty** — move the current worktree's *uncommitted* changes (modified **+
+  untracked** files), selected **by folder (module)**. Each changed file is
+  copied over as-is (new → created, modified → overwritten, deleted → removed),
+  so it works even when the module is brand-new to the deploy branch or that
+  branch is itself dirty. It lands in the deploy branch's worktree and **stays
+  uncommitted** there, so you can accumulate several features before deploying:
 
   ```
   promote --dirty stock_extra              # this worktree's dirty stock_extra → deploy branch
@@ -547,9 +549,10 @@ the branch has no checkout anywhere, `promote` offers to create one (or use
 
 `promote` runs **projectless** — it works from a feature worktree that has no
 `docker-compose.yml`, rooted at the git worktree. A dirty deploy branch never
-blocks a promote (accumulation is the point); only a genuine patch or
-cherry-pick **conflict** aborts, cleanly, leaving the deploy branch untouched
-and reporting the conflicting files.
+blocks a promote (accumulation is the point). Dirty mode is last-write-wins: it
+overwrites the deploy branch's version of a file and **warns** when that file
+already had uncommitted work there. Only a **cherry-pick** conflict (commit
+mode) aborts, cleanly, leaving the deploy branch untouched.
 
 ```
 echo_cli promote --dirty stock_extra --to pruebas

@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **`promote --dirty`: mueve archivos por copia, no por `git apply` — deja de
+  fallar contra un destino dirty o con módulos nuevos.** El patch dirty se
+  cortaba contra el HEAD del worktree **fuente** y se aplicaba con `git apply` al
+  worktree **destino** (la rama de despliegue), pero `git apply` (incluso
+  `--3way`) valida contra el **índice** del destino: un módulo nuevo daba
+  `does not exist in index` y un archivo que el destino ya tenía sucio (justo el
+  caso de acumular varias features) daba `does not match index` — el mecanismo
+  equivocado para "mover archivos" a un árbol sucio. Ahora `promote --dirty`
+  hace una **copia a nivel de archivo**: la versión actual de cada archivo del
+  change-set en el source sobrescribe la del destino (nuevo → se crea,
+  modificado → se sobrescribe, borrado → se elimina), sin tocar el índice de git,
+  así que funciona sin importar si el destino trackea el módulo, está sucio o no
+  tiene el archivo. Es last-write-wins deliberado: cuando sobrescribe un archivo
+  que el destino ya tenía con cambios sin commitear, lo **avisa** con un WARNING
+  (`destDirtyPaths`) listando los archivos afectados. Se conserva la atomicidad
+  con snapshot previo (contenido+modo) y rollback si la copia falla a medias.
+
 ### Changed
 - **`db-pull`: projectless y descarga-por-defecto; el restore local es opt-in.**
   Antes `db-pull` asumía forma de dev-en-laptop: hacía `pg_dump` remoto por SSH

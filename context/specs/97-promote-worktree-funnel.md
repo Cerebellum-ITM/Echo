@@ -78,12 +78,16 @@ promote --set-branch <branch>                                  # config-only: pe
 
 ### Destination is dirty by design — no "clean destination" guard
 
-`develop` **accumulates** several features' dirty patches; a dirty `develop`
+`develop` **accumulates** several features' dirty changes; a dirty `develop`
 worktree is the **normal, expected** state, not an error. `promote` therefore
-does **not** block on "destination has uncommitted changes". The only failure
-it guards is a **real patch/cherry-pick conflict** (the same lines already
-changed on `develop` collide with the incoming change) → abort cleanly, leave
-`develop` exactly as it was, report the conflicting files.
+does **not** block on "destination has uncommitted changes".
+
+- **Dirty mode** moves by file copy (last-write-wins), so it never "conflicts":
+  it overwrites the destination's version and **warns** when it overwrites a
+  file that already had uncommitted work there.
+- **Commit (cherry-pick) mode** is the only path with a real conflict: an
+  overlapping cherry-pick aborts (`cherry-pick --abort`), leaves `develop`
+  exactly as it was, and reports the failure (`ErrPromoteConflict`).
 
 ### Worktree awareness & destination resolution
 
@@ -167,9 +171,9 @@ no picker without a terminal).
 
 **Destination resolution** (`resolveDest`)
 
-- Target branch = `--to` › `cfg.PromoteBranch` › `"develop"` **only when a
-  branch is explicitly present**; with none configured and no `--to`, the
-  branch is left empty to trigger the picker (step 4 of the cascade).
+- Target branch = `--to` › `cfg.PromoteBranch` (`promoteDestBranch`). **No
+  hardcoded default** — an empty result means "not configured" and triggers the
+  picker (step 4 of the cascade) in a TTY, or a fail-closed `ErrUsage` headless.
 - Find its worktree; if present → done. If missing:
   - `--create-dest <path>` set → `addWorktree`, re-list, use it.
   - interactive → `promptMissingDest` (create / pick-existing / cancel).
@@ -189,20 +193,31 @@ and return — no git mutation, headless, short-circuit at the top of
 
 - Modules: `gitDirtyModules(ctx, srcRoot)`; interactive multi-select by module,
   or filter to the `<folder>` positionals in headless.
-- Collect the change set for the selected modules' paths:
-  - **tracked** (modified/deleted): `git -C src diff --binary HEAD -- <paths>`
-    (captures staged+unstaged vs HEAD) → apply to the destination worktree with
-    `git -C dest apply --3way --whitespace=nowarn -` (fed on stdin). `--3way`
-    turns overlapping edits into a reported conflict instead of a hard reject.
-  - **untracked** (new files): `git -C src ls-files --others --exclude-standard
-    -- <paths>`; copy each into the destination worktree at the same
-    root-relative path (parents created), leaving them untracked there. (No
-    index mutation on the source; no intent-to-add hack.)
-- **Conflict / failure**: if `git apply` fails, do not leave a half-applied
-  tree — attempt `git -C dest apply -R` of any partial is avoided by using
-  `--3way` (atomic) ; on non-zero exit report the failing files and return
-  `ErrPromoteConflict`. Nothing is committed either way (destination stays
-  dirty, as intended).
+- Collect the change set for the selected modules' paths (`dirtyChangeSet`):
+  - **tracked**: `git -C src diff HEAD --name-status -- <paths>` → op
+    new/changed/deleted.
+  - **untracked**: `git -C src ls-files --others --exclude-standard -- <paths>`
+    → op new.
+- **Apply by file copy, not `git apply`** (`syncFiles`). The move is a plain
+  file-level sync of the source's *current* content into the destination: new/
+  changed → copy (overwrite), deleted → remove. It deliberately **does not go
+  through git's index** — a `git apply` (even `--3way`) validates against the
+  destination index and fails on exactly the promote cases (`does not exist in
+  index` for a module the destination doesn't track yet; `does not match index`
+  for a file the destination already has dirty from a prior promote). File copy
+  works regardless of the destination's git state. The destination is left
+  dirty (uncommitted), as intended.
+- **Last-write-wins + clobber warning**: copying overwrites the destination's
+  version wholesale. Before applying, `destDirtyPaths` (a `git status
+  --porcelain` of the destination under the selected dirs) records which files
+  already carry uncommitted work there; after applying, `promoteDirty` emits a
+  WARNING listing any of those the copy overwrote — the accumulation trade-off
+  made visible.
+- **Atomicity**: `snapshotFiles` captures each touched destination path
+  (content+mode, or absent) before the sync; a mid-sync copy/remove failure
+  triggers `restoreFiles` (rollback) so the destination is left exactly as it
+  was. (Dirty mode has no "patch conflict" — file copy always applies;
+  `ErrPromoteConflict` remains for the cherry-pick path.)
 - Build a `[]FileChange` (op = `new` for untracked, `changed`/`deleted` for
   tracked) for the caller's `OnSync`/preview.
 
@@ -281,9 +296,13 @@ and return — no git mutation, headless, short-circuit at the top of
       `develop` **dirty and uncommitted**; no commit is created anywhere.
 - [ ] `promote <branch> --commits <sha>` cherry-picks the commit onto
       `develop`, skipping SHAs already present (`git cherry` dedup).
-- [ ] A dirty `develop` worktree does **not** block a promote; only a real
-      patch/cherry-pick conflict aborts (cleanly, `develop` unchanged) with the
-      conflicting files reported.
+- [ ] A dirty `develop` worktree does **not** block a promote. Dirty mode
+      overwrites (last-write-wins) and warns when it clobbers uncommitted
+      destination work; only a cherry-pick conflict aborts cleanly (`develop`
+      unchanged) reporting the failure.
+- [ ] `promote --dirty` works when the module is **new to the destination**
+      (untracked) or the destination file is **already dirty** — the cases that
+      broke the earlier `git apply` mechanism.
 - [ ] `promote` runs **projectless**: from a feature worktree with no
       `docker-compose.yml` it works, rooted at the git worktree; source ==
       destination worktree is refused.
@@ -303,7 +322,8 @@ and return — no git mutation, headless, short-circuit at the top of
 - [ ] Tests (`internal/cmd/promote_test.go`): `parsePromoteArgs` (modes, XOR,
       `--commits` parsing, unknown flag); `git worktree list --porcelain`
       parsing; `worktreeForBranch`; dest-branch precedence (`--to` › config ›
-      develop); dirty path filtering → `FileChange` set; cherry dedup selection.
-      Config round-trip of `[promote] branch` in `config_test.go`.
+      empty, no default); dirty change set → file copy (overwrite/new/delete);
+      cherry dedup selection. Config round-trip of `[promote] branch` in
+      `config_test.go`.
 - [ ] `go build ./...`, `go vet ./...`, `go test ./internal/...` pass;
       registry/help/commandFlags cross-check tests stay green.
