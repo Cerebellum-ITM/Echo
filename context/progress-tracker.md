@@ -6,9 +6,12 @@
 
 ## Current Goal
 
-Unit 97 (promote-worktree-funnel) entregada: comando local `promote` que embuda
-un worktree a la rama de despliegue (dirty por carpeta / commits cherry-pick),
-projectless, sin tocar el servidor. Pendiente del plan original: Unit 14
+Unit 98 (db-pull-projectless-download) entregada: `db-pull` ahora es projectless
+y **descarga por defecto** (dump remoto → `./backups/`, sin stack local); el
+restore-a-local es opt-in con `--restore`. Antes: Unit 97 (promote-worktree-funnel):
+comando local `promote` que embuda un worktree a la rama de despliegue (dirty por
+carpeta / commits cherry-pick), projectless, sin tocar el servidor. Pendiente del
+plan original: Unit 14
 (meta-commands: `theme`, `logo`, `version`, `stage`). Unit 15 (banner) entregada:
 banner del header con dos estilos
 figlet del wordmark `echo` (soundwave / shadow) elegidos al azar y coloreados
@@ -25,6 +28,28 @@ _(siguiente: Unit 14 — meta-commands. Fix deploy-build-muting: el builder de `
 
 
 ## Completed
+
+- [x] Unit 98 — db-pull-projectless-download. `db-pull` deja de asumir forma de
+  dev-en-laptop (dump remoto → **restore obligado en stack local**) y se alinea
+  con el flujo link-only, donde el dir del proyecto (ej. `all_odoo`) es solo la
+  **fuente** de módulos linkeada a un server remoto que *es* donde vive el
+  `docker-compose.yml` (sin stack local por diseño). Ahora `db-pull` es
+  **projectless** (agregado a la lista de `main.go:projectlessOneShot`, junto a
+  `deploy`/`push`/`i18n-pull`) y por defecto **solo descarga**: `pg_dump` remoto
+  por SSH → `.dump` en `./backups/`, sin tocar nada local; con `--filestore`
+  (sin restore) baja además el tar crudo del filestore. El restore-a-local es
+  **opt-in** con `--restore`, que reactiva el comportamiento previo
+  (drop/create/restore + neutralización auto si la fuente es prod + copia de
+  filestore al contenedor + hint `→ db-use <db>`) y se auto-protege con
+  `requireDBContainer` (`ErrNoDBContainer`) si no hay stack local. Cambios:
+  `dbPullFlags.restore` + `--restore` en `parseDBPullArgs`; `RunDBPull` ramifica
+  descarga/restore y mueve el gate de container a la rama restore; nuevo
+  `pullFilestoreArchive` (+ `remoteFilestoreTarCmd` compartido); `main.go`
+  projectless + comentario; `commands.go` completion `--restore`; `repl.go` help.
+  Spec `98-db-pull-projectless-download.md`. Tests: `TestParseDBPullArgs`
+  (`--restore` opt-in) y `main_test.go` (`db-pull` projectless con/sin `--restore`).
+  build/vet/test verdes; verificado en vivo que desde `all_odoo` pasa el gate de
+  proyecto (falla en resolver el remoto, ya no en "not inside a project").
 
 - [x] Unit 97 — promote-worktree-funnel. Comando local `promote` que embuda los
   cambios del worktree actual a la **rama única de despliegue**, sin tocar el
@@ -1024,3 +1049,4 @@ _(siguiente: Unit 14 — meta-commands. Fix deploy-build-muting: el builder de `
 - 2026-06-08: Unit 26 (addons-paths-from-conf) implementada tras el usuario reportar `echo.update.error: no modules found — configure addons paths with` modules --config`` en `habitta_prod`. Diagnóstico: Echo solo escaneaba carpetas del host junto al compose, pero esa instancia tiene los addons dentro del contenedor declarados en `addons_path` del `odoo.conf`. Solución: fallback automático que lee el `odoo.conf` del contenedor (`docker exec cat`), parsea `addons_path` y lista los módulos dentro del contenedor, persistiendo `addons_mode=conf`+rutas (`conf_path` default `/etc/odoo/odoo.conf`). Modo conf re-lee en vivo (auto-update); `modules --config` sigue fijando modo host (coexistencia). Nuevo `resolveModules` reemplaza las llamadas directas a `listAvailableModules`. Spec `26-addons-paths-from-conf.md` + build plan + config + código + tests + CHANGELOG + tracker en la rama `feat/unit-26-addons-paths-from-conf`. Build/vet/tests verdes; falta probar contra la instancia real.
 - 2026-06-08: Unit 25 (filestore-in-container) implementada tras el usuario reportar `FileNotFoundError: /var/lib/odoo/filestore/habitta_prod/06/...` post-restore. Diagnóstico: el SQL restauraba bien pero el filestore se copiaba al host (`~/.local/share/Odoo`), fuera del alcance del contenedor. Confirmado que el archivo SÍ venía en el zip. Decisiones en form: `docker cp` al contenedor (ruta configurable, default `/var/lib/odoo/filestore`) + arreglar restore y backup. Spec `25-filestore-in-container.md` + build plan + config (`filestore_path`) + `docker.ExecAsRoot` + reescritura de filestore en `db.go` + limpieza de helpers de host + CHANGELOG + tracker en un commit.
 - 2026-07-13: Unit 96 (watch-deploy-status) implementada para dar al **agente** una forma de saber si su commit se auto-desplegó **sin SSH, sin el agente de 1Password y sin re-invocar `watch`**. Hallazgo base: `watch` corre en la máquina del usuario y `deploy` guarda su cmd-log **local** (`root = projectDir`, nunca lo empuja al servidor), y el agente vive en esa misma máquina/dir → basta una lectura local. Huecos cerrados: (1) `watch` era un solo comando REPL cuyo record se escribía al salir, y su `deployCommitsHeadless` no llamaba `SaveCmdLog`; ahora `watchCycle` graba un record `watch-deploy` por ciclo (`saveWatchDeployRecord`) con los SHAs en `Cmd`, el tip de rama en el nuevo campo `DeployedTip`, y `Exit` según el resultado; guards espejo de `saveCmdLog` (config nil/`CmdLogsDisabled` → no-op, best-effort, una pasada de prune). (2) `logview` no tenía salida máquina-legible; nuevo `logview --json` vuelca `[]CmdLogMeta` a stdout (convención `finishActionsJSON`, `[]` en vacío), compone con `--remote`/`--from`, rechaza `--json --clear`. `CmdLogMeta` ganó tags JSON estables + `Path` oculto (`json:"-"`). El agente sondea `logview --json`, halla el `watch-deploy` más reciente cuyo `deployed_tip` incluye su commit (`git merge-base --is-ancestor`) y lee `exit`. Spec `96-watch-deploy-status.md` + config (`DeployedTip` en record/meta) + watch + logview + registro `commandFlags`/help + README + CHANGELOG + tests (round-trip `DeployedTip`, `parseLogviewArgs --json`, builder `watch-deploy` + guard disabled, `logviewPrintJSON` sample+vacío con captura de stdout). Build/vet/tests verdes. Wording del skill `odoo-probe` (cómo el agente lo consume) queda para un pase de doc aparte. El Problema 1 (no delegar probes remotos a subagentes por 1Password) ya se documentó en `SKILL.md` de odoo-probe en esta misma sesión.
+- 2026-07-16: Unit 98 (db-pull-projectless-download) implementada tras el usuario reportar `db-pull --from habitta_prod` fallando con `not inside a project` desde `all_odoo`. Diagnóstico: `all_odoo` no es un proyecto Echo (no tiene `docker-compose.yml`; `FindRoot` solo reconoce ese marcador), pero SÍ está linkeado (`~/.config/echo/projects/92a98d….toml` → `[connect] remote_path=/home/pascual_chavez/tmp_ccima/odoo`, que es habitta_prod). El server remoto es donde vive el compose/postgres/odoo; `all_odoo` es solo la fuente de módulos que se pushea. El defecto real (confirmado por el usuario): `db-pull` no estaba en la lista projectless (a diferencia de sus hermanos `deploy`/`push`/`i18n-pull`) Y hacía un restore obligado en un stack local inexistente. Decisión del usuario: descarga por defecto, restore opt-in. Fix: `db-pull` projectless + descarga-por-defecto (`pg_dump` remoto → `./backups/`); `--restore` reactiva el dump+restore local (self-guard `requireDBContainer`); `--filestore` sin restore baja el tar crudo (`pullFilestoreArchive`). Spec `98-db-pull-projectless-download.md` + `main.go`/`db_pull.go`/`commands.go`/`repl.go` + tests + CHANGELOG. build/vet/test verdes; verificado en vivo que desde `all_odoo` pasa el gate (falla en resolver el remoto, ya no en "not inside a project"). Falta prueba end-to-end real contra habitta_prod (haría un dump real de prod) — la deja el usuario.

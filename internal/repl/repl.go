@@ -400,7 +400,7 @@ func helpSections() []helpSection {
 			{"db-restore [--as N]", "Pick a backup, name the target, and restore"},
 			{"  --force", "Replace target DB (terminates its connections)"},
 			{"  --neutralize", "Neutralize the DB after restoring"},
-			{"db-pull", "Pull a remote DB into the local stack (dump → restore)"},
+			{"db-pull", "Download a remote DB dump into ./backups/ (add --restore to load it into the local stack)"},
 			{"  --from <target>", "Pull from a named connect target"},
 			{"  --remote", "Pull from this directory's linked remote"},
 			{"  --as <name>", "Local DB name (default: <remoteDB>_<target>)"},

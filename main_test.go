@@ -13,6 +13,10 @@ func TestProjectlessOneShot(t *testing.T) {
 		{"help needs no project", "help", nil, true},
 		{"i18n-pull always projectless", "i18n-pull", nil, true},
 		{"deploy always projectless", "deploy", nil, true},
+		// db-pull downloads a remote dump into ./backups/; --restore self-guards
+		// downstream, so the classification is unconditional either way.
+		{"db-pull download-only projectless", "db-pull", nil, true},
+		{"db-pull --restore still projectless", "db-pull", []string{"--restore"}, true},
 
 		// Remote-mode group: projectless only with a remote selector.
 		{"update --remote", "update", []string{"sale", "--remote"}, true},

@@ -17,8 +17,19 @@ func TestParseDBPullArgs(t *testing.T) {
 		if f.neutralize != nil {
 			t.Fatalf("neutralize should be nil (auto), got %v", *f.neutralize)
 		}
-		if f.asName != "" || f.filestore || f.force {
+		if f.asName != "" || f.filestore || f.force || f.restore {
 			t.Fatalf("unexpected non-default flags: %+v", f)
+		}
+	})
+
+	t.Run("--restore opt-in", func(t *testing.T) {
+		f := parseDBPullArgs([]string{"--from", "prod", "--restore"})
+		if !f.restore {
+			t.Fatalf("--restore should set restore=true")
+		}
+		f2 := parseDBPullArgs([]string{"--from", "prod"})
+		if f2.restore {
+			t.Fatalf("restore should default to false (download-only)")
 		}
 	})
 

@@ -199,12 +199,15 @@ func isDir(path string) bool {
 // `help` is purely informational and needs nothing; `logview`/`report`
 // only read the local command-history / run-report store keyed by cwd
 // (browsing history must not require a live project — the deploy that wrote
-// it already ran projectless); the remote-mode group
+// it already ran projectless); `db-pull` dumps a remote DB over SSH into
+// the local repo's ./backups/ (download-only by default) — a local Docker
+// stack is only needed with `--restore`, and that step self-guards via
+// requireDBContainer; the remote-mode group
 // (`shell`/`shell-run`/`update`/`sequence`/…) qualifies only with
 // `--from`/`--remote` — locally they need the compose project as always.
 func projectlessOneShot(name string, args []string) bool {
 	switch name {
-	case "help", "i18n-pull", "link", "deploy", "push", "watch", "checkpoint", "actions", "promote", "logview", "report":
+	case "help", "i18n-pull", "link", "deploy", "push", "watch", "checkpoint", "actions", "promote", "logview", "report", "db-pull":
 		return true
 	case "shell", "shell-run", "up", "stop", "restart", "logs", "sequence", "update", "test", "view", "compare":
 		return hasRemoteFlag(args)

@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **`db-pull`: projectless y descarga-por-defecto; el restore local es opt-in.**
+  Antes `db-pull` asumía forma de dev-en-laptop: hacía `pg_dump` remoto por SSH
+  y **restauraba en el stack de Docker local** (`requireDBContainer` +
+  `restoreBackupFile`), y **no** estaba en la lista projectless. Eso rompía el
+  flujo link-only, donde el directorio del proyecto (ej. `all_odoo`) es solo la
+  **fuente** de módulos linkeada con `link` a un server remoto que *es* donde
+  viven `docker-compose.yml`, Postgres y Odoo — sin stack local por diseño. Ahora
+  `db-pull` es **projectless** (corre desde un dir linkeado sin compose, como
+  `deploy`/`push`/`i18n-pull`) y por defecto **solo descarga**: hace el dump
+  remoto y deja el `.dump` en `./backups/`, sin tocar nada local. Con
+  `--filestore` (sin `--restore`) baja además el tar del filestore crudo. El
+  restore-a-local queda **opt-in** con `--restore`, que reactiva el
+  comportamiento anterior (drop/create/restore, neutralización automática si la
+  fuente es prod, copia de filestore al contenedor y hint `→ db-use <db>`);
+  ese único paso exige stack local y se auto-protege con `requireDBContainer`
+  (`ErrNoDBContainer`) si no lo hay.
+
 ### Added
 - **`promote`: embudo local de un worktree a la rama de despliegue, sin tocar el
   servidor.** Resuelve el hueco de trabajar con git worktrees cuando la instancia

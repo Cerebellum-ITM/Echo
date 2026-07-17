@@ -38,7 +38,7 @@ var commandFlags = map[string][]string{
 	"db-admin":      {"--force"},
 	"db-backup":     {"--with-filestore"},
 	"db-restore":    {"--as", "--force", "--neutralize"},
-	"db-pull":       {"--from", "--remote", "--as", "--neutralize", "--no-neutralize", "--filestore", "--force"},
+	"db-pull":       {"--from", "--remote", "--as", "--neutralize", "--no-neutralize", "--filestore", "--force", "--restore"},
 	"db-drop":       {"--force"},
 	"db-neutralize": {"--force"},
 	"up":            {"--from", "--remote"},

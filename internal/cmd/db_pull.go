@@ -17,6 +17,7 @@ type dbPullFlags struct {
 	neutralize *bool
 	filestore  bool
 	force      bool
+	restore    bool
 	from       string
 	remote     bool
 }
@@ -47,6 +48,8 @@ func parseDBPullArgs(args []string) dbPullFlags {
 			f.filestore = true
 		case a == "--force":
 			f.force = true
+		case a == "--restore":
+			f.restore = true
 		case a == "--from":
 			i++ // value consumed by remoteFlagsIn; skip it here
 		}
@@ -75,16 +78,16 @@ func sanitizeDBName(s string) string {
 	return strings.Trim(b.String(), "_")
 }
 
-// RunDBPull dumps a remote target's database over SSH into the project's
-// ./backups/, restores it into the local Postgres under a distinct name,
-// and (by default, when the source is prod) neutralizes it. The remote
-// side is read-only (one pg_dump, plus an optional filestore tar) — no
-// remote prod gate; all mutating steps run through the local db machinery
-// and its own guards.
+// RunDBPull dumps a remote target's database over SSH into the working
+// directory's ./backups/. By default it stops there — a plain "make a
+// backup on the remote and pull it down", which needs no local Docker
+// stack and so runs projectless from a linked source directory. With
+// --restore it also loads the dump into the local Postgres under a
+// distinct name and (when the source is prod) neutralizes it; that path
+// requires a local stack and self-guards via requireDBContainer. The
+// remote side is always read-only (one pg_dump, plus an optional
+// filestore tar) — no remote prod gate.
 func RunDBPull(ctx context.Context, opts DBOpts) error {
-	if err := requireDBContainer(opts.Cfg); err != nil {
-		return err
-	}
 	f := parseDBPullArgs(opts.Args)
 
 	logFn := func(level, sub, msg, db string, fields ...[2]string) { opts.log(level, sub, msg, db, fields...) }
@@ -146,7 +149,36 @@ func RunDBPull(ctx context.Context, opts DBOpts) error {
 	}
 	opts.log("INFO", "dump", "dump complete", asName, [2]string{"size", humanBytes(size)})
 
-	// --- restore into the local stack under the derived name ---
+	// Download-only (default): keep the dump (and, with --filestore, the
+	// raw filestore tar) in ./backups/ and stop. No local stack is touched,
+	// so this half runs projectless from a linked source directory.
+	if !f.restore {
+		if f.filestore {
+			fsName := fmt.Sprintf("%s_%s_%s.filestore.tar", sanitizeDBName(remoteDB), sanitizeDBName(label), ts)
+			fsPath := filepath.Join(backupsDir, fsName)
+			opts.log("INFO", "filestore", "streaming remote filestore", asName, [2]string{"file", fsName})
+			if err := pullFilestoreArchive(ctx, opts, rsc, remoteDB, fsPath); err != nil {
+				// Best-effort: the DB dump already succeeded; warn and continue.
+				opts.log("WARNING", "filestore", "filestore not pulled: "+err.Error(), asName)
+			}
+		}
+		rel, _ := filepath.Rel(opts.Root, outPath)
+		if rel == "" {
+			rel = outPath
+		}
+		opts.log("INFO", "", "pull complete", asName,
+			[2]string{"file", rel}, [2]string{"size", humanBytes(size)})
+		if opts.StreamOut != nil {
+			opts.StreamOut("→ " + rel)
+		}
+		return nil
+	}
+
+	// --restore: load the dump into the local stack under the derived name.
+	// This is the only half that needs a local Docker stack.
+	if err := requireDBContainer(opts.Cfg); err != nil {
+		return err
+	}
 	if err := restoreBackupFile(ctx, opts, outPath, asName, f.force, neutralize); err != nil {
 		return fmt.Errorf("restore: %w", err)
 	}
@@ -168,14 +200,28 @@ func RunDBPull(ctx context.Context, opts DBOpts) error {
 	return nil
 }
 
+// remoteFilestoreTarCmd builds the SSH command that tars the remote Odoo
+// container's filestore for remoteDB to stdout. Shared by the download-only
+// (pullFilestoreArchive) and restore (pullFilestore) paths.
+func remoteFilestoreTarCmd(rsc remoteShellContext, opts DBOpts, remoteDB string) string {
+	parent := opts.Cfg.FilestorePath // same in-container path convention both sides
+	return remoteComposeCmd(rsc.remotePath, rsc.prof.ComposeCmd,
+		"exec", "-T", rsc.prof.OdooContainer, "tar", "-cf", "-", "-C", parent, remoteDB)
+}
+
+// pullFilestoreArchive streams the remote filestore tar straight to outPath
+// without extracting it — the download-only counterpart of pullFilestore,
+// used when db-pull runs without --restore (no local container to copy into).
+func pullFilestoreArchive(ctx context.Context, opts DBOpts, rsc remoteShellContext, remoteDB, outPath string) error {
+	return runSSHToFile(ctx, rsc.sshHost, remoteFilestoreTarCmd(rsc, opts, remoteDB), outPath, nil)
+}
+
 // pullFilestore tars the remote Odoo container's filestore for remoteDB,
 // streams it into a temp file, extracts it locally, and copies it into the
 // local Odoo container under asName — reusing the restore path's
 // container-copy machinery.
 func pullFilestore(ctx context.Context, opts DBOpts, rsc remoteShellContext, remoteDB, asName string) error {
-	parent := opts.Cfg.FilestorePath // same in-container path convention both sides
-	tarCmd := remoteComposeCmd(rsc.remotePath, rsc.prof.ComposeCmd,
-		"exec", "-T", rsc.prof.OdooContainer, "tar", "-cf", "-", "-C", parent, remoteDB)
+	tarCmd := remoteFilestoreTarCmd(rsc, opts, remoteDB)
 
 	tmpTar, err := os.CreateTemp("", "echo-fs-*.tar")
 	if err != nil {
