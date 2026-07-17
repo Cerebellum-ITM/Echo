@@ -294,6 +294,126 @@ func TestResolveDeployPush(t *testing.T) {
 	}
 }
 
+func TestParseDeployArgsTestFlags(t *testing.T) {
+	t.Run("--test", func(t *testing.T) {
+		p, err := parseDeployArgs([]string{"--test"})
+		if err != nil || !p.test {
+			t.Fatalf("got test=%v err=%v", p.test, err)
+		}
+	})
+	t.Run("--test-modules=csv sets list", func(t *testing.T) {
+		p, err := parseDeployArgs([]string{"--test-modules=sale,stock"})
+		if err != nil || p.testModulesSet == nil ||
+			!reflect.DeepEqual(*p.testModulesSet, []string{"sale", "stock"}) {
+			t.Fatalf("got set=%v err=%v", p.testModulesSet, err)
+		}
+	})
+	t.Run("--test-modules bare = picker", func(t *testing.T) {
+		p, err := parseDeployArgs([]string{"--test-modules"})
+		if err != nil || !p.testPick {
+			t.Fatalf("got pick=%v err=%v", p.testPick, err)
+		}
+	})
+	t.Run("--test-add", func(t *testing.T) {
+		p, err := parseDeployArgs([]string{"--test-add", "sale,stock"})
+		if err != nil || !reflect.DeepEqual(p.testAdd, []string{"sale", "stock"}) {
+			t.Fatalf("got add=%v err=%v", p.testAdd, err)
+		}
+	})
+	t.Run("--test-toggle standalone", func(t *testing.T) {
+		p, err := parseDeployArgs([]string{"--test-toggle"})
+		if err != nil || !p.testToggle {
+			t.Fatalf("got toggle=%v err=%v", p.testToggle, err)
+		}
+	})
+}
+
+func TestParseDeployArgsTestUsageErrors(t *testing.T) {
+	for _, in := range [][]string{
+		{"--test", "--no-test"},                 // mutually exclusive
+		{"--test-modules", "--test-modules=a"},  // picker + explicit set
+		{"--test-toggle", "--commits=a1b2"},     // management + selection
+		{"--test-clear", "--test-add=sale"},     // two management ops
+		{"--test-toggle", "--test"},             // management + per-run test
+	} {
+		if _, err := parseDeployArgs(in); !errors.Is(err, ErrUsage) {
+			t.Errorf("parseDeployArgs(%v) err = %v, want wraps ErrUsage", in, err)
+		}
+	}
+}
+
+func TestResolveDeployTest(t *testing.T) {
+	tru, fls := true, false
+	tests := []struct {
+		name string
+		p    deployArgs
+		prof config.RemoteProfile
+		cfg  *config.Config
+		want bool
+	}{
+		{"no flag no config → off", deployArgs{}, config.RemoteProfile{}, &config.Config{}, false},
+		{"--test wins", deployArgs{test: true}, config.RemoteProfile{DeployTest: &fls}, &config.Config{DeployTest: &fls}, true},
+		{"--no-test wins", deployArgs{noTest: true}, config.RemoteProfile{DeployTest: &tru}, &config.Config{DeployTest: &tru}, false},
+		{"server default on", deployArgs{}, config.RemoteProfile{DeployTest: &tru}, &config.Config{DeployTest: &fls}, true},
+		{"local default when no server", deployArgs{}, config.RemoteProfile{}, &config.Config{DeployTest: &tru}, true},
+		{"nil cfg safe", deployArgs{}, config.RemoteProfile{}, nil, false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := resolveDeployTest(tc.p, tc.prof, tc.cfg); got != tc.want {
+				t.Errorf("resolveDeployTest = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestResolveTestModules(t *testing.T) {
+	deployed := []string{"a", "b"}
+	t.Run("empty → deployed set", func(t *testing.T) {
+		got := resolveTestModules(config.RemoteProfile{}, &config.Config{}, deployed)
+		if !reflect.DeepEqual(got, deployed) {
+			t.Errorf("got %v, want %v", got, deployed)
+		}
+	})
+	t.Run("pinned local wins", func(t *testing.T) {
+		got := resolveTestModules(config.RemoteProfile{}, &config.Config{DeployTestModules: []string{"x"}}, deployed)
+		if !reflect.DeepEqual(got, []string{"x"}) {
+			t.Errorf("got %v, want [x]", got)
+		}
+	})
+	t.Run("server pinned wins over local", func(t *testing.T) {
+		got := resolveTestModules(
+			config.RemoteProfile{DeployTestModules: []string{"srv"}},
+			&config.Config{DeployTestModules: []string{"loc"}}, deployed)
+		if !reflect.DeepEqual(got, []string{"srv"}) {
+			t.Errorf("got %v, want [srv]", got)
+		}
+	})
+}
+
+func TestTestModulesEditing(t *testing.T) {
+	t.Run("merge dedupes and drops blanks", func(t *testing.T) {
+		got := mergeTestModules([]string{"a", "b"}, []string{"b", "", "c"})
+		if !reflect.DeepEqual(got, []string{"a", "b", "c"}) {
+			t.Errorf("got %v, want [a b c]", got)
+		}
+	})
+	t.Run("drop removes named", func(t *testing.T) {
+		got := dropTestModules([]string{"a", "b", "c"}, []string{"b"})
+		if !reflect.DeepEqual(got, []string{"a", "c"}) {
+			t.Errorf("got %v, want [a c]", got)
+		}
+	})
+	t.Run("labels", func(t *testing.T) {
+		if testModulesLabel(nil) != "(auto)" {
+			t.Errorf("empty label = %q, want (auto)", testModulesLabel(nil))
+		}
+		if testModulesLabel([]string{"a", "b"}) != "a,b" {
+			t.Errorf("label = %q, want a,b", testModulesLabel([]string{"a", "b"}))
+		}
+	})
+}
+
 // TestGitAheadCommitsNoUpstream verifies the --auto helper degrades to an
 // empty set (no error) when the branch has no upstream, so --auto still
 // falls back to dirty modules instead of failing.

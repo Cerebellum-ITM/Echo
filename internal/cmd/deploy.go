@@ -97,6 +97,32 @@ type deployArgs struct {
 	// setPush, when non-nil, is a config-only request to persist `[deploy]
 	// push` locally and exit (deploy --set-push[=true|false]).
 	setPush *bool
+	// test / noTest run (or skip) the deployed modules' unit tests this run
+	// (Unit 100), overriding the persisted `[deploy] test` default. Mutually
+	// exclusive.
+	test   bool
+	noTest bool
+	// The following are config-only test management flags (each persists and
+	// exits like --set-push, mutually exclusive with a deploy selection):
+	//   testToggle       — flip [deploy] test on/off, print the result.
+	//   testModulesSet   — replace the pinned [deploy] test_modules list (nil =
+	//                      untouched; non-nil incl. empty = set to that list).
+	//   testPick         — bare --test-modules: pick the list via a picker.
+	//   testAdd / testRm — add/remove modules from the pinned list.
+	//   testClear        — empty the pinned list (back to auto).
+	testToggle     bool
+	testModulesSet *[]string
+	testPick       bool
+	testAdd        []string
+	testRm         []string
+	testClear      bool
+}
+
+// isTestManage reports whether the args carry a config-only test-management
+// operation (toggle / pin-list edit) that runs standalone and exits.
+func (p deployArgs) isTestManage() bool {
+	return p.testToggle || p.testPick || p.testClear ||
+		p.testModulesSet != nil || len(p.testAdd) > 0 || len(p.testRm) > 0
 }
 
 // parseDeployArgs extracts --from/--limit/--dry-run/--force/--i18n/--no-i18n
@@ -183,6 +209,36 @@ func parseDeployArgs(args []string) (deployArgs, error) {
 			out.rollback = true
 		case a == "--no-actions":
 			out.noActions = true
+		case a == "--test":
+			out.test = true
+		case a == "--no-test":
+			out.noTest = true
+		case a == "--test-toggle":
+			out.testToggle = true
+		case a == "--test-clear":
+			out.testClear = true
+		case a == "--test-modules":
+			// Bare → picker; `=csv` → set the whole list.
+			out.testPick = true
+		case strings.HasPrefix(a, "--test-modules="):
+			mods := splitCSV(strings.TrimPrefix(a, "--test-modules="))
+			out.testModulesSet = &mods
+		case a == "--test-add":
+			if i+1 >= len(args) {
+				return out, fmt.Errorf("--test-add requires a comma-separated list")
+			}
+			out.testAdd = splitCSV(args[i+1])
+			i++
+		case strings.HasPrefix(a, "--test-add="):
+			out.testAdd = splitCSV(strings.TrimPrefix(a, "--test-add="))
+		case a == "--test-rm":
+			if i+1 >= len(args) {
+				return out, fmt.Errorf("--test-rm requires a comma-separated list")
+			}
+			out.testRm = splitCSV(args[i+1])
+			i++
+		case strings.HasPrefix(a, "--test-rm="):
+			out.testRm = splitCSV(strings.TrimPrefix(a, "--test-rm="))
 		case a == "--json":
 			out.jsonOut = true
 		case a == "--dry-run":
@@ -210,6 +266,30 @@ func parseDeployArgs(args []string) (deployArgs, error) {
 	if out.rollback && (out.auto || len(out.commits) > 0 || len(out.modules) > 0 || out.push) {
 		return out, fmt.Errorf("%w: --rollback cannot be combined with --commits/--modules/--auto/--push", ErrUsage)
 	}
+	if out.test && out.noTest {
+		return out, fmt.Errorf("%w: --test and --no-test are mutually exclusive", ErrUsage)
+	}
+	if out.testPick && out.testModulesSet != nil {
+		return out, fmt.Errorf("%w: --test-modules picker and --test-modules=<list> are mutually exclusive", ErrUsage)
+	}
+	// The config-only test-management ops run standalone (persist + exit); they
+	// can't ride along with an actual deploy selection or another such op.
+	if out.isTestManage() {
+		if out.test || out.noTest || out.auto || out.rollback || out.push ||
+			len(out.commits) > 0 || len(out.modules) > 0 {
+			return out, fmt.Errorf("%w: test-management flags run on their own (no deploy selection)", ErrUsage)
+		}
+		n := 0
+		for _, on := range []bool{out.testToggle, out.testClear, out.testPick,
+			out.testModulesSet != nil, len(out.testAdd) > 0, len(out.testRm) > 0} {
+			if on {
+				n++
+			}
+		}
+		if n > 1 {
+			return out, fmt.Errorf("%w: run one test-management flag at a time", ErrUsage)
+		}
+	}
 	return out, nil
 }
 
@@ -228,6 +308,136 @@ func resolveDeployPush(p deployArgs, prof config.RemoteProfile, cfg *config.Conf
 		return *cfg.DeployPush
 	}
 	return false
+}
+
+// resolveDeployTest computes whether this deploy runs the modules' tests,
+// mirroring resolveDeployPush: an explicit --test/--no-test wins; otherwise the
+// server [deploy] test, then the local one, then false (Unit 100).
+func resolveDeployTest(p deployArgs, prof config.RemoteProfile, cfg *config.Config) bool {
+	switch {
+	case p.noTest:
+		return false
+	case p.test:
+		return true
+	case prof.DeployTest != nil:
+		return *prof.DeployTest
+	case cfg != nil && cfg.DeployTest != nil:
+		return *cfg.DeployTest
+	}
+	return false
+}
+
+// resolveTestModules picks which modules get tested: the pinned
+// `[deploy] test_modules` list (server-first) when non-empty, otherwise the
+// deploy's own resolved module set (`deployed`).
+func resolveTestModules(prof config.RemoteProfile, cfg *config.Config, deployed []string) []string {
+	if len(prof.DeployTestModules) > 0 {
+		return prof.DeployTestModules
+	}
+	if cfg != nil && len(cfg.DeployTestModules) > 0 {
+		return cfg.DeployTestModules
+	}
+	return deployed
+}
+
+// runDeployTestManage applies a config-only test-management op (toggle the
+// [deploy] test default, or edit the pinned test_modules list), persists it to
+// the local project profile, and logs the resulting state. Exactly one op is
+// set (parse enforces it).
+func runDeployTestManage(opts DeployOpts, p deployArgs) error {
+	cfgCopy := *opts.Cfg
+	switch {
+	case p.testToggle:
+		cur := cfgCopy.DeployTest != nil && *cfgCopy.DeployTest
+		nv := !cur
+		cfgCopy.DeployTest = &nv
+	case p.testClear:
+		cfgCopy.DeployTestModules = nil
+	case p.testModulesSet != nil:
+		cfgCopy.DeployTestModules = mergeTestModules(nil, *p.testModulesSet)
+	case len(p.testAdd) > 0:
+		cfgCopy.DeployTestModules = mergeTestModules(cfgCopy.DeployTestModules, p.testAdd)
+	case len(p.testRm) > 0:
+		cfgCopy.DeployTestModules = dropTestModules(cfgCopy.DeployTestModules, p.testRm)
+	case p.testPick:
+		mods, err := pickTestModules(opts, cfgCopy.DeployTestModules)
+		if err != nil {
+			return err
+		}
+		cfgCopy.DeployTestModules = mods
+	}
+	if err := config.SaveProject(&cfgCopy); err != nil {
+		return fmt.Errorf("save deploy test config: %w", err)
+	}
+	opts.Cfg.DeployTest = cfgCopy.DeployTest
+	opts.Cfg.DeployTestModules = cfgCopy.DeployTestModules
+	opts.log("INFO", "", "deploy test config", opts.Cfg.DBName,
+		[2]string{"test", boolOnOff(cfgCopy.DeployTest)},
+		[2]string{"test_modules", testModulesLabel(cfgCopy.DeployTestModules)})
+	return nil
+}
+
+// pickTestModules opens a multi-select over the project's modules with the
+// current pinned list pre-checked, so one picker both adds and removes. An
+// empty confirmed selection clears the list (back to auto).
+func pickTestModules(opts DeployOpts, current []string) ([]string, error) {
+	available := mergeTestModules(listAvailableModules(opts.Cfg, opts.Root), current)
+	if len(available) == 0 {
+		return nil, fmt.Errorf("%w: no modules found to pin — set them headlessly with --test-modules=<list>", ErrUsage)
+	}
+	picked, canceled, err := runFuzzyPickerWithSelected("Modules to test on deploy", available, current, opts.Palette)
+	if err != nil {
+		return nil, err
+	}
+	if canceled {
+		return nil, ErrCancelled
+	}
+	return picked, nil
+}
+
+// mergeTestModules returns base followed by the new entries, de-duplicated,
+// order-preserving, dropping blanks. Used for both "set" (base nil) and "add".
+func mergeTestModules(base, add []string) []string {
+	seen := map[string]bool{}
+	out := make([]string, 0, len(base)+len(add))
+	for _, m := range append(append([]string{}, base...), add...) {
+		if m = strings.TrimSpace(m); m != "" && !seen[m] {
+			seen[m] = true
+			out = append(out, m)
+		}
+	}
+	return out
+}
+
+// dropTestModules removes the named modules from the list, order-preserving.
+func dropTestModules(cur, rm []string) []string {
+	drop := map[string]bool{}
+	for _, m := range rm {
+		drop[strings.TrimSpace(m)] = true
+	}
+	out := make([]string, 0, len(cur))
+	for _, m := range cur {
+		if !drop[m] {
+			out = append(out, m)
+		}
+	}
+	return out
+}
+
+// boolOnOff renders a *bool test default as on/off (nil = off).
+func boolOnOff(b *bool) string {
+	if b != nil && *b {
+		return "on"
+	}
+	return "off"
+}
+
+// testModulesLabel renders the pinned list for a log line; empty = "(auto)".
+func testModulesLabel(mods []string) string {
+	if len(mods) == 0 {
+		return "(auto)"
+	}
+	return strings.Join(mods, ",")
 }
 
 // stageWantsCheckpoint reports whether a stage is checkpoint-worthy under the
@@ -307,7 +517,10 @@ func resolveCheckpointMode(p deployArgs, pol checkpointPolicy, stage string) (en
 // deployFailureRe matches the streamed Odoo output patterns that mean the
 // module run left the DB in a bad state even when the process exits 0:
 // a CRITICAL log line, a Python traceback header, or a registry-load failure.
-var deployFailureRe = regexp.MustCompile(`\bCRITICAL\b|Traceback \(most recent call last\)|Failed to load registry`)
+// The last two alternatives catch a failed test suite (Unit 100) — Odoo's
+// per-module `N failed, M error(s)` tally and unittest's `FAILED (failures=…)`
+// summary — so `deploy --test` fails even on the rare zero-exit-with-failures.
+var deployFailureRe = regexp.MustCompile(`\bCRITICAL\b|Traceback \(most recent call last\)|Failed to load registry|\b\d+ failed, \d+ error\(s\)|FAILED \((?:failures|errors)=`)
 
 // runFailureScanner wraps the odoo-run StreamOut, counting lines that signal
 // a failed migration/update so a zero-exit run can still be treated as failed.
@@ -404,6 +617,16 @@ func RunDeploy(ctx context.Context, opts DeployOpts) (DeployResult, error) {
 		opts.Cfg.DeployPush = p.setPush
 		opts.log("INFO", "", "deploy push default set", opts.Cfg.DBName,
 			[2]string{"push", strconv.FormatBool(*p.setPush)})
+		return DeployResult{}, nil
+	}
+
+	// deploy test-management flags are config-only: persist the [deploy] test
+	// toggle / test_modules list, report the resulting value, and exit — no
+	// remote resolution, no deploy.
+	if p.isTestManage() {
+		if err := runDeployTestManage(opts, p); err != nil {
+			return DeployResult{}, err
+		}
 		return DeployResult{}, nil
 	}
 
@@ -630,6 +853,15 @@ func RunDeploy(ctx context.Context, opts DeployOpts) (DeployResult, error) {
 	}
 	install, update := splitInstallUpdate(modules, states)
 
+	// Resolve the test run: whether tests run this deploy, and over which
+	// modules (the pinned [deploy] test_modules, or the deployed set).
+	runTests := resolveDeployTest(p, prof, opts.Cfg)
+	var testMods []string
+	if runTests {
+		deployed := append(append([]string{}, update...), install...)
+		testMods = resolveTestModules(prof, opts.Cfg, deployed)
+	}
+
 	// Machine-readable summary — update-set first, then install-set (mirrors
 	// the run fields). OK flips to true only after a successful remote run.
 	result := DeployResult{
@@ -755,6 +987,10 @@ func RunDeploy(ctx context.Context, opts DeployOpts) (DeployResult, error) {
 		opts.log("INFO", "", "dry-run — nothing executed", prof.DBName)
 		return result, nil
 	}
+	if runTests && strings.EqualFold(target.stage, "prod") && !p.force {
+		return DeployResult{}, fmt.Errorf(
+			"%w: running tests on a prod target needs --force (test-on-prod is opt-in)", ErrUsage)
+	}
 	if strings.EqualFold(target.stage, "prod") && !p.force {
 		if err := confirmProd(opts.Palette, "deploy", target.dbName); err != nil {
 			return DeployResult{}, err
@@ -835,8 +1071,14 @@ func RunDeploy(ctx context.Context, opts DeployOpts) (DeployResult, error) {
 	if overwrite {
 		runFields = append(runFields, [2]string{"flags", "--i18n-overwrite"})
 	}
+	if runTests {
+		runFields = append(runFields, [2]string{"test", strings.Join(testMods, ",")})
+	}
 	opts.log("INFO", "odoo", "running module install/update", prof.DBName, runFields...)
 	argv := odoo.WithI18nOverwrite(odoo.InstallUpdate(conn, install, update), overwrite)
+	if runTests {
+		argv = odoo.WithTests(argv, testMods)
+	}
 	scanner := &runFailureScanner{inner: opts.StreamOut}
 	runErr := runSSHStream(ctx, sshHost, remoteContainerCmd(remotePath, target, argv), nil, scanner.scan)
 

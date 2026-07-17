@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 
 	"github.com/BurntSushi/toml"
@@ -370,6 +371,48 @@ func TestDeployPushRoundTrip(t *testing.T) {
 	}
 	if r2, _ := Load("/test/other"); r2.DeployPush != nil {
 		t.Errorf("absent [deploy] push should stay nil, got %v", r2.DeployPush)
+	}
+}
+
+func TestDeployTestConfig(t *testing.T) {
+	// Server [deploy] test + test_modules: project overrides global.
+	prof := ParseRemoteProfile(
+		[]byte("[deploy]\ntest = false\ntest_modules = [\"a\"]\n"),
+		[]byte("db_name = \"erp\"\n[deploy]\ntest = true\ntest_modules = [\"sale\",\"stock\"]\n"))
+	if prof.DeployTest == nil || !*prof.DeployTest {
+		t.Errorf("server DeployTest = %v, want true (project override)", prof.DeployTest)
+	}
+	if !reflect.DeepEqual(prof.DeployTestModules, []string{"sale", "stock"}) {
+		t.Errorf("server DeployTestModules = %v, want [sale stock] (project wholesale)", prof.DeployTestModules)
+	}
+	// Absent → nil/empty so the client falls back.
+	bare := ParseRemoteProfile(nil, []byte("db_name = \"erp\"\n"))
+	if bare.DeployTest != nil || len(bare.DeployTestModules) != 0 {
+		t.Errorf("absent [deploy] test should be nil/empty, got %v / %v", bare.DeployTest, bare.DeployTestModules)
+	}
+}
+
+func TestDeployTestRoundTrip(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
+
+	cfg, _ := Load("/test/project")
+	cfg.Stage = "dev"
+	tru := true
+	cfg.DeployTest = &tru
+	cfg.DeployTestModules = []string{"sale", "stock"}
+	if err := SaveProject(cfg); err != nil {
+		t.Fatal(err)
+	}
+	reloaded, err := Load("/test/project")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reloaded.DeployTest == nil || !*reloaded.DeployTest {
+		t.Errorf("DeployTest after round-trip = %v, want true", reloaded.DeployTest)
+	}
+	if !reflect.DeepEqual(reloaded.DeployTestModules, []string{"sale", "stock"}) {
+		t.Errorf("DeployTestModules after round-trip = %v, want [sale stock]", reloaded.DeployTestModules)
 	}
 }
 

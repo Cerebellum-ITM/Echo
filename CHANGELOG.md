@@ -8,6 +8,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **`deploy --test`: corre los tests de los módulos como parte del deploy.**
+  Antes `deploy` y el comando `test` eran caminos separados: desplegabas y luego
+  corrías `test` a mano. Ahora `deploy --test` inyecta los flags de test
+  (`--test-enable`/`--test-tags /<mod>`/`--no-http --http-port=8189`/
+  `--log-level=test`) al **mismo run** `-i/-u` que deploy ya hacía, sobre el
+  código recién cargado; un test que falla hace **fallar el deploy** por el
+  verify que ya existe (los módulos no se marcan como desplegados y, si hubo
+  checkpoint, rollback). Tres superficies: (1) por run `--test` / `--no-test`;
+  (2) toggle persistente `--test-toggle` que prende/apaga `[deploy] test` y
+  **imprime el valor final** (`test=on|off`) — para la instancia de trabajo
+  linkeada, resuelto server-first como `[deploy] push`; (3) filtro de módulos
+  persistente `[deploy] test_modules`: vacío → testea lo que despliega, con
+  módulos → solo esos hasta que se limpie, gestionado headless
+  (`--test-modules=<csv>`, `--test-add`, `--test-rm`, `--test-clear`) o por
+  picker (`--test-modules` con los actuales pre-marcados). Los flags de gestión
+  son config-only (persisten y salen, como `--set-push`). Correr tests en un
+  target `prod` exige `--force` (es para dev/staging). Nuevo `odoo.WithTests`;
+  `deployFailureRe` extendido para cazar el `N failed, M error(s)` / `FAILED
+  (failures=…)` de un suite fallido aun con exit 0.
 - **`i18n-pull --to-worktree`: escribe el `.po` en otro worktree del repo.**
   La instancia se alimenta de una sola rama de despliegue, así que `i18n-pull`
   se corre desde el worktree de esa rama (donde vive la BD/instancia y de donde

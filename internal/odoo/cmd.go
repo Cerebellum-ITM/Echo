@@ -136,6 +136,33 @@ func WithI18nOverwrite(cmd Cmd, on bool) Cmd {
 	return append(cmd, "--i18n-overwrite")
 }
 
+// WithTests appends the test-framework flags to a `-i/-u` argv (as built by
+// InstallUpdate) so the modules' unit tests run in the same Odoo pass — used
+// by `deploy --test`. A no-op when modules is empty.
+//
+// It filters execution to the given modules with `--test-tags /<mod1>,/<mod2>`
+// (which implies `--test-enable`, emitted explicitly for clarity), and adds the
+// same defensive HTTP isolation `Test` uses — `--no-http` plus
+// `--http-port=<TestHTTPPort>` — because the deploy run shares the container
+// with the live server already bound to 8069. `--log-level=test` gives focused
+// test output across Odoo 17/18/19. Order-independent: safe to append after the
+// base argv's `--stop-after-init`.
+func WithTests(cmd Cmd, modules []string) Cmd {
+	if len(modules) == 0 {
+		return cmd
+	}
+	tags := make([]string, len(modules))
+	for i, m := range modules {
+		tags[i] = "/" + m
+	}
+	return append(cmd,
+		"--test-enable",
+		"--test-tags", strings.Join(tags, ","),
+		"--no-http", "--http-port="+TestHTTPPort,
+		"--log-level=test",
+	)
+}
+
 // Shell builds the argv for `odoo shell` loaded against c, with HTTP
 // disabled. Shared by the interactive `shell` and the `shell-run` script
 // runner (which pipes a .py to its stdin). The `shell` subcommand goes

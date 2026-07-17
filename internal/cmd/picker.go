@@ -440,6 +440,39 @@ func runFuzzyPicker(title string, available []string, palette theme.Palette) ([]
 	return picked, nil
 }
 
+// runFuzzyPickerWithSelected is runFuzzyPicker with an initial selection: the
+// names in `selected` start checked, so the picker doubles as an in-place edit
+// of an existing set (check to add, uncheck to remove). Returns the confirmed
+// selection and whether the user canceled; an empty confirmed selection (Enter
+// with nothing checked) is NOT a cancel — the caller reads it as "cleared".
+func runFuzzyPickerWithSelected(title string, available, selected []string, palette theme.Palette) (picked []string, canceled bool, err error) {
+	if err := requireTTY("pass the selection as command arguments"); err != nil {
+		return nil, false, err
+	}
+	m := newFuzzyPicker(title, available, nil, nil, nil, palette)
+	sel := make(map[string]bool, len(selected))
+	for _, s := range selected {
+		sel[s] = true
+	}
+	for i := range m.items {
+		if sel[m.items[i].name] {
+			m.items[i].selected = true
+		}
+	}
+	final, err := tea.NewProgram(m).Run()
+	if err != nil {
+		return nil, false, err
+	}
+	fm := final.(fuzzyPicker)
+	if fm.quit {
+		return nil, false, ErrQuit
+	}
+	if fm.canceled {
+		return nil, true, nil
+	}
+	return fm.selectedNames(), false, nil
+}
+
 // runSingleFuzzyPicker is the single-select variant: Enter commits the
 // highlighted row. Returns ErrCancelled on Esc / empty list.
 func runSingleFuzzyPicker(title string, available []string, palette theme.Palette) (string, error) {

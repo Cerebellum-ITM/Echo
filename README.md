@@ -370,6 +370,11 @@ the code there — that's for the tool you use to sync the working tree.
 | `  --no-actions`   | Skip declared `[[deploy.actions]]` for this run          |
 | `  --push` / `--no-push` | Push the resolved modules before the run / skip it even when it's the default |
 | `  --set-push[=bool]` | Set `deploy` to push by default and exit (no deploy)  |
+| `  --test` / `--no-test` | Run the deployed modules' tests this run / skip them even when it's the default |
+| `  --test-toggle`  | Flip the persisted "always test on deploy" and print the result (no deploy) |
+| `  --test-modules[=<list>]` | Pin which modules get tested: bare opens a picker, `=csv` sets, empty clears (no deploy) |
+| `  --test-add` / `--test-rm <list>` | Add/remove modules from the pinned test list (no deploy) |
+| `  --test-clear`   | Clear the pinned test modules — back to testing what's deployed (no deploy) |
 | `  --rollback`     | Restore the target's most recent checkpoint (no deploy)  |
 
 **Push by default.** For an image-built remote where a deploy always ships
@@ -379,6 +384,36 @@ deploy), or declare it in the server profile (server wins, local falls back).
 Then `deploy` pushes on its own; `deploy --no-push` skips it for one run.
 `watch` always pushes from its own git archive, so the default never
 double-pushes there.
+
+#### Deploy + test in one command
+
+`deploy --test` runs the deployed modules' unit tests **in the same Odoo pass**
+as the `-i/-u`, and a failing suite **fails the deploy** through the usual
+verify path — the modules aren't marked deployed, and (when a checkpoint was
+taken) the DB rolls back. It's the "ship it and prove it still passes" gesture
+for a linked work instance. `deploy --no-test` skips them for a run.
+
+To make it the default for that instance, flip the persisted toggle:
+`deploy --test-toggle` writes `[deploy] test` and **prints the resulting state**
+(`test=on` / `test=off`) so you always know where you stand. Once on, every
+`deploy` runs the tests without `--test`; server-declared `[deploy] test` wins
+over the local one, same as `push`.
+
+By default the tests are those of the modules being deployed. To lock testing to
+a **fixed set** regardless of what a run deploys, pin them: `deploy
+--test-modules` opens a picker with the current pins pre-checked (check to add,
+uncheck to remove), or set them headlessly with `--test-modules=sale,stock`,
+`--test-add`, `--test-rm`, and `--test-clear` (back to automatic). Each prints
+the resulting list. Running tests on a `prod` target requires `--force` — the
+feature is meant for the dev/staging work instance. (Module unit tests don't
+need demo data; this is unrelated to `install --with-demo`.)
+
+```sh
+echo deploy --test                       # this run: deploy, then run the modules' tests
+echo deploy --test-toggle                # persist "always test on deploy" → prints test=on
+echo deploy --test-modules=sale,stock    # pin: only these two are ever tested on deploy
+echo deploy --test-clear                 # back to testing whatever the deploy deploys
+```
 
 #### DB checkpoint & rollback
 

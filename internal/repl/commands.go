@@ -50,7 +50,7 @@ var commandFlags = map[string][]string{
 	"shell-run":     {"--no-copy", "--force", "--from", "--remote"},
 	"connect":       {"--all", "--force", "--fresh", "--new-window"},
 	"push":          {"--from", "--remote", "--dirty", "--dry-run", "--delete", "--force", "--dest", "--pick-dest", "--set-dest", "--mkdir"},
-	"deploy":        {"--from", "--limit", "--dry-run", "--force", "--i18n", "--no-i18n", "--commits", "--modules", "--auto", "--push", "--no-push", "--set-push", "--json", "--checkpoint", "--no-checkpoint", "--rollback", "--no-actions"},
+	"deploy":        {"--from", "--limit", "--dry-run", "--force", "--i18n", "--no-i18n", "--commits", "--modules", "--auto", "--push", "--no-push", "--set-push", "--test", "--no-test", "--test-toggle", "--test-modules", "--test-add", "--test-rm", "--test-clear", "--json", "--checkpoint", "--no-checkpoint", "--rollback", "--no-actions"},
 	"watch":         {"--from", "--remote", "--interval", "--force", "--no-logs", "--no-checkpoint", "--no-actions"},
 	"promote":       {"--dirty", "--commits", "--to", "--set-branch", "--create-dest", "--dry-run", "--force"},
 	"checkpoint":    {"--from", "--remote", "--method", "--all", "--force", "--json"},

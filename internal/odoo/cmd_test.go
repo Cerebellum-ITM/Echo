@@ -33,6 +33,22 @@ func TestWithI18nOverwrite(t *testing.T) {
 	}
 }
 
+func TestWithTests(t *testing.T) {
+	base := Cmd{"odoo", "-u", "sale", "--stop-after-init"}
+
+	if got := WithTests(base, nil); !reflect.DeepEqual(got, base) {
+		t.Errorf("empty modules should be a no-op, got %v", got)
+	}
+
+	got := WithTests(base, []string{"sale", "stock"})
+	want := Cmd{"odoo", "-u", "sale", "--stop-after-init",
+		"--test-enable", "--test-tags", "/sale,/stock",
+		"--no-http", "--http-port=" + TestHTTPPort, "--log-level=test"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("WithTests = %v, want %v", got, want)
+	}
+}
+
 func TestMajor(t *testing.T) {
 	cases := map[string]int{
 		"19": 19, "19.0": 19, "18.0": 18, "17": 17,

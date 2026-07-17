@@ -131,6 +131,18 @@ type Config struct {
 	// Pointer to distinguish unset (fall through) from an explicit false.
 	DeployPush *bool
 
+	// DeployTest ([deploy] test, global + per-project, project wins) — when
+	// set, makes `deploy` run the modules' tests by default without `--test`
+	// (Unit 100). Pointer to distinguish unset (fall through) from explicit
+	// false.
+	DeployTest *bool
+
+	// DeployTestModules ([deploy] test_modules, global + per-project) — the
+	// pinned module list `deploy --test` runs (Unit 100). Wholesale like
+	// DeployActions: a non-empty project list replaces the global one. Empty
+	// means "test whatever the deploy deploys".
+	DeployTestModules []string
+
 	// PromoteBranch ([promote] branch, global + per-project, project wins) —
 	// the single accumulation branch `promote` funnels worktree changes into
 	// (Unit 97). Empty falls back to "develop". Read repo-wide from global so
@@ -229,8 +241,40 @@ type pushConfig struct {
 // ships code by default. A nil pointer (section absent) means neither is
 // declared on that side of the merge.
 type deployFile struct {
-	Push    *bool              `toml:"push,omitempty"`
-	Actions []deployActionFile `toml:"actions"`
+	Push        *bool              `toml:"push,omitempty"`
+	Test        *bool              `toml:"test,omitempty"`
+	TestModules []string           `toml:"test_modules,omitempty"`
+	Actions     []deployActionFile `toml:"actions"`
+}
+
+// deployTestModulesFrom returns the pinned test-module list of a [deploy]
+// table, nil-safe.
+func deployTestModulesFrom(f *deployFile) []string {
+	if f == nil {
+		return nil
+	}
+	return f.TestModules
+}
+
+// mergeDeployTest resolves the [deploy] test default: project over global,
+// nil when neither declares it.
+func mergeDeployTest(global, project *deployFile) *bool {
+	if project != nil && project.Test != nil {
+		return project.Test
+	}
+	if global != nil && global.Test != nil {
+		return global.Test
+	}
+	return nil
+}
+
+// mergeDeployTestModules applies the wholesale rule (like mergeDeployActions):
+// a non-empty project list replaces the global one; otherwise global stands.
+func mergeDeployTestModules(global, project []string) []string {
+	if len(project) > 0 {
+		return project
+	}
+	return global
 }
 
 type deployActionFile struct {
@@ -466,6 +510,10 @@ func Load(projectPath string) (*Config, error) {
 	if p.Deploy != nil && p.Deploy.Push != nil {
 		cfg.DeployPush = p.Deploy.Push
 	}
+	// [deploy] test default: project overrides global (nil stays nil).
+	cfg.DeployTest = mergeDeployTest(g.Deploy, p.Deploy)
+	// [deploy] test_modules: wholesale — a project list replaces the global one.
+	cfg.DeployTestModules = mergeDeployTestModules(deployTestModulesFrom(g.Deploy), deployTestModulesFrom(p.Deploy))
 	// [promote] branch: project overrides global (a blank branch leaves the
 	// global value untouched).
 	if p.Promote != nil && p.Promote.Branch != "" {
@@ -537,6 +585,12 @@ type RemoteProfile struct {
 	// the client's local [deploy] push for the effective default (Unit 95);
 	// nil when the server doesn't declare it.
 	DeployPush *bool
+
+	// DeployTest / DeployTestModules declared on the SERVER ([deploy] test /
+	// test_modules). When set, win over the client's local values (Unit 100);
+	// nil/empty when the server doesn't declare them.
+	DeployTest        *bool
+	DeployTestModules []string
 }
 
 // ParseRemoteProfile decodes a remote host's `global.toml` and
@@ -590,22 +644,24 @@ func ParseRemoteProfile(globalTOML, projectTOML []byte) RemoteProfile {
 		}
 	}
 	return RemoteProfile{
-		ComposeCmd:       compose,
-		OdooContainer:    p.OdooContainer,
-		DBContainer:      p.DBContainer,
-		DBName:           p.DBName,
-		Stage:            p.Stage,
-		OdooVersion:      p.OdooVersion,
-		AddonsMode:       p.AddonsMode,
-		AddonsPaths:      p.AddonsPaths,
-		ConfPath:         p.ConfPath,
-		CheckpointMode:   cp.Mode,
-		CheckpointMethod: cp.Method,
-		CheckpointKeep:   cp.Keep,
-		PushPath:         push.Path,
-		PushMkdir:        push.Mkdir,
-		DeployActions:    mergeDeployActions(deployActionsFrom(g.Deploy), deployActionsFrom(p.Deploy)),
-		DeployPush:       mergeDeployPush(g.Deploy, p.Deploy),
+		ComposeCmd:        compose,
+		OdooContainer:     p.OdooContainer,
+		DBContainer:       p.DBContainer,
+		DBName:            p.DBName,
+		Stage:             p.Stage,
+		OdooVersion:       p.OdooVersion,
+		AddonsMode:        p.AddonsMode,
+		AddonsPaths:       p.AddonsPaths,
+		ConfPath:          p.ConfPath,
+		CheckpointMode:    cp.Mode,
+		CheckpointMethod:  cp.Method,
+		CheckpointKeep:    cp.Keep,
+		PushPath:          push.Path,
+		PushMkdir:         push.Mkdir,
+		DeployActions:     mergeDeployActions(deployActionsFrom(g.Deploy), deployActionsFrom(p.Deploy)),
+		DeployPush:        mergeDeployPush(g.Deploy, p.Deploy),
+		DeployTest:        mergeDeployTest(g.Deploy, p.Deploy),
+		DeployTestModules: mergeDeployTestModules(deployTestModulesFrom(g.Deploy), deployTestModulesFrom(p.Deploy)),
 	}
 }
 
@@ -762,10 +818,17 @@ func SaveProject(cfg *Config) error {
 	if cfg.PushPath != "" || cfg.PushMkdir != nil {
 		p.Push = &pushConfig{Path: cfg.PushPath, Mkdir: cfg.PushMkdir}
 	}
-	// Persist the [deploy] section when either the actions list or the push
-	// default is set; a pure-default config leaves it out.
-	if len(cfg.DeployActions) > 0 || cfg.DeployPush != nil {
-		p.Deploy = &deployFile{Push: cfg.DeployPush, Actions: deployActionsToFile(cfg.DeployActions)}
+	// Persist the [deploy] section when any of the actions list, the push
+	// default, the test default, or the pinned test modules is set; a
+	// pure-default config leaves it out.
+	if len(cfg.DeployActions) > 0 || cfg.DeployPush != nil ||
+		cfg.DeployTest != nil || len(cfg.DeployTestModules) > 0 {
+		p.Deploy = &deployFile{
+			Push:        cfg.DeployPush,
+			Test:        cfg.DeployTest,
+			TestModules: cfg.DeployTestModules,
+			Actions:     deployActionsToFile(cfg.DeployActions),
+		}
 	}
 	var buf bytes.Buffer
 	if err := toml.NewEncoder(&buf).Encode(p); err != nil {
