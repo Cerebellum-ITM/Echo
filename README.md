@@ -310,6 +310,7 @@ echo 'env["res.users"].search_count([])' | echo -C my-shop shell
 | `  --from <target>`           | Use a named connect target (default: the project's `[connect]`) |
 | `  --all`                     | Pull every candidate module                              |
 | `  --installed`               | List candidates from the DB (all installed), not just the project's addons |
+| `  --to-worktree[=<branch>]`  | Write the `.po` into another git worktree (bare form opens a picker) |
 
 `i18n-pull` reaches the remote over SSH like `connect` — it runs `--i18n-export`
 inside the remote container and writes the `.po` into your working tree
@@ -317,6 +318,14 @@ inside the remote container and writes the `.po` into your working tree
 prod/staging UI back to the repo. The remote DB is never modified. Like
 `connect`, it doesn't require a local compose project: run it from a pure addons
 repo with `--from <target>`.
+
+`--to-worktree` redirects **where** the `.po` lands. The instance is fed from a
+single deploy branch, so you run `i18n-pull` from the deploy-branch worktree
+(where the live DB is) — but the module source you commit lives in a feature
+worktree. `--to-worktree` (bare) opens a picker over the repo's other worktrees;
+`--to-worktree=<branch>` targets one directly (headless). The chosen worktree's
+path becomes the local root, so the file lands at
+`<that-worktree>/<addons>/<mod>/i18n/<lang>.po` instead of the current one.
 
 ### Connect
 

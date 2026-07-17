@@ -11,6 +11,40 @@ import (
 	"github.com/pascualchavez/echo/internal/odoo"
 )
 
+func TestParseI18nPullToWorktree(t *testing.T) {
+	cases := []struct {
+		name     string
+		args     []string
+		wantPick bool
+		wantTo   string
+		wantMods []string
+		wantErr  bool
+	}{
+		{"bare picker", []string{"sale", "--to-worktree"}, true, "", []string{"sale"}, false},
+		{"explicit branch", []string{"sale", "--to-worktree=feat/x"}, false, "feat/x", []string{"sale"}, false},
+		{"bare form keeps next token as module", []string{"--to-worktree", "sale"}, true, "", []string{"sale"}, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := parseI18nPullArgs(tc.args)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("expected error, got %+v", got)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if got.pickWorktree != tc.wantPick || got.toWorktree != tc.wantTo ||
+				!reflect.DeepEqual(got.modules, tc.wantMods) {
+				t.Errorf("got pick=%v to=%q mods=%q, want pick=%v to=%q mods=%q",
+					got.pickWorktree, got.toWorktree, got.modules, tc.wantPick, tc.wantTo, tc.wantMods)
+			}
+		})
+	}
+}
+
 func TestParseI18nPullArgs(t *testing.T) {
 	cases := []struct {
 		name     string

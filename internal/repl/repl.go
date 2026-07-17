@@ -391,6 +391,7 @@ func helpSections() []helpSection {
 			{"  --lang <code>", "Language to pull (default es_MX); makes every positional a module"},
 			{"  --all", "Pull every candidate module"},
 			{"  --installed", "List candidates from the DB (all installed), not just the project's addons"},
+			{"  --to-worktree[=<branch>]", "Write the .po into another worktree (bare form opens a picker)"},
 		}},
 		{"Database", []helpEntry{
 			{"db-admin [name]", "Reset admin (uid 2) login+password to admin/admin"},

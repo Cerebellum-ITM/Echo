@@ -49,6 +49,12 @@ type i18nPullArgs struct {
 	from      string // connect target name; "" → project's own [connect]
 	all       bool
 	installed bool // list candidates from the DB (all installed) vs conf addons
+	// toWorktree redirects where the pulled .po lands: instead of the current
+	// worktree, write into the worktree that has this branch checked out.
+	// pickWorktree (the bare --to-worktree) opens a picker over the repo's
+	// other worktrees instead of naming one.
+	toWorktree   string
+	pickWorktree bool
 }
 
 // localeRe matches an Odoo language code (es, es_MX, pt_BR, sr@latin). Used
@@ -91,6 +97,12 @@ func parseI18nPullArgs(args []string) (i18nPullArgs, error) {
 			out.all = true
 		case a == "--installed":
 			out.installed = true
+		case a == "--to-worktree":
+			// Bare form → picker. An explicit branch must use --to-worktree=<b>
+			// so the following token stays unambiguously a module positional.
+			out.pickWorktree = true
+		case strings.HasPrefix(a, "--to-worktree="):
+			out.toWorktree = strings.TrimPrefix(a, "--to-worktree=")
 		case strings.HasPrefix(a, "-"):
 			return out, fmt.Errorf("unknown flag: %s", a)
 		default:
@@ -184,6 +196,17 @@ func RunI18nPull(ctx context.Context, opts I18nPullOpts) error {
 	p, err := parseI18nPullArgs(opts.Args)
 	if err != nil {
 		return err
+	}
+
+	// Resolve where the .po files land: the current worktree by default, or a
+	// sibling worktree when --to-worktree redirects there. Done up front so a
+	// bad target / headless-without-value fails before any SSH work.
+	destRoot, err := resolvePullWorktree(ctx, opts, p)
+	if err != nil {
+		return err
+	}
+	if destRoot != opts.Root {
+		opts.log("INFO", "", "writing into worktree", "", [2]string{"path", destRoot})
 	}
 
 	sshHost, remotePath, err := resolvePullRemote(opts.Cfg, p.from)
@@ -318,7 +341,7 @@ func RunI18nPull(ctx context.Context, opts I18nPullOpts) error {
 			skipped++
 			continue
 		}
-		dest := pullDest(opts.Cfg, opts.Root, mod, p.lang)
+		dest := pullDest(opts.Cfg, destRoot, mod, p.lang)
 		if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
 			return fmt.Errorf("create i18n dir: %w", err)
 		}
@@ -335,6 +358,67 @@ func RunI18nPull(ctx context.Context, opts I18nPullOpts) error {
 			[2]string{"pulled", strconv.Itoa(pulled)}, [2]string{"skipped", strconv.Itoa(skipped)})
 	}
 	return nil
+}
+
+// resolvePullWorktree decides the local root the pulled .po files land in.
+// Without --to-worktree it is the current worktree (opts.Root, unchanged
+// behavior). With --to-worktree=<branch> it is the checkout that has <branch>
+// (matched by branch, then by path); the bare --to-worktree opens a picker
+// over the repo's other worktrees. Fails closed headless without a value.
+func resolvePullWorktree(ctx context.Context, opts I18nPullOpts, p i18nPullArgs) (string, error) {
+	if !p.pickWorktree && p.toWorktree == "" {
+		return opts.Root, nil
+	}
+	top, err := gitToplevel(ctx, opts.Root)
+	if err != nil {
+		return "", err
+	}
+	wts, err := gitWorktrees(ctx, top)
+	if err != nil {
+		return "", fmt.Errorf("list worktrees: %w", err)
+	}
+	if p.toWorktree != "" {
+		if w, ok := worktreeForBranch(wts, p.toWorktree); ok {
+			return w.path, nil
+		}
+		for _, w := range wts {
+			if sameWorktree(w.path, p.toWorktree) {
+				return w.path, nil
+			}
+		}
+		return "", fmt.Errorf(
+			"%w: no worktree has %q checked out — `git worktree list` shows the available ones",
+			ErrUsage, p.toWorktree)
+	}
+	if !stdinIsTTY() {
+		return "", fmt.Errorf(
+			"%w: --to-worktree needs a branch value (--to-worktree=<branch>) without a terminal", ErrUsage)
+	}
+	return pickPullWorktree(opts, top, wts)
+}
+
+// pickPullWorktree lets the user choose one of the repo's other worktrees as
+// the destination for the pulled .po files. The current worktree and detached
+// checkouts are excluded.
+func pickPullWorktree(opts I18nPullOpts, curRoot string, wts []gitWorktree) (string, error) {
+	byLabel := map[string]gitWorktree{}
+	var labels []string
+	for _, w := range wts {
+		if w.branch == "" || sameWorktree(w.path, curRoot) {
+			continue // detached, or the current worktree itself
+		}
+		lbl := fmt.Sprintf("%s  (%s)", w.path, w.branch)
+		labels = append(labels, lbl)
+		byLabel[lbl] = w
+	}
+	if len(labels) == 0 {
+		return "", fmt.Errorf("%w: no other worktree to write into", ErrUsage)
+	}
+	picked, err := PickOne("Worktree to write .po into", labels, opts.Palette)
+	if err != nil {
+		return "", err
+	}
+	return byLabel[picked].path, nil
 }
 
 // pullDest is where a pulled .po is written locally. When the module is on

@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **`i18n-pull --to-worktree`: escribe el `.po` en otro worktree del repo.**
+  La instancia se alimenta de una sola rama de despliegue, así que `i18n-pull`
+  se corre desde el worktree de esa rama (donde vive la BD/instancia y de donde
+  se exportan las traducciones), pero el código del módulo que editas y
+  commiteas vive en un worktree feature aparte. Antes el `.po` aterrizaba en el
+  worktree actual (el de despliegue) y había que mover el archivo a mano entre
+  worktrees. Ahora `--to-worktree` (forma pelada) abre un **picker** sobre los
+  demás worktrees del repo (excluye el actual y los detached), y
+  `--to-worktree=<rama>` apunta directo a uno (headless). El worktree elegido se
+  vuelve el root local, así que el archivo cae en
+  `<ese-worktree>/<addons>/<mod>/i18n/<lang>.po` en vez del actual. El destino se
+  resuelve antes de cualquier trabajo SSH (falla rápido ante rama inválida o
+  bare sin TTY). El resto de `i18n-pull` no cambia; el modo build interactivo no
+  ofrece el flag (como `--all`/`--installed`, es de invocación directa).
+
 ### Fixed
 - **`promote --dirty`: mueve archivos por copia, no por `git apply` — deja de
   fallar contra un destino dirty o con módulos nuevos.** El patch dirty se
