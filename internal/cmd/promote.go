@@ -16,6 +16,12 @@ import (
 // exactly as it was (nothing half-applied).
 var ErrPromoteConflict = errors.New("promote conflict")
 
+// ErrNotConfigured is returned by `promote --show-branch` when no [promote]
+// branch is configured. It is a valid answer to a query, not an execution
+// failure — the dispatcher maps it to exit code 1 (scriptable) without an
+// ERROR line; the WARNING was already emitted.
+var ErrNotConfigured = errors.New("not configured")
+
 // PromoteOpts configures a `promote` run. Root is the invocation directory
 // (cwd); the git worktree is resolved from it — promote never needs a compose
 // project. Mirrors PushOpts for the logger/stream/tree plumbing.
@@ -43,6 +49,7 @@ type promoteArgs struct {
 	commits    []string // --commits shas (requires branch)
 	to         string   // --to destination branch override
 	setBranch  string   // --set-branch (config-only)
+	showBranch bool     // --show-branch (config-only query)
 	createDest string   // --create-dest worktree path
 	dryRun     bool
 	force      bool
@@ -66,6 +73,8 @@ func parsePromoteArgs(args []string) (promoteArgs, error) {
 		switch {
 		case a == "--dirty":
 			out.dirty = true
+		case a == "--show-branch":
+			out.showBranch = true
 		case a == "--dry-run":
 			out.dryRun = true
 		case a == "--force":
@@ -103,6 +112,13 @@ func parsePromoteArgs(args []string) (promoteArgs, error) {
 		}
 	}
 
+	if out.showBranch {
+		if out.dirty || out.to != "" || out.createDest != "" || out.setBranch != "" ||
+			out.dryRun || out.force || len(out.commits) > 0 || len(positionals) > 0 {
+			return promoteArgs{}, fmt.Errorf("%w: --show-branch takes no other arguments", ErrUsage)
+		}
+		return out, nil
+	}
 	if out.setBranch != "" {
 		if out.dirty || out.to != "" || out.createDest != "" ||
 			len(out.commits) > 0 || len(positionals) > 0 {
@@ -147,6 +163,12 @@ func RunPromote(ctx context.Context, opts PromoteOpts) error {
 	p, err := parsePromoteArgs(opts.Args)
 	if err != nil {
 		return err
+	}
+
+	// --show-branch is a config-only query: report the configured branch and
+	// its provenance, then exit. Read-only — no git mutation, no cmd-log.
+	if p.showBranch {
+		return runShowBranch(ctx, opts)
 	}
 
 	// --set-branch is config-only: persist [promote] branch and exit.
@@ -204,6 +226,46 @@ func RunPromote(ctx context.Context, opts PromoteOpts) error {
 	}
 	if !sum.dryRun && sum.count > 0 {
 		recordPromoteLog(opts, srcRoot, destBranch, sum, started)
+	}
+	return nil
+}
+
+// runShowBranch reports the configured [promote] branch, its provenance
+// (project/global) and whether a worktree has it checked out — the read
+// counterpart of --set-branch (Unit 103). Read-only: no git mutation, no
+// cmd-log. Returns ErrNotConfigured (→ exit 1) when nothing is configured,
+// after emitting a WARNING with the fix hint.
+func runShowBranch(ctx context.Context, opts PromoteOpts) error {
+	var branch, source string
+	if opts.Cfg != nil {
+		branch = opts.Cfg.PromoteBranch
+		source = opts.Cfg.PromoteBranchSource
+	}
+	if branch == "" {
+		opts.log("WARNING", "", "no promote branch configured", "",
+			[2]string{"hint", "promote --set-branch <name> | promote --to <branch>"})
+		return ErrNotConfigured
+	}
+	if source == "" {
+		source = "global" // configured but provenance unknown — assume global
+	}
+
+	// Best-effort worktree lookup: outside a repo (or any git error) this
+	// degrades to worktree=none without failing the query.
+	worktree := "none"
+	if srcRoot, err := gitToplevel(ctx, opts.Root); err == nil {
+		if wts, werr := gitWorktrees(ctx, srcRoot); werr == nil {
+			if w, ok := worktreeForBranch(wts, branch); ok {
+				worktree = w.path
+			}
+		}
+	}
+
+	opts.log("INFO", "", "promote branch", "",
+		[2]string{"branch", branch}, [2]string{"source", source}, [2]string{"worktree", worktree})
+	if worktree == "none" {
+		opts.log("INFO", "", "branch has no worktree — create one to promote into", "",
+			[2]string{"hint", fmt.Sprintf("git worktree add <path> %s | promote --create-dest <path>", branch)})
 	}
 	return nil
 }

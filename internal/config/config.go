@@ -145,9 +145,15 @@ type Config struct {
 
 	// PromoteBranch ([promote] branch, global + per-project, project wins) —
 	// the single accumulation branch `promote` funnels worktree changes into
-	// (Unit 97). Empty falls back to "develop". Read repo-wide from global so
-	// every worktree of the repo resolves the same destination.
+	// (Unit 97). Empty means "not configured" — there is no hardcoded default;
+	// promote prompts (TTY) or fails closed (headless). Read repo-wide from
+	// global so every worktree of the repo resolves the same destination.
 	PromoteBranch string
+
+	// PromoteBranchSource records where PromoteBranch came from — "global",
+	// "project", or "" when unset (Unit 103). Kept so `promote --show-branch`
+	// can report provenance without re-reading the TOML files.
+	PromoteBranchSource string
 }
 
 // DeployAction is one declared step in the deploy lifecycle. Phase is
@@ -221,7 +227,7 @@ type globalFile struct {
 
 // promoteConfig is the [promote] table, valid in global.toml and a project
 // profile. Branch names the single accumulation branch `promote` funnels
-// into; a nil pointer (section absent) leaves it on the "develop" default.
+// into; a nil pointer (section absent) leaves the branch unconfigured.
 type promoteConfig struct {
 	Branch string `toml:"branch"`
 }
@@ -442,8 +448,9 @@ func Load(projectPath string) (*Config, error) {
 	applyCmdLogs(cfg, g.CmdLogs)
 	applyCheckpoint(cfg, g.Checkpoint)
 	applyPush(cfg, g.Push)
-	if g.Promote != nil {
+	if g.Promote != nil && g.Promote.Branch != "" {
 		cfg.PromoteBranch = g.Promote.Branch
+		cfg.PromoteBranchSource = "global"
 	}
 	cfg.ConnectTargets = sortedConnectTargets(g.ConnectTargets)
 	cfg.ProjectAliases = g.ProjectAliases
@@ -518,6 +525,7 @@ func Load(projectPath string) (*Config, error) {
 	// global value untouched).
 	if p.Promote != nil && p.Promote.Branch != "" {
 		cfg.PromoteBranch = p.Promote.Branch
+		cfg.PromoteBranchSource = "project"
 	}
 	if p.Connect != nil {
 		cfg.ConnectSSHHost = p.Connect.SSHHost

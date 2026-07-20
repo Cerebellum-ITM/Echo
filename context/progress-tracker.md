@@ -29,6 +29,22 @@ _(siguiente: Unit 14 — meta-commands. Fix deploy-build-muting: el builder de `
 
 ## Completed
 
+- [x] Unit 103 — promote-show-branch. `promote --show-branch`: consulta
+  read-only de la rama `[promote] branch` configurada, su procedencia
+  (`source=project|global`) y su worktree (`worktree=<path>|none` + hint).
+  Cierra el hueco de que el skill `odoo-probe` no tenía forma headless de saber
+  "¿a dónde promovería promote?". Flag standalone (rechaza cualquier otro
+  argumento); exit `0` configurado, `1` (WARNING, no ERROR) sin configurar —
+  scriptable en `if`, distinto del exit 2 de uso. Nuevo
+  `config.PromoteBranchSource` (fija procedencia al cargar, sin releer TOML) +
+  sentinel `cmd.ErrNotConfigured` mapeado a exit 1 en el dispatch del REPL.
+  Archivos: `internal/cmd/promote.go` (`runShowBranch`, parse+guard),
+  `internal/config/config.go`, `internal/repl/promote.go`+`commands.go`+`repl.go`
+  (help). Tests `promote_test.go` (`TestPromoteShowBranch` 4 casos + parse);
+  build/vet/test verdes; verificado EN VIVO headless (configurado→0,
+  sin-config→1 con WARNING, `--show-branch --dirty`→2). Habilita el rediseño del
+  skill odoo-probe (spec en `odoo-probe/SPEC-promote-redesign.md`).
+
 - [x] Unit 98 — db-pull-projectless-download. `db-pull` deja de asumir forma de
   dev-en-laptop (dump remoto → **restore obligado en stack local**) y se alinea
   con el flujo link-only, donde el dir del proyecto (ej. `all_odoo`) es solo la

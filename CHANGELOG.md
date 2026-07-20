@@ -8,6 +8,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **`promote --show-branch`: consulta la rama de despliegue configurada sin
+  mutar nada.** Contraparte de lectura de `--set-branch`: reporta qué rama
+  `[promote] branch` está configurada, su procedencia (`source=project|global`)
+  y si algún worktree la tiene checked out (`worktree=<path>` o `none`, con hint
+  para crearlo). Cierra el hueco de que la única forma de saber la rama era
+  grepear los TOML o provocar un `--dry-run`. Read-only total: sin git, sin SSH,
+  sin cmd-log; headless siempre (nunca abre picker). Sale `0` cuando hay rama
+  configurada y `1` (con línea `WARNING`, no `ERROR`) cuando no la hay —
+  scriptable en un `if`, distinto del exit 2 de error de uso. Flag standalone:
+  rechaza cualquier otro argumento. Nuevo `config.PromoteBranchSource` (fija la
+  procedencia al cargar, sin releer los TOML) y sentinel `cmd.ErrNotConfigured`.
 - **`deploy --rollback-on-fail` / `--no-rollback-on-fail`: decisión de rollback
   determinista y sin prompt.** El rollback tras un deploy fallido preguntaba
   (`confirmRollback`) solo cuando había TTY y no se pasó `--force`; headless

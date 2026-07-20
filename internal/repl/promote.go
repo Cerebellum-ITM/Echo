@@ -24,6 +24,12 @@ func (sess *session) runPromote(ctx context.Context, args []string) {
 	})
 
 	switch {
+	case errors.Is(err, cmd.ErrNotConfigured):
+		// --show-branch with nothing configured: the WARNING was already
+		// emitted. A valid query answer, not a failure — exit 1 (scriptable),
+		// no ERROR line.
+		sess.finalize("promote", 0, 0, nil)
+		sess.exitCode = exitError
 	case errors.Is(err, cmd.ErrCancelled), errors.Is(err, huh.ErrUserAborted),
 		errors.Is(err, cmd.ErrNonInteractive), errors.Is(err, cmd.ErrUsage),
 		errors.Is(err, cmd.ErrQuit):

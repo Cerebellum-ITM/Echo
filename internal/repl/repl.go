@@ -518,6 +518,7 @@ func helpSections() []helpSection {
 			{"  --commits <shas>", "Cherry-pick these commits from the source branch"},
 			{"  --to <branch>", "Destination branch (else saved [promote] branch; prompts to pick if unset)"},
 			{"  --set-branch <name>", "Persist the default promote branch and exit"},
+			{"  --show-branch", "Report the configured promote branch + provenance/worktree and exit"},
 			{"  --create-dest <path>", "Create the destination branch's worktree if none exists"},
 			{"  --dry-run", "Preview the change tree / commit list; move nothing"},
 		}},

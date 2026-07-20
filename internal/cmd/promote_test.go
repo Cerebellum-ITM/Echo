@@ -45,6 +45,31 @@ func TestParsePromoteArgs(t *testing.T) {
 			want: promoteArgs{branch: "feature-x", dryRun: true},
 		},
 		{
+			name: "show-branch standalone",
+			args: []string{"--show-branch"},
+			want: promoteArgs{showBranch: true},
+		},
+		{
+			name:    "show-branch + dirty rejected",
+			args:    []string{"--show-branch", "--dirty"},
+			wantErr: true,
+		},
+		{
+			name:    "show-branch + positional rejected",
+			args:    []string{"--show-branch", "feature-x"},
+			wantErr: true,
+		},
+		{
+			name:    "show-branch + to rejected",
+			args:    []string{"--show-branch", "--to", "develop"},
+			wantErr: true,
+		},
+		{
+			name:    "show-branch + set-branch rejected",
+			args:    []string{"--show-branch", "--set-branch", "develop"},
+			wantErr: true,
+		},
+		{
 			name:    "dirty + commits rejected",
 			args:    []string{"--dirty", "--commits", "abc"},
 			wantErr: true,
@@ -130,6 +155,120 @@ func TestPromoteDestBranch(t *testing.T) {
 			}
 		})
 	}
+}
+
+// logEntry captures one structured log line for assertions.
+type logEntry struct {
+	level  string
+	msg    string
+	fields map[string]string
+}
+
+// captureLog returns a Log func + a pointer to the slice it appends to.
+func captureLog() (func(level, sub, msg, db string, fields ...[2]string), *[]logEntry) {
+	var got []logEntry
+	fn := func(level, sub, msg, db string, fields ...[2]string) {
+		m := map[string]string{}
+		for _, f := range fields {
+			m[f[0]] = f[1]
+		}
+		got = append(got, logEntry{level: level, msg: msg, fields: m})
+	}
+	return fn, &got
+}
+
+func findEntry(entries []logEntry, msg string) (logEntry, bool) {
+	for _, e := range entries {
+		if e.msg == msg {
+			return e, true
+		}
+	}
+	return logEntry{}, false
+}
+
+func TestPromoteShowBranch(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("project-sourced with worktree", func(t *testing.T) {
+		main, feat := setupPromoteRepo(t)
+		logFn, entries := captureLog()
+		err := runShowBranch(ctx, PromoteOpts{
+			Cfg:  &config.Config{PromoteBranch: "develop", PromoteBranchSource: "project"},
+			Root: feat,
+			Log:  logFn,
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		e, ok := findEntry(*entries, "promote branch")
+		if !ok {
+			t.Fatalf("no 'promote branch' line in %+v", *entries)
+		}
+		if e.level != "INFO" || e.fields["branch"] != "develop" || e.fields["source"] != "project" {
+			t.Errorf("bad fields: %+v", e)
+		}
+		// git reports the symlink-resolved path (/private/var on macOS); compare
+		// against the resolved expectation.
+		wantWT, _ := filepath.EvalSymlinks(main)
+		if e.fields["worktree"] != wantWT {
+			t.Errorf("worktree = %q, want %q", e.fields["worktree"], wantWT)
+		}
+	})
+
+	t.Run("global-sourced without worktree", func(t *testing.T) {
+		_, feat := setupPromoteRepo(t)
+		logFn, entries := captureLog()
+		err := runShowBranch(ctx, PromoteOpts{
+			Cfg:  &config.Config{PromoteBranch: "no-such-branch", PromoteBranchSource: "global"},
+			Root: feat,
+			Log:  logFn,
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		e, ok := findEntry(*entries, "promote branch")
+		if !ok {
+			t.Fatalf("no 'promote branch' line in %+v", *entries)
+		}
+		if e.fields["source"] != "global" || e.fields["worktree"] != "none" {
+			t.Errorf("bad fields: %+v", e)
+		}
+		if _, ok := findEntry(*entries, "branch has no worktree — create one to promote into"); !ok {
+			t.Errorf("expected the no-worktree hint line, got %+v", *entries)
+		}
+	})
+
+	t.Run("unconfigured → ErrNotConfigured + WARNING", func(t *testing.T) {
+		logFn, entries := captureLog()
+		err := runShowBranch(ctx, PromoteOpts{
+			Cfg:  &config.Config{},
+			Root: t.TempDir(),
+			Log:  logFn,
+		})
+		if err != ErrNotConfigured {
+			t.Fatalf("err = %v, want ErrNotConfigured", err)
+		}
+		e, ok := findEntry(*entries, "no promote branch configured")
+		if !ok || e.level != "WARNING" {
+			t.Errorf("expected WARNING line, got %+v", *entries)
+		}
+	})
+
+	t.Run("configured but not a repo → worktree=none, no error", func(t *testing.T) {
+		logFn, entries := captureLog()
+		err := runShowBranch(ctx, PromoteOpts{
+			Cfg:  &config.Config{PromoteBranch: "develop", PromoteBranchSource: "global"},
+			Root: t.TempDir(), // not a git repo
+			Log:  logFn,
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		e, ok := findEntry(*entries, "promote branch")
+		if !ok || e.fields["worktree"] != "none" {
+			t.Errorf("expected worktree=none, got %+v", *entries)
+		}
+	})
 }
 
 func TestFilterCommits(t *testing.T) {
