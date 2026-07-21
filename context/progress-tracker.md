@@ -29,6 +29,29 @@ _(siguiente: Unit 14 — meta-commands. Fix deploy-build-muting: el builder de `
 
 ## Completed
 
+- [x] Unit 102 — remote-git-deploy. Deploy git opt-in por target
+  (`[connect_targets.<t>]`/`[connect]`: `git_deploy`/`git_branch`/`git_path`):
+  cuando `remote_path` es un checkout del mismo repo, los deploys de commits
+  avanzan una rama dedicada en el servidor con **hashes idénticos** — objetos vía
+  `git push <host>:<abs> <sha>:refs/echo/incoming` (ref temporal, nunca checked
+  out) + `git reset --keep <sha>`; el avance preserva el overlay dirty (solo
+  descarta lo que los commits tocan, WARNING que lo lista). Preflight falla
+  cerrado (sin git / no repo / repo ajeno vía root-commit `cat-file -e`); gate FF;
+  `--commits` no lineal → `ErrUsage`; `--no-git` fuerza el rsync legacy. Nuevo
+  `push --clean [<mod>]/--all` revierte el overlay remoto (`git checkout --` +
+  `git clean -fd`, dry-run + confirmación destructiva). Checkpoint gana `CodeSHA`:
+  `deploy --rollback` restaura DB+código juntos, `deploy --restore-code <sha>`
+  solo código + restart. Targets sin `git_deploy` corren idénticos; `watch`
+  hereda vía `deploy --commits --push`. Núcleo puro `gitCollisions` + transporte
+  detrás de seams (`gitRunSSH`/`gitPushCommand`). Archivos:
+  `internal/cmd/deploy_git.go` (nuevo), `internal/cmd/push_clean.go` (nuevo),
+  `internal/cmd/deploy.go`, `internal/cmd/push.go`,
+  `internal/config/config.go`+`checkpoints.go`, `internal/repl/commands.go`+`repl.go`
+  (help), CHANGELOG. Tests `deploy_git_test.go` (parse, gitCollisions,
+  resolveGitDeploy/Tip, advance/bootstrap/restore/preflight con seam scripteado,
+  moduleOfPath/filterDirty); build/vet/test verdes. **Pendiente verificación EN
+  VIVO** (remoto real: server muutrade→develop en `main` con overlay dirty).
+
 - [x] Unit 103 — promote-show-branch. `promote --show-branch`: consulta
   read-only de la rama `[promote] branch` configurada, su procedencia
   (`source=project|global`) y su worktree (`worktree=<path>|none` + hint).

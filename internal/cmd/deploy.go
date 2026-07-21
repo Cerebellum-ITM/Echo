@@ -121,6 +121,12 @@ type deployArgs struct {
 	// false leaves the broken DB. nil = fall through to the confirm/headless
 	// default. Set by --rollback-on-fail / --no-rollback-on-fail.
 	rollbackOnFail *bool
+	// noGit forces the legacy rsync push for one run on a git-deploy target
+	// (Unit 102), the escape hatch when the git advance can't or shouldn't run.
+	noGit bool
+	// restoreCode, when set, is a standalone code-only restore of a git-deploy
+	// target to that hash (deploy --restore-code <sha>) — no DB, no checkpoint.
+	restoreCode string
 }
 
 // isTestManage reports whether the args carry a config-only test-management
@@ -213,6 +219,19 @@ func parseDeployArgs(args []string) (deployArgs, error) {
 			out.noCheckpoint = true
 		case a == "--rollback":
 			out.rollback = true
+		case a == "--no-git":
+			out.noGit = true
+		case a == "--restore-code":
+			if i+1 >= len(args) || strings.TrimSpace(args[i+1]) == "" {
+				return out, fmt.Errorf("%w: --restore-code requires a commit SHA", ErrUsage)
+			}
+			out.restoreCode = args[i+1]
+			i++
+		case strings.HasPrefix(a, "--restore-code="):
+			out.restoreCode = strings.TrimPrefix(a, "--restore-code=")
+			if strings.TrimSpace(out.restoreCode) == "" {
+				return out, fmt.Errorf("%w: --restore-code requires a commit SHA", ErrUsage)
+			}
 		case a == "--no-actions":
 			out.noActions = true
 		case a == "--rollback-on-fail":
@@ -279,6 +298,13 @@ func parseDeployArgs(args []string) (deployArgs, error) {
 	}
 	if out.rollback && (out.auto || len(out.commits) > 0 || len(out.modules) > 0 || out.push) {
 		return out, fmt.Errorf("%w: --rollback cannot be combined with --commits/--modules/--auto/--push", ErrUsage)
+	}
+	if out.restoreCode != "" && (out.rollback || out.auto || out.push ||
+		len(out.commits) > 0 || len(out.modules) > 0 || out.isTestManage()) {
+		return out, fmt.Errorf("%w: --restore-code runs on its own (no deploy selection/rollback)", ErrUsage)
+	}
+	if out.noGit && out.restoreCode != "" {
+		return out, fmt.Errorf("%w: --no-git and --restore-code are mutually exclusive", ErrUsage)
 	}
 	if out.test && out.noTest {
 		return out, fmt.Errorf("%w: --test and --no-test are mutually exclusive", ErrUsage)
@@ -580,6 +606,9 @@ type DeployResult struct {
 	// database was restored from that checkpoint.
 	Checkpoint *CheckpointInfo `json:"checkpoint,omitempty"`
 	RolledBack bool            `json:"rolled_back,omitempty"`
+	// CodeSHA is the deploy branch's SHA on the server after a git-deploy run
+	// (Unit 102) — the exact hash now checked out. Empty for non-git targets.
+	CodeSHA string `json:"code_sha,omitempty"`
 	// JSON echoes whether the caller asked for --json, so the REPL wrapper can
 	// route output without re-parsing the args.
 	JSON bool `json:"-"`
@@ -651,6 +680,12 @@ func RunDeploy(ctx context.Context, opts DeployOpts) (DeployResult, error) {
 	// recent checkpoint instead of deploying anything.
 	if p.rollback {
 		return runDeployRollback(ctx, opts, p)
+	}
+
+	// deploy --restore-code is a standalone code-only restore: move the remote
+	// deploy branch to a hash and restart Odoo, without touching the DB.
+	if p.restoreCode != "" {
+		return runDeployRestoreCode(ctx, opts, p)
 	}
 
 	// Validate an explicit --modules list against the local repo before any
@@ -862,6 +897,26 @@ func RunDeploy(ctx context.Context, opts DeployOpts) (DeployResult, error) {
 	ckptPolicy := resolveCheckpointPolicy(prof, opts.Cfg)
 	ckptEnabled, ckptMethod := resolveCheckpointMode(p, ckptPolicy, target.stage)
 
+	// Git-deploy topology (Unit 102): when the target opts in (and --no-git
+	// isn't set), a run's COMMITTED content advances a deploy branch on the
+	// server with identical SHAs instead of an rsync overlay; the dirty overlay
+	// still rsyncs. gitTip is the single hash the branch advances to; a
+	// non-linear commit selection errors here, before any remote change.
+	gitCfg := resolveGitDeploy(opts.Cfg, fromName, sshHost, remotePath)
+	gitActive := gitCfg.enabled && !p.noGit
+	var gitTip, gitPreCodeSHA string
+	if gitActive && len(deployedShas) > 0 {
+		tip, terr := resolveGitTip(ctx, opts.Root, deployedShas)
+		if terr != nil {
+			return DeployResult{}, terr
+		}
+		gitTip = tip
+	}
+	dirtyNameSet := map[string]bool{}
+	for _, dm := range selectedDirty {
+		dirtyNameSet[dm.name] = true
+	}
+
 	// Install vs update, decided by the remote instance's module states.
 	opts.log("INFO", "remote", "querying installed modules", prof.DBName)
 	states, err := remoteModuleStates(ctx, sshHost, remotePath, target, conn.User, target.dbName)
@@ -962,10 +1017,26 @@ func RunDeploy(ctx context.Context, opts DeployOpts) (DeployResult, error) {
 		if !p.push {
 			return nil
 		}
+		// Git-deploy: the committed content advances the deploy branch with
+		// identical SHAs (real object transfer). The pre-advance branch HEAD is
+		// captured for the checkpoint's CodeSHA.
+		if gitActive && gitTip != "" {
+			if err := gitDeployCommitted(ctx, opts, rsc, gitCfg, gitTip, dryRun, &gitPreCodeSHA); err != nil {
+				return err
+			}
+		}
+		// The rsync overlay: every module on a non-git target, only the dirty
+		// modules on a git target (their committed peers rode the branch).
+		pushMods := append(append([]string(nil), update...), install...)
+		if gitActive {
+			pushMods = intersectModules(pushMods, dirtyNameSet)
+		}
+		if len(pushMods) == 0 {
+			return nil
+		}
 		if err := requireRsync(); err != nil {
 			return err
 		}
-		pushMods := append(append([]string(nil), update...), install...)
 		pushRSC := remoteShellContext{
 			sshHost: sshHost, remotePath: remotePath, fromName: fromName,
 			target: target, prof: prof, conn: conn,
@@ -1070,6 +1141,11 @@ func RunDeploy(ctx context.Context, opts DeployOpts) (DeployResult, error) {
 			return DeployResult{}, cerr
 		}
 		ckptEntry = entry
+		// Record the pre-deploy code hash so a rollback restores DB + code
+		// together (git-deploy runs only).
+		if gitActive && gitPreCodeSHA != "" {
+			ckptEntry.CodeSHA = gitPreCodeSHA
+		}
 		result.Checkpoint = &info
 	}
 
@@ -1114,6 +1190,9 @@ func RunDeploy(ctx context.Context, opts DeployOpts) (DeployResult, error) {
 	// The remote run landed: every resolved module deployed OK.
 	for i := range result.Modules {
 		result.Modules[i].OK = true
+	}
+	if gitActive && gitTip != "" {
+		result.CodeSHA = gitTip
 	}
 
 	// The run succeeded: remember the deployed commits for this target so a
@@ -1226,6 +1305,16 @@ func handleDeployFailure(ctx context.Context, opts DeployOpts, rsc remoteShellCo
 			[2]string{"checkpoint", entry.Name}, [2]string{"err", rerr.Error()})
 		return result, fmt.Errorf("odoo run failed and rollback failed: %v (run error: %w)", rerr, runErrOrSynthetic(runErr))
 	}
+	// Restore the code alongside the DB when the checkpoint carries a pre-deploy
+	// hash (git-deploy targets). Best-effort: a failure here is logged but the
+	// DB is already restored, so it must not mask the run error.
+	if entry.CodeSHA != "" {
+		g := resolveGitDeploy(opts.Cfg, rsc.fromName, rsc.sshHost, rsc.remotePath)
+		if cerr := gitRestoreCode(ctx, rsc, g, entry.CodeSHA, opts.Log); cerr != nil {
+			opts.log("ERROR", "rollback", "database restored but code restore failed", rsc.prof.DBName,
+				[2]string{"sha", shortSHA(entry.CodeSHA)}, [2]string{"err", cerr.Error()})
+		}
+	}
 	_ = runSSHStream(ctx, rsc.sshHost, remoteComposeCmd(rsc.remotePath, rsc.target.composeCmd, "up", "-d"), nil, opts.StreamOut)
 
 	// A dump survives its own restore, so keep it recorded for a possible
@@ -1295,6 +1384,15 @@ func runDeployRollback(ctx context.Context, opts DeployOpts, p deployArgs) (Depl
 	if rerr != nil {
 		return DeployResult{}, fmt.Errorf("restore failed: %w", rerr)
 	}
+	// Restore the code to the checkpoint's pre-deploy hash when recorded
+	// (git-deploy targets), so a post-hoc rollback returns DB + code together.
+	if chosen.CodeSHA != "" {
+		g := resolveGitDeploy(opts.Cfg, rsc.fromName, rsc.sshHost, rsc.remotePath)
+		if cerr := gitRestoreCode(ctx, rsc, g, chosen.CodeSHA, opts.Log); cerr != nil {
+			opts.log("ERROR", "rollback", "database restored but code restore failed", rsc.prof.DBName,
+				[2]string{"sha", shortSHA(chosen.CodeSHA)}, [2]string{"err", cerr.Error()})
+		}
+	}
 	if err := runSSHStream(ctx, rsc.sshHost, remoteComposeCmd(rsc.remotePath, rsc.target.composeCmd, "up", "-d"), nil, opts.StreamOut); err != nil {
 		return DeployResult{}, fmt.Errorf("up -d failed: %w", err)
 	}
@@ -1313,6 +1411,42 @@ func runDeployRollback(ctx context.Context, opts DeployOpts, p deployArgs) (Depl
 		RolledBack: true,
 		JSON:       p.jsonOut,
 	}, nil
+}
+
+// runDeployRestoreCode is the standalone `deploy --restore-code <sha>`: move a
+// git-deploy target's deploy branch to an already-deployed hash and restart
+// Odoo, without touching the DB or a checkpoint. The hash must already exist on
+// the server (only previously deployed code can be restored).
+func runDeployRestoreCode(ctx context.Context, opts DeployOpts, p deployArgs) (DeployResult, error) {
+	logFn := func(level, sub, msg, db string, fields ...[2]string) { opts.log(level, sub, msg, db, fields...) }
+	rsc, err := resolveRemoteShell(ctx, opts.Cfg, opts.Palette, opts.Root, p.from, logFn)
+	if err != nil {
+		return DeployResult{}, err
+	}
+	g := resolveGitDeploy(opts.Cfg, rsc.fromName, rsc.sshHost, rsc.remotePath)
+	if !g.enabled {
+		return DeployResult{}, fmt.Errorf("%w: --restore-code needs a git-deploy target (set git_deploy on it)", ErrUsage)
+	}
+	absDir := absGitDir(rsc.remotePath, g.path)
+	if !gitRemoteHasCommit(ctx, rsc, absDir, p.restoreCode) {
+		return DeployResult{}, fmt.Errorf("%w: commit %s is not on the remote — only previously deployed hashes can be restored",
+			ErrUsage, shortSHA(p.restoreCode))
+	}
+	if err := confirmRemoteProd(opts.Palette, "restore-code", rsc, opts.Args); err != nil {
+		return DeployResult{}, err
+	}
+	if err := gitRestoreCode(ctx, rsc, g, p.restoreCode, opts.Log); err != nil {
+		return DeployResult{}, err
+	}
+	opts.log("INFO", "compose", "restart", rsc.prof.DBName)
+	if err := runSSHStream(ctx, rsc.sshHost,
+		remoteComposeCmd(rsc.remotePath, rsc.target.composeCmd, "restart", rsc.target.odooContainer),
+		nil, opts.StreamOut); err != nil {
+		return DeployResult{}, fmt.Errorf("restart failed: %w", err)
+	}
+	opts.log("INFO", "", "code restored", rsc.prof.DBName,
+		[2]string{"branch", g.branch}, [2]string{"sha", shortSHA(p.restoreCode)})
+	return DeployResult{Target: rsc.fromName, DB: rsc.prof.DBName, CodeSHA: p.restoreCode, JSON: p.jsonOut}, nil
 }
 
 // splitCSV splits a comma-separated flag value into trimmed, non-empty

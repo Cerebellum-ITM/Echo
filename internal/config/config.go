@@ -69,6 +69,13 @@ type Config struct {
 	ConnectRemotePath string
 	ConnectChromePath string
 
+	// Git-deploy topology for the project's [connect] link binding (Unit 102),
+	// used when a remote action resolves the target from the directory binding
+	// rather than a named connect target.
+	ConnectGitDeploy bool
+	ConnectGitBranch string
+	ConnectGitPath   string
+
 	// ConnectTargets are named remote `connect` destinations stored
 	// globally (in global.toml), used by the projectless `echo connect
 	// <name>` direct mode. Sorted by Name.
@@ -350,6 +357,14 @@ type connectTargetFile struct {
 	RemotePath string `toml:"remote_path"`
 	ChromePath string `toml:"chrome_path"`
 	DBName     string `toml:"db_name"`
+	// Git-deploy topology (Unit 102): when GitDeploy is true, commit deploys
+	// to this target advance a dedicated branch in the server's checkout with
+	// identical SHAs instead of an rsync overlay. GitBranch defaults to
+	// "echo/deploy"; GitPath is the git worktree dir relative to RemotePath
+	// ("" / "." = the root).
+	GitDeploy bool   `toml:"git_deploy"`
+	GitBranch string `toml:"git_branch"`
+	GitPath   string `toml:"git_path"`
 }
 
 type promptFile struct {
@@ -382,6 +397,11 @@ type connectFile struct {
 	SSHHost    string `toml:"ssh_host"`
 	RemotePath string `toml:"remote_path"`
 	ChromePath string `toml:"chrome_path"`
+	// Git-deploy topology for the project's [connect] link binding (Unit 102),
+	// same semantics as the named-target fields.
+	GitDeploy bool   `toml:"git_deploy"`
+	GitBranch string `toml:"git_branch"`
+	GitPath   string `toml:"git_path"`
 }
 
 // ConnectTarget is a named remote destination for the projectless
@@ -394,6 +414,11 @@ type ConnectTarget struct {
 	RemotePath string
 	ChromePath string
 	DBName     string // display only
+	// Git-deploy topology (Unit 102). GitDeploy off → the target uses the
+	// legacy rsync push path unchanged.
+	GitDeploy bool
+	GitBranch string
+	GitPath   string
 }
 
 // ProjectInfo is the subset of a project profile needed to present a
@@ -531,6 +556,9 @@ func Load(projectPath string) (*Config, error) {
 		cfg.ConnectSSHHost = p.Connect.SSHHost
 		cfg.ConnectRemotePath = p.Connect.RemotePath
 		cfg.ConnectChromePath = p.Connect.ChromePath
+		cfg.ConnectGitDeploy = p.Connect.GitDeploy
+		cfg.ConnectGitBranch = p.Connect.GitBranch
+		cfg.ConnectGitPath = p.Connect.GitPath
 	}
 
 	applyDefaults(cfg)
@@ -870,6 +898,9 @@ func sortedConnectTargets(m map[string]*connectTargetFile) []ConnectTarget {
 			RemotePath: t.RemotePath,
 			ChromePath: t.ChromePath,
 			DBName:     t.DBName,
+			GitDeploy:  t.GitDeploy,
+			GitBranch:  t.GitBranch,
+			GitPath:    t.GitPath,
 		})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
@@ -887,6 +918,9 @@ func connectTargetsToFile(targets []ConnectTarget) map[string]*connectTargetFile
 			RemotePath: t.RemotePath,
 			ChromePath: t.ChromePath,
 			DBName:     t.DBName,
+			GitDeploy:  t.GitDeploy,
+			GitBranch:  t.GitBranch,
+			GitPath:    t.GitPath,
 		}
 	}
 	return m

@@ -22,6 +22,11 @@ type CheckpointEntry struct {
 	CreatedAt  time.Time `toml:"created_at"`
 	DeploySHAs []string  `toml:"deploy_shas"`
 	DumpPath   string    `toml:"dump_path"`
+	// CodeSHA is the remote deploy branch's HEAD captured BEFORE the deploy
+	// advanced it (git-deploy targets only, Unit 102). When set, a rollback
+	// restores the code to this hash alongside the DB; empty on non-git
+	// targets and pre-Unit-102 entries (DB-only restore, unchanged).
+	CodeSHA string `toml:"code_sha"`
 }
 
 // checkpointTarget is the set of checkpoints recorded for one remote target.

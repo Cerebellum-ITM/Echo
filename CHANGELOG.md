@@ -8,6 +8,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Deploy git por target: la rama `echo/deploy` en el servidor con hashes
+  idénticos.** Opt-in por target (`[connect_targets.<t>]`/`[connect]`:
+  `git_deploy`/`git_branch`/`git_path`). Cuando `remote_path` es un checkout
+  del mismo repo, los deploys de commits dejan de subirse como overlay rsync y
+  pasan a **avanzar una rama dedicada en el servidor con el SHA exacto del
+  local**: los objetos viajan por `git push <host>:<abs> <sha>:refs/echo/incoming`
+  (ref temporal, nunca checked out, así `receive.denyCurrentBranch` no lo
+  rechaza) y la rama avanza con `git reset --keep <sha>`. El avance **preserva
+  el overlay dirty**: solo descarta los archivos que los commits entrantes tocan
+  (WARNING que los lista, semántica de `promote`); lo dirty que no colisiona
+  sobrevive, y los módulos dirty siguen subiendo por rsync encima. Preflight que
+  falla cerrado (sin git / no es repo / repo ajeno, verificado por el root commit
+  con `cat-file -e`); gate de fast-forward; selección de `--commits` no lineal →
+  `ErrUsage`; `--no-git` fuerza el rsync legacy por un run. Nuevo `push --clean
+  [<mod>...]/--all` para revertir el overlay dirty remoto (`git checkout --` +
+  `git clean -fd`, con árbol en `--dry-run` y confirmación destructiva). El
+  checkpoint gana `CodeSHA`: `deploy --rollback` restaura DB **y** código juntos,
+  y `deploy --restore-code <sha>` mueve solo el código a un hash ya desplegado y
+  reinicia Odoo. Los targets sin `git_deploy` corren idénticos a hoy; `watch`
+  hereda todo vía `deploy --commits --push`. La config git **sigue al target
+  físico**: `resolveGitDeploy` casa por nombre y, si no, por `ssh_host`+
+  `remote_path`, de modo que un `deploy` interactivo (sin `--from`) que resuelve
+  por el `[connect]` del proyecto hereda el `git_deploy` del target nombrado que
+  apunta al mismo host/ruta — no solo el `--from <nombre>` explícito. Núcleo puro
+  `gitCollisions` y transporte git detrás de seams (`gitRunSSH`/`gitPushCommand`)
+  para tests.
 - **`promote --show-branch`: consulta la rama de despliegue configurada sin
   mutar nada.** Contraparte de lectura de `--set-branch`: reporta qué rama
   `[promote] branch` está configurada, su procedencia (`source=project|global`)

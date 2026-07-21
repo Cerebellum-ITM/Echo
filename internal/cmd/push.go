@@ -51,6 +51,11 @@ type pushArgs struct {
 	pickDest bool
 	setDest  bool
 	mkdir    bool
+	// clean reverts the remote dirty overlay on a git-deploy target (Unit 102):
+	// git checkout -- / git clean -fd of the selected modules' paths. all cleans
+	// every module path.
+	clean bool
+	all   bool
 }
 
 // parsePushArgs extracts the module positionals and flags. The remote-mode
@@ -79,6 +84,10 @@ func parsePushArgs(args []string) (pushArgs, error) {
 			out.pickDest = true
 		case a == "--set-dest":
 			out.setDest = true
+		case a == "--clean":
+			out.clean = true
+		case a == "--all":
+			out.all = true
 		case a == "--dest":
 			if i+1 >= len(args) || strings.TrimSpace(args[i+1]) == "" {
 				return pushArgs{}, fmt.Errorf("%w: --dest needs a path", ErrUsage)
@@ -103,6 +112,13 @@ func parsePushArgs(args []string) (pushArgs, error) {
 	if out.dest != "" && out.pickDest {
 		return pushArgs{}, fmt.Errorf("%w: --dest and --pick-dest are mutually exclusive", ErrUsage)
 	}
+	if out.clean {
+		if out.dirty || out.dest != "" || out.pickDest || out.setDest || out.mkdir || out.del {
+			return pushArgs{}, fmt.Errorf("%w: --clean cannot be combined with --dirty/--dest/--pick-dest/--set-dest/--mkdir/--delete", ErrUsage)
+		}
+	} else if out.all {
+		return pushArgs{}, fmt.Errorf("%w: --all only applies to push --clean", ErrUsage)
+	}
 	return out, nil
 }
 
@@ -118,6 +134,11 @@ func RunPush(ctx context.Context, opts PushOpts) error {
 	// destination, persist it, and return — no modules, no rsync.
 	if p.setDest {
 		return runSetDest(ctx, opts, p)
+	}
+	// --clean reverts the remote dirty overlay on a git-deploy target; it uses
+	// git on the server, not rsync, so it runs before the rsync requirement.
+	if p.clean {
+		return runPushClean(ctx, opts, p)
 	}
 	if err := requireRsync(); err != nil {
 		return err
