@@ -94,6 +94,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ofrece el flag (como `--all`/`--installed`, es de invocación directa).
 
 ### Fixed
+- **`deploy --test`: un suite de tests verde ya no se marca como deploy
+  fallido.** El verificador que cierra el deploy cuando la salida de Odoo trae
+  patrones de fallo (aun con exit 0) casaba su tally de tests con
+  `\b\d+ failed, \d+ error\(s\)`, pero `\d+` también encaja con `0`, así que la
+  línea de **éxito** de Odoo `0 failed, 0 error(s) of N tests` contaba como hit
+  (`echo.deploy.verify: run reported errors — treating as failed hits=1`) y el
+  deploy se caía con `odoo run reported errors in its output` pese a que la
+  corrida terminó limpia. Ahora el tally solo casa con un conteo **distinto de
+  cero** de failures **o** de errors (`[1-9]\d* failed, …` / `… [1-9]\d*
+  error(s)`); `0 failed, 0 error(s)` deja de dispararlo, mientras que
+  `2 failed, 0 error(s)`, `0 failed, 3 error(s)` y los resúmenes
+  `FAILED (failures=…/errors=…)` de unittest siguen fallando el deploy.
 - **`promote --dirty`: mueve archivos por copia, no por `git apply` — deja de
   fallar contra un destino dirty o con módulos nuevos.** El patch dirty se
   cortaba contra el HEAD del worktree **fuente** y se aplicaba con `git apply` al

@@ -203,6 +203,11 @@ func TestRunFailureScanner(t *testing.T) {
 		{"critical", "2026-07-10 10:00:00,000 1 CRITICAL mydb odoo: boom", true},
 		{"traceback", "Traceback (most recent call last):", true},
 		{"registry", "Failed to load registry", true},
+		{"tests passed", "odoo.tests.result: 0 failed, 0 error(s) of 41 tests when loading database 'mydb'", false},
+		{"tests failed", "odoo.tests.result: 2 failed, 0 error(s) of 41 tests", true},
+		{"tests errored", "odoo.tests.result: 0 failed, 3 error(s) of 41 tests", true},
+		{"unittest failures", "FAILED (failures=2)", true},
+		{"unittest errors", "FAILED (errors=1)", true},
 		{"info clean", "2026-07-10 10:00:00,000 1 INFO mydb odoo: loading", false},
 		{"warning clean", "2026-07-10 10:00:00,000 1 WARNING mydb odoo: deprecated", false},
 	}

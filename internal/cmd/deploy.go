@@ -569,7 +569,9 @@ func resolveCheckpointMode(p deployArgs, pol checkpointPolicy, stage string) (en
 // The last two alternatives catch a failed test suite (Unit 100) — Odoo's
 // per-module `N failed, M error(s)` tally and unittest's `FAILED (failures=…)`
 // summary — so `deploy --test` fails even on the rare zero-exit-with-failures.
-var deployFailureRe = regexp.MustCompile(`\bCRITICAL\b|Traceback \(most recent call last\)|Failed to load registry|\b\d+ failed, \d+ error\(s\)|FAILED \((?:failures|errors)=`)
+// The Odoo tally is matched ONLY with a non-zero failure OR error count:
+// a passing suite prints `0 failed, 0 error(s)`, which must NOT count as a hit.
+var deployFailureRe = regexp.MustCompile(`\bCRITICAL\b|Traceback \(most recent call last\)|Failed to load registry|\b[1-9]\d* failed, \d+ error\(s\)|\b\d+ failed, [1-9]\d* error\(s\)|FAILED \((?:failures|errors)=`)
 
 // runFailureScanner wraps the odoo-run StreamOut, counting lines that signal
 // a failed migration/update so a zero-exit run can still be treated as failed.
