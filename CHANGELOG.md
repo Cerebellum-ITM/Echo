@@ -26,7 +26,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `git clean -fd`, con árbol en `--dry-run` y confirmación destructiva). El
   checkpoint gana `CodeSHA`: `deploy --rollback` restaura DB **y** código juntos,
   y `deploy --restore-code <sha>` mueve solo el código a un hash ya desplegado y
-  reinicia Odoo. Los targets sin `git_deploy` corren idénticos a hoy; `watch`
+  reinicia Odoo; `deploy --restore-code` **sin SHA** abre un picker sobre el
+  historial de la rama de deploy remota (los estados en los que ha estado el
+  server) — TTY-guarded, headless exige el SHA explícito. Los targets sin `git_deploy` corren idénticos a hoy; `watch`
   hereda todo vía `deploy --commits --push`. La config git **sigue al target
   físico**: `resolveGitDeploy` casa por nombre y, si no, por `ssh_host`+
   `remote_path`, de modo que un `deploy` interactivo (sin `--from`) que resuelve

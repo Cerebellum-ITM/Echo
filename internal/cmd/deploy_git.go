@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"path"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/pascualchavez/echo/internal/config"
@@ -287,6 +288,28 @@ func parsePorcelainStatus(line string) (code, p string, ok bool) {
 	}
 	rest = strings.Trim(rest, "\"")
 	return code, rest, rest != ""
+}
+
+// remoteBranchCommits lists the remote deploy branch's recent commits (newest
+// first) as the restore-code picker options. limit caps the count (default 20).
+func remoteBranchCommits(ctx context.Context, rsc remoteShellContext, absDir, branch string, limit int) ([]deployCommit, error) {
+	if limit <= 0 {
+		limit = 20
+	}
+	out, err := gitRunSSH(ctx, rsc.sshHost,
+		remoteGitCmd(absDir, "log", branch, "--pretty=format:%H%x1f%s", "-n", strconv.Itoa(limit)), nil)
+	if err != nil {
+		return nil, fmt.Errorf("read remote branch %s history: %w", branch, err)
+	}
+	var commits []deployCommit
+	for _, line := range nonEmptyLines(string(out)) {
+		sha, subj, ok := strings.Cut(line, "\x1f")
+		if !ok || strings.TrimSpace(sha) == "" {
+			continue
+		}
+		commits = append(commits, deployCommit{sha: sha, subject: subj})
+	}
+	return commits, nil
 }
 
 // gitRemoteHasCommit reports whether sha exists in the server checkout's

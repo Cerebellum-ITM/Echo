@@ -124,9 +124,12 @@ type deployArgs struct {
 	// noGit forces the legacy rsync push for one run on a git-deploy target
 	// (Unit 102), the escape hatch when the git advance can't or shouldn't run.
 	noGit bool
-	// restoreCode, when set, is a standalone code-only restore of a git-deploy
-	// target to that hash (deploy --restore-code <sha>) — no DB, no checkpoint.
-	restoreCode string
+	// restoreCode / restoreCodeSet drive the standalone code-only restore of a
+	// git-deploy target (deploy --restore-code [<sha>]) — no DB, no checkpoint.
+	// restoreCodeSet is true whenever the flag is present; restoreCode holds the
+	// explicit hash, or "" for the interactive picker.
+	restoreCode    string
+	restoreCodeSet bool
 }
 
 // isTestManage reports whether the args carry a config-only test-management
@@ -222,15 +225,18 @@ func parseDeployArgs(args []string) (deployArgs, error) {
 		case a == "--no-git":
 			out.noGit = true
 		case a == "--restore-code":
-			if i+1 >= len(args) || strings.TrimSpace(args[i+1]) == "" {
-				return out, fmt.Errorf("%w: --restore-code requires a commit SHA", ErrUsage)
+			// The SHA is optional: a following non-flag token is the target
+			// hash; a bare --restore-code opens the interactive picker.
+			out.restoreCodeSet = true
+			if i+1 < len(args) && !strings.HasPrefix(args[i+1], "-") {
+				out.restoreCode = args[i+1]
+				i++
 			}
-			out.restoreCode = args[i+1]
-			i++
 		case strings.HasPrefix(a, "--restore-code="):
+			out.restoreCodeSet = true
 			out.restoreCode = strings.TrimPrefix(a, "--restore-code=")
 			if strings.TrimSpace(out.restoreCode) == "" {
-				return out, fmt.Errorf("%w: --restore-code requires a commit SHA", ErrUsage)
+				return out, fmt.Errorf("%w: --restore-code= needs a SHA (use bare --restore-code for the picker)", ErrUsage)
 			}
 		case a == "--no-actions":
 			out.noActions = true
@@ -299,11 +305,11 @@ func parseDeployArgs(args []string) (deployArgs, error) {
 	if out.rollback && (out.auto || len(out.commits) > 0 || len(out.modules) > 0 || out.push) {
 		return out, fmt.Errorf("%w: --rollback cannot be combined with --commits/--modules/--auto/--push", ErrUsage)
 	}
-	if out.restoreCode != "" && (out.rollback || out.auto || out.push ||
+	if out.restoreCodeSet && (out.rollback || out.auto || out.push ||
 		len(out.commits) > 0 || len(out.modules) > 0 || out.isTestManage()) {
 		return out, fmt.Errorf("%w: --restore-code runs on its own (no deploy selection/rollback)", ErrUsage)
 	}
-	if out.noGit && out.restoreCode != "" {
+	if out.noGit && out.restoreCodeSet {
 		return out, fmt.Errorf("%w: --no-git and --restore-code are mutually exclusive", ErrUsage)
 	}
 	if out.test && out.noTest {
@@ -684,7 +690,7 @@ func RunDeploy(ctx context.Context, opts DeployOpts) (DeployResult, error) {
 
 	// deploy --restore-code is a standalone code-only restore: move the remote
 	// deploy branch to a hash and restart Odoo, without touching the DB.
-	if p.restoreCode != "" {
+	if p.restoreCodeSet {
 		return runDeployRestoreCode(ctx, opts, p)
 	}
 
@@ -1413,10 +1419,11 @@ func runDeployRollback(ctx context.Context, opts DeployOpts, p deployArgs) (Depl
 	}, nil
 }
 
-// runDeployRestoreCode is the standalone `deploy --restore-code <sha>`: move a
+// runDeployRestoreCode is the standalone `deploy --restore-code [<sha>]`: move a
 // git-deploy target's deploy branch to an already-deployed hash and restart
-// Odoo, without touching the DB or a checkpoint. The hash must already exist on
-// the server (only previously deployed code can be restored).
+// Odoo, without touching the DB or a checkpoint. With no SHA it opens a picker
+// over the remote deploy branch's history (the states the server has been in);
+// an explicit hash must already exist on the server.
 func runDeployRestoreCode(ctx context.Context, opts DeployOpts, p deployArgs) (DeployResult, error) {
 	logFn := func(level, sub, msg, db string, fields ...[2]string) { opts.log(level, sub, msg, db, fields...) }
 	rsc, err := resolveRemoteShell(ctx, opts.Cfg, opts.Palette, opts.Root, p.from, logFn)
@@ -1428,14 +1435,23 @@ func runDeployRestoreCode(ctx context.Context, opts DeployOpts, p deployArgs) (D
 		return DeployResult{}, fmt.Errorf("%w: --restore-code needs a git-deploy target (set git_deploy on it)", ErrUsage)
 	}
 	absDir := absGitDir(rsc.remotePath, g.path)
-	if !gitRemoteHasCommit(ctx, rsc, absDir, p.restoreCode) {
+
+	sha := p.restoreCode
+	if sha == "" {
+		// Interactive: pick from the remote deploy branch's recent history.
+		picked, perr := pickRestoreCommit(ctx, opts, rsc, g, absDir, p.limit)
+		if perr != nil {
+			return DeployResult{}, perr
+		}
+		sha = picked
+	} else if !gitRemoteHasCommit(ctx, rsc, absDir, sha) {
 		return DeployResult{}, fmt.Errorf("%w: commit %s is not on the remote — only previously deployed hashes can be restored",
-			ErrUsage, shortSHA(p.restoreCode))
+			ErrUsage, shortSHA(sha))
 	}
 	if err := confirmRemoteProd(opts.Palette, "restore-code", rsc, opts.Args); err != nil {
 		return DeployResult{}, err
 	}
-	if err := gitRestoreCode(ctx, rsc, g, p.restoreCode, opts.Log); err != nil {
+	if err := gitRestoreCode(ctx, rsc, g, sha, opts.Log); err != nil {
 		return DeployResult{}, err
 	}
 	opts.log("INFO", "compose", "restart", rsc.prof.DBName)
@@ -1445,8 +1461,37 @@ func runDeployRestoreCode(ctx context.Context, opts DeployOpts, p deployArgs) (D
 		return DeployResult{}, fmt.Errorf("restart failed: %w", err)
 	}
 	opts.log("INFO", "", "code restored", rsc.prof.DBName,
-		[2]string{"branch", g.branch}, [2]string{"sha", shortSHA(p.restoreCode)})
-	return DeployResult{Target: rsc.fromName, DB: rsc.prof.DBName, CodeSHA: p.restoreCode, JSON: p.jsonOut}, nil
+		[2]string{"branch", g.branch}, [2]string{"sha", shortSHA(sha)})
+	return DeployResult{Target: rsc.fromName, DB: rsc.prof.DBName, CodeSHA: sha, JSON: p.jsonOut}, nil
+}
+
+// pickRestoreCommit opens a single-select picker over the remote deploy
+// branch's recent commits (newest first) — the code states the server has been
+// in — and returns the chosen SHA. TTY-guarded: a headless caller must pass the
+// SHA explicitly.
+func pickRestoreCommit(ctx context.Context, opts DeployOpts, rsc remoteShellContext, g gitDeployConfig, absDir string, limit int) (string, error) {
+	if err := requireTTY("pass the SHA: deploy --restore-code <sha>"); err != nil {
+		return "", err
+	}
+	commits, err := remoteBranchCommits(ctx, rsc, absDir, g.branch, limit)
+	if err != nil {
+		return "", err
+	}
+	if len(commits) == 0 {
+		return "", fmt.Errorf("%w: no commits on remote branch %s to restore to", ErrUsage, g.branch)
+	}
+	labels := make([]string, len(commits))
+	byLabel := make(map[string]string, len(commits))
+	for i, c := range commits {
+		lbl := c.short() + "  " + c.subject
+		labels[i] = lbl
+		byLabel[lbl] = c.sha
+	}
+	pick, err := PickOne("Restore code on branch "+g.branch, labels, opts.Palette)
+	if err != nil {
+		return "", err
+	}
+	return byLabel[pick], nil
 }
 
 // splitCSV splits a comma-separated flag value into trimmed, non-empty

@@ -32,7 +32,16 @@ func TestParseDeployGitFlags(t *testing.T) {
 				t.Errorf("restoreCode = %q", a.restoreCode)
 			}
 		}},
-		{name: "restore-code needs value", args: []string{"--restore-code"}, wantErr: true},
+		{name: "restore-code bare = interactive", args: []string{"--restore-code"}, check: func(t *testing.T, a deployArgs) {
+			if !a.restoreCodeSet || a.restoreCode != "" {
+				t.Errorf("bare --restore-code: set=%v code=%q", a.restoreCodeSet, a.restoreCode)
+			}
+		}},
+		{name: "restore-code bare before another flag", args: []string{"--restore-code", "--from", "develop"}, check: func(t *testing.T, a deployArgs) {
+			if !a.restoreCodeSet || a.restoreCode != "" || a.from != "develop" {
+				t.Errorf("got set=%v code=%q from=%q", a.restoreCodeSet, a.restoreCode, a.from)
+			}
+		}},
 		{name: "restore-code empty value", args: []string{"--restore-code="}, wantErr: true},
 		{name: "restore-code with selection rejected", args: []string{"--restore-code", "x", "--push"}, wantErr: true},
 		{name: "restore-code with commits rejected", args: []string{"--restore-code", "x", "--commits", "a,b"}, wantErr: true},

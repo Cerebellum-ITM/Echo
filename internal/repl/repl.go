@@ -492,7 +492,7 @@ func helpSections() []helpSection {
 			{"  --test-add/--test-rm <list>", "Add/remove modules from the pinned test list (no deploy)"},
 			{"  --test-clear", "Clear the pinned test modules — back to testing what's deployed (no deploy)"},
 			{"  --rollback", "Restore the target's most recent checkpoint (no deploy)"},
-			{"  --restore-code <sha>", "Move a git-deploy target's code to a hash and restart Odoo (no DB, no deploy)"},
+			{"  --restore-code [<sha>]", "Move a git-deploy target's code to a hash (bare = picker over branch history) and restart Odoo (no DB)"},
 			{"  --no-git", "Force the legacy rsync push on a git-deploy target for this run"},
 			{"watch [<branch>]", "Auto push+deploy when new commits land on a branch; no branch → picker (Ctrl+C to stop)"},
 			{"  --from <target>", "Use a named connect target (default: this dir's link)"},
