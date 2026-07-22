@@ -239,11 +239,94 @@ func TestParseDeployArgsUsageErrors(t *testing.T) {
 		{"--auto", "--commits=a1b2"},
 		{"--push", "--no-push"},
 		{"--set-push=maybe"},
+		{"--set-checkpoint=sometimes"},
+		{"--set-checkpoint-method=zip"},
+		{"--set-checkpoint-keep=0"},
+		{"--set-checkpoint-keep=-1"},
+		{"--set-checkpoint-keep=x"},
+		{"--set-checkpoint", "--checkpoint"},
+		{"--set-checkpoint", "--no-checkpoint"},
 	} {
 		_, err := parseDeployArgs(in)
 		if !errors.Is(err, ErrUsage) {
 			t.Errorf("parseDeployArgs(%v) err = %v, want wraps ErrUsage", in, err)
 		}
+	}
+}
+
+func TestParseDeployArgsCheckpointSetFlags(t *testing.T) {
+	t.Run("bare = on, method/keep untouched", func(t *testing.T) {
+		p, err := parseDeployArgs([]string{"--set-checkpoint"})
+		if err != nil || !p.isCheckpointManage() {
+			t.Fatalf("got setCheckpoint=%v err=%v", p.setCheckpoint, err)
+		}
+		if p.setCheckpoint.mode == nil || *p.setCheckpoint.mode != "on" {
+			t.Fatalf("mode = %v, want on", p.setCheckpoint.mode)
+		}
+		if p.setCheckpoint.method != nil || p.setCheckpoint.keep != nil {
+			t.Fatalf("method/keep should stay nil, got %v/%v", p.setCheckpoint.method, p.setCheckpoint.keep)
+		}
+	})
+	t.Run("mode values", func(t *testing.T) {
+		for _, m := range []string{"on", "off", "auto"} {
+			p, err := parseDeployArgs([]string{"--set-checkpoint=" + m})
+			if err != nil || p.setCheckpoint.mode == nil || *p.setCheckpoint.mode != m {
+				t.Fatalf("mode %q: got %v err=%v", m, p.setCheckpoint, err)
+			}
+		}
+	})
+	t.Run("method and keep combine in one call", func(t *testing.T) {
+		p, err := parseDeployArgs([]string{"--set-checkpoint=on", "--set-checkpoint-method=dump", "--set-checkpoint-keep=5"})
+		if err != nil {
+			t.Fatalf("err=%v", err)
+		}
+		if p.setCheckpoint.mode == nil || *p.setCheckpoint.mode != "on" ||
+			p.setCheckpoint.method == nil || *p.setCheckpoint.method != "dump" ||
+			p.setCheckpoint.keep == nil || *p.setCheckpoint.keep != 5 {
+			t.Fatalf("got %+v", p.setCheckpoint)
+		}
+	})
+	t.Run("method-only without mode is a manage op", func(t *testing.T) {
+		p, err := parseDeployArgs([]string{"--set-checkpoint-method=db"})
+		if err != nil || !p.isCheckpointManage() || p.setCheckpoint.mode != nil {
+			t.Fatalf("got %v err=%v", p.setCheckpoint, err)
+		}
+	})
+}
+
+func TestRunDeployCheckpointManage(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
+
+	cfg, _ := config.Load("/test/project")
+	cfg.Stage = "dev"
+	opts := DeployOpts{Cfg: cfg}
+
+	// Set only the mode: method/keep keep their resolved defaults.
+	p, err := parseDeployArgs([]string{"--set-checkpoint=on"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := runDeployCheckpointManage(opts, p); err != nil {
+		t.Fatal(err)
+	}
+	r, _ := config.Load("/test/project")
+	if r.CheckpointMode != "on" || r.CheckpointSource != "project" {
+		t.Fatalf("after set: mode=%q source=%q", r.CheckpointMode, r.CheckpointSource)
+	}
+	if r.CheckpointMethod != config.Defaults.CheckpointMethod || r.CheckpointKeep != config.Defaults.CheckpointKeep {
+		t.Errorf("unnamed fields changed: method=%q keep=%d", r.CheckpointMethod, r.CheckpointKeep)
+	}
+
+	// A second call sets keep only; mode persists from the first write.
+	opts2 := DeployOpts{Cfg: r}
+	p2, _ := parseDeployArgs([]string{"--set-checkpoint-keep=7"})
+	if err := runDeployCheckpointManage(opts2, p2); err != nil {
+		t.Fatal(err)
+	}
+	r2, _ := config.Load("/test/project")
+	if r2.CheckpointMode != "on" || r2.CheckpointKeep != 7 {
+		t.Errorf("after keep set: mode=%q keep=%d, want on/7", r2.CheckpointMode, r2.CheckpointKeep)
 	}
 }
 

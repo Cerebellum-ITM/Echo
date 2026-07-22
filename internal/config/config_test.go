@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/BurntSushi/toml"
@@ -277,6 +278,91 @@ func TestPushSectionRoundTrip(t *testing.T) {
 	}
 	if r2, _ := Load("/test/other"); r2.PushPath != "" {
 		t.Errorf("absent [push] should stay empty, got %q", r2.PushPath)
+	}
+}
+
+func TestCheckpointSectionRoundTrip(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
+
+	// A project-sourced [checkpoint] survives SaveProject/Load (the
+	// deploy --set-checkpoint persistence path).
+	cfg, _ := Load("/test/project")
+	cfg.Stage = "dev"
+	cfg.CheckpointMode = "on"
+	cfg.CheckpointMethod = "dump"
+	cfg.CheckpointKeep = 5
+	cfg.CheckpointSource = "project"
+	if err := SaveProject(cfg); err != nil {
+		t.Fatal(err)
+	}
+	r, err := Load("/test/project")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.CheckpointMode != "on" || r.CheckpointMethod != "dump" || r.CheckpointKeep != 5 {
+		t.Errorf("round-trip = %q/%q/%d, want on/dump/5", r.CheckpointMode, r.CheckpointMethod, r.CheckpointKeep)
+	}
+	if r.CheckpointSource != "project" {
+		t.Errorf("CheckpointSource = %q, want project", r.CheckpointSource)
+	}
+
+	// An unrelated SaveProject (e.g. a --set-push write) must PRESERVE the
+	// project [checkpoint] instead of dropping it (latent-bug regression).
+	push := true
+	r.DeployPush = &push
+	if err := SaveProject(r); err != nil {
+		t.Fatal(err)
+	}
+	r2, _ := Load("/test/project")
+	if r2.CheckpointMode != "on" || r2.CheckpointMethod != "dump" || r2.CheckpointKeep != 5 {
+		t.Errorf("checkpoint dropped by unrelated SaveProject: %q/%q/%d", r2.CheckpointMode, r2.CheckpointMethod, r2.CheckpointKeep)
+	}
+}
+
+func TestCheckpointGlobalNotCopiedToProject(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
+
+	// A [checkpoint] living only in global.toml resolves with source "global".
+	root, _ := configRoot()
+	if err := os.MkdirAll(root, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "global.toml"),
+		[]byte("[checkpoint]\nmode = \"on\"\nmethod = \"dump\"\nkeep = 4\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, _ := Load("/test/project")
+	if cfg.CheckpointSource != "global" || cfg.CheckpointMode != "on" {
+		t.Fatalf("global [checkpoint] not resolved: source=%q mode=%q", cfg.CheckpointSource, cfg.CheckpointMode)
+	}
+
+	// Saving the project for an unrelated reason must NOT copy the global
+	// policy into the project file.
+	cfg.Stage = "dev"
+	if err := SaveProject(cfg); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(root, "projects", ProjectKey("/test/project")+".toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "[checkpoint]") {
+		t.Errorf("global-only [checkpoint] leaked into project file:\n%s", data)
+	}
+}
+
+func TestCheckpointNoSectionNoSource(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
+	cfg, _ := Load("/test/project")
+	// Pure defaults: fields populated, but source stays empty.
+	if cfg.CheckpointSource != "" {
+		t.Errorf("CheckpointSource = %q, want empty", cfg.CheckpointSource)
+	}
+	if cfg.CheckpointMode != Defaults.CheckpointMode {
+		t.Errorf("CheckpointMode = %q, want default", cfg.CheckpointMode)
 	}
 }
 

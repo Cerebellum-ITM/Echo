@@ -29,6 +29,28 @@ _(siguiente: Unit 14 — meta-commands. Fix deploy-build-muting: el builder de `
 
 ## Completed
 
+- [x] Unit 104 — deploy-set-checkpoint. Setter config-only (calcado de
+  `--set-push`) que fija la política de checkpoint del **proyecto** desde la CLI
+  sin editar TOML: `deploy --set-checkpoint[=on|off|auto]` (bare = `on`) +
+  companions `--set-checkpoint-method=db|dump` / `--set-checkpoint-keep=N`
+  (componibles en una llamada; campos no nombrados conservan su valor resuelto).
+  Persiste `[checkpoint]` en `projects/<key>.toml` y sale — headless, sin SSH ni
+  deploy, project-scoped (nunca toca `global.toml` ni el servidor). Mutuamente
+  excluyente con los overrides por corrida `--checkpoint`/`--no-checkpoint`; la
+  resolución en deploy no cambia. De paso tapa un bug latente: `SaveProject` no
+  re-emitía el `[checkpoint]` del proyecto → cualquier `--set-*` lo borraba;
+  ahora se re-emite cuando su origen es el proyecto (nuevo `Config.CheckpointSource`
+  = ""/"global"/"project", seteado en `Load` como `PromoteBranchSource`), sin
+  arrastrar un `[checkpoint]` que solo vive en global. Archivos:
+  `internal/cmd/deploy.go` (`checkpointManage`, `isCheckpointManage`,
+  `runDeployCheckpointManage`, parser+guard, short-circuit en `RunDeploy`),
+  `internal/config/config.go` (`CheckpointSource`, `applyCheckpoint`, bloque de
+  proyecto en `Load`, `SaveProject`), `internal/repl/commands.go` (flags),
+  README + CHANGELOG. Tests: parser (`TestParseDeployArgsCheckpointSetFlags` +
+  casos de error), `runDeployCheckpointManage`, y config (`CheckpointSectionRoundTrip`
+  preserve, `GlobalNotCopiedToProject`, `NoSectionNoSource`). build/vet/test
+  verdes. Spec: `context/specs/104-deploy-set-checkpoint.md`.
+
 - [x] Unit 102 — remote-git-deploy. Deploy git opt-in por target
   (`[connect_targets.<t>]`/`[connect]`: `git_deploy`/`git_branch`/`git_path`):
   cuando `remote_path` es un checkout del mismo repo, los deploys de commits

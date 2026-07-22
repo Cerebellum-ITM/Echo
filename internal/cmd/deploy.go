@@ -97,6 +97,12 @@ type deployArgs struct {
 	// setPush, when non-nil, is a config-only request to persist `[deploy]
 	// push` locally and exit (deploy --set-push[=true|false]).
 	setPush *bool
+	// setCheckpoint, when non-nil, is a config-only request to persist the
+	// local [checkpoint] policy and exit (Unit 104). Its pointer fields carry
+	// only the values named in this invocation (--set-checkpoint[=mode],
+	// --set-checkpoint-method, --set-checkpoint-keep); unnamed fields keep the
+	// currently-resolved value.
+	setCheckpoint *checkpointManage
 	// test / noTest run (or skip) the deployed modules' unit tests this run
 	// (Unit 100), overriding the persisted `[deploy] test` default. Mutually
 	// exclusive.
@@ -137,6 +143,21 @@ type deployArgs struct {
 func (p deployArgs) isTestManage() bool {
 	return p.testToggle || p.testPick || p.testClear ||
 		p.testModulesSet != nil || len(p.testAdd) > 0 || len(p.testRm) > 0
+}
+
+// checkpointManage is the config-only checkpoint-policy edit built from the
+// --set-checkpoint* flags (Unit 104). A nil field means "not named in this
+// invocation" — runDeployCheckpointManage leaves the resolved value untouched.
+type checkpointManage struct {
+	mode   *string // on | off | auto
+	method *string // db | dump
+	keep   *int    // >= 1
+}
+
+// isCheckpointManage reports whether the args carry a config-only
+// checkpoint-policy edit that persists to the local project profile and exits.
+func (p deployArgs) isCheckpointManage() bool {
+	return p.setCheckpoint != nil
 }
 
 // parseDeployArgs extracts --from/--limit/--dry-run/--force/--i18n/--no-i18n
@@ -220,6 +241,40 @@ func parseDeployArgs(args []string) (deployArgs, error) {
 			out.checkpoint = v
 		case a == "--no-checkpoint":
 			out.noCheckpoint = true
+		case a == "--set-checkpoint":
+			if out.setCheckpoint == nil {
+				out.setCheckpoint = &checkpointManage{}
+			}
+			m := "on"
+			out.setCheckpoint.mode = &m
+		case strings.HasPrefix(a, "--set-checkpoint="):
+			v := strings.TrimPrefix(a, "--set-checkpoint=")
+			if v != "on" && v != "off" && v != "auto" {
+				return out, fmt.Errorf("%w: --set-checkpoint takes on, off or auto, got %q", ErrUsage, v)
+			}
+			if out.setCheckpoint == nil {
+				out.setCheckpoint = &checkpointManage{}
+			}
+			out.setCheckpoint.mode = &v
+		case strings.HasPrefix(a, "--set-checkpoint-method="):
+			v := strings.TrimPrefix(a, "--set-checkpoint-method=")
+			if v != "db" && v != "dump" {
+				return out, fmt.Errorf("%w: --set-checkpoint-method takes db or dump, got %q", ErrUsage, v)
+			}
+			if out.setCheckpoint == nil {
+				out.setCheckpoint = &checkpointManage{}
+			}
+			out.setCheckpoint.method = &v
+		case strings.HasPrefix(a, "--set-checkpoint-keep="):
+			v := strings.TrimPrefix(a, "--set-checkpoint-keep=")
+			n, err := strconv.Atoi(v)
+			if err != nil || n < 1 {
+				return out, fmt.Errorf("%w: --set-checkpoint-keep takes a number >= 1, got %q", ErrUsage, v)
+			}
+			if out.setCheckpoint == nil {
+				out.setCheckpoint = &checkpointManage{}
+			}
+			out.setCheckpoint.keep = &n
 		case a == "--rollback":
 			out.rollback = true
 		case a == "--no-git":
@@ -298,6 +353,9 @@ func parseDeployArgs(args []string) (deployArgs, error) {
 	}
 	if out.checkpointSet && out.noCheckpoint {
 		return out, fmt.Errorf("%w: --checkpoint and --no-checkpoint are mutually exclusive", ErrUsage)
+	}
+	if out.isCheckpointManage() && (out.checkpointSet || out.noCheckpoint) {
+		return out, fmt.Errorf("%w: --set-checkpoint sets the persisted policy; it can't combine with the per-run --checkpoint/--no-checkpoint", ErrUsage)
 	}
 	if out.push && out.noPush {
 		return out, fmt.Errorf("%w: --push and --no-push are mutually exclusive", ErrUsage)
@@ -423,6 +481,38 @@ func runDeployTestManage(opts DeployOpts, p deployArgs) error {
 	opts.log("INFO", "", "deploy test config", opts.Cfg.DBName,
 		[2]string{"test", boolOnOff(cfgCopy.DeployTest)},
 		[2]string{"test_modules", testModulesLabel(cfgCopy.DeployTestModules)})
+	return nil
+}
+
+// runDeployCheckpointManage persists the local [checkpoint] policy from the
+// --set-checkpoint* flags and logs the resulting state (Unit 104). Fields not
+// named in the invocation keep their currently-resolved value; the write is
+// tagged as project-sourced so SaveProject re-emits it. Config-only: no remote
+// resolution, no deploy.
+func runDeployCheckpointManage(opts DeployOpts, p deployArgs) error {
+	cfgCopy := *opts.Cfg
+	cm := p.setCheckpoint
+	if cm.mode != nil {
+		cfgCopy.CheckpointMode = *cm.mode
+	}
+	if cm.method != nil {
+		cfgCopy.CheckpointMethod = *cm.method
+	}
+	if cm.keep != nil {
+		cfgCopy.CheckpointKeep = *cm.keep
+	}
+	cfgCopy.CheckpointSource = "project"
+	if err := config.SaveProject(&cfgCopy); err != nil {
+		return fmt.Errorf("save checkpoint policy: %w", err)
+	}
+	opts.Cfg.CheckpointMode = cfgCopy.CheckpointMode
+	opts.Cfg.CheckpointMethod = cfgCopy.CheckpointMethod
+	opts.Cfg.CheckpointKeep = cfgCopy.CheckpointKeep
+	opts.Cfg.CheckpointSource = "project"
+	opts.log("INFO", "", "checkpoint policy set", opts.Cfg.DBName,
+		[2]string{"mode", cfgCopy.CheckpointMode},
+		[2]string{"method", cfgCopy.CheckpointMethod},
+		[2]string{"keep", strconv.Itoa(cfgCopy.CheckpointKeep)})
 	return nil
 }
 
@@ -679,6 +769,15 @@ func RunDeploy(ctx context.Context, opts DeployOpts) (DeployResult, error) {
 	// remote resolution, no deploy.
 	if p.isTestManage() {
 		if err := runDeployTestManage(opts, p); err != nil {
+			return DeployResult{}, err
+		}
+		return DeployResult{}, nil
+	}
+
+	// deploy --set-checkpoint* is config-only: persist the local [checkpoint]
+	// policy and exit — no remote resolution, no deploy.
+	if p.isCheckpointManage() {
+		if err := runDeployCheckpointManage(opts, p); err != nil {
 			return DeployResult{}, err
 		}
 		return DeployResult{}, nil

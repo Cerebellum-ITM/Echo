@@ -367,6 +367,8 @@ the code there — that's for the tool you use to sync the working tree.
 | `  --modules <names>` | Deploy these (dirty) modules non-interactively (skips the picker) |
 | `  --checkpoint[=db\|dump]` | Force a DB checkpoint before the run (default: auto on `staging`/`prod`) |
 | `  --no-checkpoint` | Skip the DB checkpoint even on `staging`/`prod`          |
+| `  --set-checkpoint[=on\|off\|auto]` | Persist the checkpoint policy for this project and exit (no deploy) |
+| `  --set-checkpoint-method=db\|dump` / `--set-checkpoint-keep=N` | Companion setters for method / retention (no deploy) |
 | `  --rollback-on-fail` / `--no-rollback-on-fail` | Fix the on-failure decision headlessly: restore, or keep the broken DB — no prompt |
 | `  --no-actions`   | Skip declared `[[deploy.actions]]` for this run          |
 | `  --push` / `--no-push` | Push the resolved modules before the run / skip it even when it's the default |
@@ -448,7 +450,11 @@ checkpoints the same way from any machine. The **local** `[checkpoint]` config
 is the fallback when the server doesn't declare one (and works for a purely
 local setup), and the per-run flags `--checkpoint[=db|dump]` / `--no-checkpoint`
 override everything. Precedence: flags › server profile › local config › stage
-default. Before creating a checkpoint Echo runs a
+default. To set the **local** policy without hand-editing TOML, `deploy
+--set-checkpoint[=on|off|auto]` (with optional `--set-checkpoint-method=db|dump`
+and `--set-checkpoint-keep=N`) writes the `[checkpoint]` table to **this
+project's** profile and exits — headless, no deploy, project-scoped (it never
+touches `global.toml` or the server). Before creating a checkpoint Echo runs a
 **disk preflight** (the DB must fit alongside its copy) and aborts *before* the
 `stop` if it wouldn't — so a doomed deploy never takes the service down. The
 successful checkpoint is kept for a later `deploy --rollback`, and the retention

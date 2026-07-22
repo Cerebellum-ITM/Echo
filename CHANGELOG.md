@@ -8,6 +8,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **`deploy --set-checkpoint`: fija la política de checkpoint del proyecto
+  desde la CLI, sin editar TOML a mano.** Un setter config-only (calcado de
+  `--set-push`) que persiste el `[checkpoint]` en el perfil **local del
+  proyecto** (`projects/<key>.toml`) y sale — headless, sin SSH ni deploy, y
+  **nunca** toca `global.toml` ni el servidor. Tres flags componibles en una
+  sola llamada: `--set-checkpoint[=on|off|auto]` (bare = `on`) fija el `mode`;
+  `--set-checkpoint-method=db|dump` y `--set-checkpoint-keep=N` (N ≥ 1) fijan
+  método y retención; los campos no nombrados conservan su valor resuelto. La
+  resolución en tiempo de deploy no cambia (flags por corrida › servidor ›
+  local › default), y `--set-checkpoint` es mutuamente excluyente con los
+  overrides por corrida `--checkpoint`/`--no-checkpoint`. De paso tapa un bug
+  latente de pérdida de datos: `SaveProject` no re-emitía un `[checkpoint]`
+  declarado por el proyecto, así que cualquier otro `--set-*` lo borraba
+  silenciosamente; ahora se re-emite cuando su origen es el proyecto (rastreado
+  con `CheckpointSource`), sin arrastrar al archivo del proyecto una política
+  que solo vive en `global.toml`.
 - **Deploy git por target: la rama `echo/deploy` en el servidor con hashes
   idénticos.** Opt-in por target (`[connect_targets.<t>]`/`[connect]`:
   `git_deploy`/`git_branch`/`git_path`). Cuando `remote_path` es un checkout

@@ -117,6 +117,13 @@ type Config struct {
 	CheckpointMethod string
 	CheckpointKeep   int
 
+	// CheckpointSource records where the [checkpoint] table came from —
+	// "global", "project", or "" when unset (pure defaults) (Unit 104). It
+	// lets `SaveProject` re-emit a project-declared policy (so an unrelated
+	// --set-* write never drops it) without copying a global-only policy
+	// down into the project file, and backs `deploy --set-checkpoint`.
+	CheckpointSource string
+
 	// Push ([push], global + per-project, project wins) — the explicit
 	// destination directory for `push` (Unit 91). PushPath, when set,
 	// overrides the auto-detected addons dir: every module lands at
@@ -513,6 +520,7 @@ func Load(projectPath string) (*Config, error) {
 	// The project [checkpoint] overrides the global one field by field (a
 	// blank/zero field leaves the global/default value untouched).
 	if p.Checkpoint != nil {
+		cfg.CheckpointSource = "project"
 		if p.Checkpoint.Mode != "" {
 			cfg.CheckpointMode = p.Checkpoint.Mode
 		}
@@ -854,6 +862,17 @@ func SaveProject(cfg *Config) error {
 	if cfg.PushPath != "" || cfg.PushMkdir != nil {
 		p.Push = &pushConfig{Path: cfg.PushPath, Mkdir: cfg.PushMkdir}
 	}
+	// Re-emit a project-declared [checkpoint] so an unrelated --set-* write
+	// never drops it, and so `deploy --set-checkpoint` persists (Unit 104).
+	// Gate on "project": a policy that only lives in global.toml must NOT be
+	// copied down into the project file.
+	if cfg.CheckpointSource == "project" {
+		p.Checkpoint = &checkpointConfig{
+			Mode:   cfg.CheckpointMode,
+			Method: cfg.CheckpointMethod,
+			Keep:   cfg.CheckpointKeep,
+		}
+	}
 	// Persist the [deploy] section when any of the actions list, the push
 	// default, the test default, or the pinned test modules is set; a
 	// pure-default config leaves it out.
@@ -979,6 +998,7 @@ func applyCheckpoint(cfg *Config, f *checkpointConfig) {
 	if f == nil {
 		return
 	}
+	cfg.CheckpointSource = "global"
 	if f.Mode != "" {
 		cfg.CheckpointMode = f.Mode
 	}
