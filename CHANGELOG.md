@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **`promote`: pickers de worktree más legibles y sin rutas absolutas
+  redundantes.** Las filas que muestran un worktree del mismo repo (destino en
+  el picker "Destination worktree" y origen en "Promote from") ya no imprimen
+  la ruta absoluta completa: un helper `shortWorktreePath` la renderiza relativa
+  al directorio que contiene el checkout de origen, así los worktrees hermanos
+  aparecen como su nombre de hoja (`muutrade-develop`) en vez de un path largo
+  con prefijo casi idéntico en todas las filas; cae a `~/…` y luego a la ruta
+  absoluta cuando el worktree vive fuera de ese padre. Además, el picker de
+  origen deja de mostrar la rama del worktree actual como una fila de rama más
+  (con su `(wt: <path>)` apuntando al mismo directorio, que se leía como
+  duplicado de la fila dirty): ahora se etiqueta como
+  `◆ this worktree · committed history (<rama>)` frente a
+  `◆ this worktree · uncommitted changes`, dejando explícito que son dos fuentes
+  distintas —historial commiteado vs cambios sin commitear— del mismo checkout.
+  Ambas filas de "this worktree" encabezan ahora el picker (dirty y luego el
+  historial de la rama actual), y las demás ramas siguen por fecha del último
+  commit (más reciente primero), que es el orden en que sueles promover.
+
 ### Added
 - **`deploy --set-checkpoint`: fija la política de checkpoint del proyecto
   desde la CLI, sin editar TOML a mano.** Un setter config-only (calcado de

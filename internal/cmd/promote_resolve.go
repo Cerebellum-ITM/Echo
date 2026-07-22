@@ -4,14 +4,35 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/charmbracelet/huh"
 	"github.com/pascualchavez/echo/internal/config"
 )
 
-// promoteDirtyRow is the fixed source-picker row for the current worktree.
-const promoteDirtyRow = "◆ this worktree — dirty changes"
+// promoteDirtyRow is the fixed source-picker row for the current worktree's
+// uncommitted changes.
+const promoteDirtyRow = "◆ this worktree · uncommitted changes"
+
+// shortWorktreePath renders a worktree path relative to the directory that
+// holds the source checkout, so sibling worktrees of the same repo show as
+// their leaf name (e.g. "muutrade-develop") instead of a long, mostly-shared
+// absolute path. It falls back to a "~"-collapsed home path, then the absolute
+// path, when the worktree lives outside that parent.
+func shortWorktreePath(path, srcRoot string) string {
+	clean := filepath.Clean(path)
+	parent := filepath.Dir(filepath.Clean(srcRoot))
+	if rel, err := filepath.Rel(parent, clean); err == nil && !strings.HasPrefix(rel, "..") {
+		return rel
+	}
+	if home, err := os.UserHomeDir(); err == nil {
+		if rel, err := filepath.Rel(home, clean); err == nil && !strings.HasPrefix(rel, "..") {
+			return "~/" + rel
+		}
+	}
+	return clean
+}
 
 // promoteDestBranch applies the destination-branch precedence: --to ›
 // [promote] branch. There is NO hardcoded default — an empty result means
@@ -142,7 +163,7 @@ func pickDestWorktree(opts PromoteOpts, srcRoot string, wts []gitWorktree) (gitW
 		if w.branch == "" || sameWorktree(w.path, srcRoot) {
 			continue // detached, or the source itself — never a destination
 		}
-		lbl := fmt.Sprintf("%s  (%s)", w.path, w.branch)
+		lbl := fmt.Sprintf("%s  (%s)", shortWorktreePath(w.path, srcRoot), w.branch)
 		labels = append(labels, lbl)
 		byLabel[lbl] = w
 	}
@@ -214,15 +235,35 @@ func resolveMode(ctx context.Context, opts PromoteOpts, p promoteArgs, srcRoot s
 			wtByBranch[w.branch] = w.path
 		}
 	}
+	// The branch checked out at srcRoot is "this worktree" too — its committed
+	// history, as opposed to the dirty row's uncommitted changes. Mark it so the
+	// two rows read as distinct sources of the same checkout, not duplicates.
+	curBranch := ""
+	for _, w := range wts {
+		if sameWorktree(w.path, srcRoot) {
+			curBranch = w.branch
+			break
+		}
+	}
 	labels := []string{promoteDirtyRow}
 	byLabel := map[string]string{}
+	// "This worktree" leads the list: the dirty row (above), then this branch's
+	// committed history — both sources of the checkout you're standing in — before
+	// any other branch.
+	if curBranch != "" && curBranch != destBranch {
+		lbl := fmt.Sprintf("◆ this worktree · committed history (%s)", curBranch)
+		labels = append(labels, lbl)
+		byLabel[lbl] = curBranch
+	}
+	// Other branches follow in git's recency order (most recent commit first),
+	// which surfaces the branches you're likely promoting from.
 	for _, b := range branches {
-		if b == destBranch {
-			continue // never funnel the destination into itself
+		if b == destBranch || b == curBranch {
+			continue // dest never funnels into itself; curBranch is already listed
 		}
 		lbl := b
 		if wt := wtByBranch[b]; wt != "" {
-			lbl = fmt.Sprintf("%s  (wt: %s)", b, wt)
+			lbl = fmt.Sprintf("%s  (wt: %s)", b, shortWorktreePath(wt, srcRoot))
 		}
 		labels = append(labels, lbl)
 		byLabel[lbl] = b
