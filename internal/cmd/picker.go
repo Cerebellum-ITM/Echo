@@ -282,6 +282,10 @@ func (m fuzzyPicker) View() string {
 
 	bar := lipgloss.NewStyle().Foreground(m.accent).Render("│ ")
 	dim := lipgloss.NewStyle().Foreground(p.Dim)
+	// The secondary column (row tail) is lifted a step above Dim so metadata
+	// like `(wt: …)` doesn't wash out against the background; other dim chrome
+	// (title, scroll hints) stays at Dim.
+	tailStyle := lipgloss.NewStyle().Foreground(theme.Lighten(p.Dim, 0.3))
 
 	var b strings.Builder
 	b.WriteString(bar)
@@ -329,7 +333,7 @@ func (m fuzzyPicker) View() string {
 			}
 			row += headStyle.Render(head)
 			if tail != "" {
-				row += renderTailWithTags(tail, dim, p)
+				row += renderTailWithTags(tail, tailStyle, p)
 			}
 			b.WriteString(row + "\n")
 		}

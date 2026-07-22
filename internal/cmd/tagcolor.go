@@ -14,18 +14,28 @@ import (
 // `[2024]` or `[#42]` in a subject isn't mistaken for one.
 var tagRe = regexp.MustCompile(`\[[A-Za-z]+\]`)
 
-// renderTailWithTags renders a picker row's secondary column (the dim tail
-// after the name) with any leading `[TAG]` token colored by its type, the
-// rest staying dim. Used so the deploy commit picker tints each commit's
-// tag; rows without a tag (every other picker) render fully dim, unchanged.
+// wtPathRe captures the worktree path inside a picker tail like
+// `(wt: proj-develop)` — group 1 is the `wt: ` label, group 2 the path — so the
+// path reads like a path (Info-tinted) while the surrounding chrome stays
+// secondary, same as `~` elsewhere in the theme.
+var wtPathRe = regexp.MustCompile(`(wt:\s*)([^)]+)`)
+
+// renderTailWithTags renders a picker row's secondary column (the tail after
+// the name). A leading `[TAG]` token is colored by its type (deploy commit
+// picker); a `wt: <path>` annotation has its path tinted like a path (promote
+// worktree pickers); everything else renders in the passed secondary style.
 func renderTailWithTags(tail string, dim lipgloss.Style, p theme.Palette) string {
-	loc := tagRe.FindStringIndex(tail)
-	if loc == nil {
-		return dim.Render(tail)
+	if loc := tagRe.FindStringIndex(tail); loc != nil {
+		before, tag, after := tail[:loc[0]], tail[loc[0]:loc[1]], tail[loc[1]:]
+		inner := strings.Trim(tag, "[]")
+		return dim.Render(before) + tagStyle(inner, p).Render(tag) + dim.Render(after)
 	}
-	before, tag, after := tail[:loc[0]], tail[loc[0]:loc[1]], tail[loc[1]:]
-	inner := strings.Trim(tag, "[]")
-	return dim.Render(before) + tagStyle(inner, p).Render(tag) + dim.Render(after)
+	if loc := wtPathRe.FindStringSubmatchIndex(tail); loc != nil {
+		before, label, path, after := tail[:loc[2]], tail[loc[2]:loc[3]], tail[loc[4]:loc[5]], tail[loc[5]:]
+		pathStyle := lipgloss.NewStyle().Foreground(p.Info)
+		return dim.Render(before) + dim.Render(label) + pathStyle.Render(path) + dim.Render(after)
+	}
+	return dim.Render(tail)
 }
 
 // tagStyle maps a commit tag to its display style. Known tags use semantic

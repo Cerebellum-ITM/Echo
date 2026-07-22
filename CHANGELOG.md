@@ -8,6 +8,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- **Pickers: la columna secundaria deja de perderse contra el fondo.** La cola
+  de cada fila (metadata a la derecha del nombre, p. ej. `(wt: proj-develop)`)
+  se pintaba con `Dim`, que sobre el fondo daba un contraste ~3:1 y "se perdía".
+  Ahora se sube un paso: `theme.Lighten(Dim, 0.3)`, derivado de la paleta activa
+  (sin hex hardcodeado), y solo para la cola —el resto del chrome dim (título,
+  hints de scroll) se queda en `Dim`. Además, la ruta de un worktree dentro de
+  la cola (`wt: <path>`) se tinta con `Info`, igual que el `~` en el resto del
+  tema, así se lee como ruta y no como texto plano apagado.
 - **`promote`: pickers de worktree más legibles y sin rutas absolutas
   redundantes.** Las filas que muestran un worktree del mismo repo (destino en
   el picker "Destination worktree" y origen en "Promote from") ya no imprimen
