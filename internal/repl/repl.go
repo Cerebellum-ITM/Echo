@@ -514,7 +514,7 @@ func helpSections() []helpSection {
 			{"  add", "Wizard: name → phase → where → exec dir (picker) → command"},
 			{"  edit [<name>]", "Edit an action in place (picker when no name)"},
 			{"  rm [<name>] [--force]", "Delete an action (picker when no name)"},
-			{"  --from <target>/--remote", "Show the server list / target for the remote picker & upload"},
+			{"  --from <target>/--remote", "Scope add/edit/rm to THAT target's server profile (else the local list)"},
 			{"  --json", "Emit the action list as JSON to stdout (with list)"},
 			{"promote [<branch>]", "Funnel this worktree's changes onto the deploy branch (no args: picker)"},
 			{"  --dirty [<folder>...]", "Move the current worktree's dirty patch (by folder); stays uncommitted"},

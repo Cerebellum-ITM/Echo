@@ -206,36 +206,9 @@ func nonEmptyField(field string) func(string) error {
 	}
 }
 
-// offerUploadActions asks (default No) whether to upload the local action set
-// to the server's project profile, and on yes rewrites its [[deploy.actions]]
-// over SSH, preserving every other key. Skipped silently when no remote
-// target resolves. A prod target gets the red confirm first.
-func offerUploadActions(ctx context.Context, opts ActionsOpts, resolveRemote func() (remoteShellContext, error), actions []config.DeployAction) error {
-	if !stdinIsTTY() {
-		return nil
-	}
-	rsc, err := resolveRemote()
-	if err != nil {
-		return nil // no target to upload to — local save already succeeded
-	}
-	up := false
-	form := huh.NewForm(huh.NewGroup(
-		huh.NewConfirm().
-			Title("Upload these actions to the server profile?").
-			Description("Rewrites [[deploy.actions]] on " + rsc.sshHost + " (other keys preserved).").
-			Affirmative("Upload").Negative("No").Value(&up),
-	)).WithTheme(BuildHuhTheme(opts.Palette)).WithInput(os.Stdin).WithOutput(os.Stdout)
-	if ferr := form.Run(); ferr != nil {
-		return nil // declining the offer is not a command failure
-	}
-	if !up {
-		return nil
-	}
-	if cerr := confirmRemoteProd(opts.Palette, "upload actions", rsc, opts.Args); cerr != nil {
-		return cerr
-	}
-	return uploadActionsToServer(ctx, rsc, actions, opts)
-}
+// actionsRunSSH is the seam the server-scoped writes go through, so tests can
+// assert the composed profile without an ssh binary (mirrors ckptRunSSH).
+var actionsRunSSH = runSSH
 
 // uploadActionsToServer reads the server's projects/<key>.toml, splices in the
 // new [[deploy.actions]] (config.WithDeployActions preserves the rest), and
@@ -243,16 +216,16 @@ func offerUploadActions(ctx context.Context, opts ActionsOpts, resolveRemote fun
 func uploadActionsToServer(ctx context.Context, rsc remoteShellContext, actions []config.DeployAction, opts ActionsOpts) error {
 	key := config.ProjectKey(rsc.remotePath)
 	remoteFile := "~/.config/echo/projects/" + key + ".toml"
-	existing, _ := runSSH(ctx, rsc.sshHost, "cat "+remoteFile, nil) // absent → empty
+	existing, _ := actionsRunSSH(ctx, rsc.sshHost, "cat "+remoteFile, nil) // absent → empty
 	updated, err := config.WithDeployActions(existing, actions)
 	if err != nil {
 		return fmt.Errorf("compose remote profile: %w", err)
 	}
 	// Ensure the projects dir exists, then write the file from stdin.
-	if _, derr := runSSH(ctx, rsc.sshHost, "mkdir -p ~/.config/echo/projects", nil); derr != nil {
+	if _, derr := actionsRunSSH(ctx, rsc.sshHost, "mkdir -p ~/.config/echo/projects", nil); derr != nil {
 		return fmt.Errorf("prepare remote profile dir: %w", derr)
 	}
-	if _, werr := runSSH(ctx, rsc.sshHost, "cat > "+remoteFile, updated); werr != nil {
+	if _, werr := actionsRunSSH(ctx, rsc.sshHost, "cat > "+remoteFile, updated); werr != nil {
 		return fmt.Errorf("write remote profile: %w", werr)
 	}
 	opts.log("INFO", "", "uploaded actions to server", rsc.prof.DBName,

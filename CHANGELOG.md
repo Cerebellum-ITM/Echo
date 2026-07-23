@@ -8,6 +8,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- **`actions add|edit|rm` ahora se scopean con `--from`/`--remote`: cada target
+  puede tener sus propias actions desde una sola carpeta.** Antes los tres
+  subcomandos mutaban siempre la **única lista local** y luego ofrecían subir
+  esa lista **completa** al server resuelto; desde un repo de addons que
+  alimenta N entornos eso no puede expresar "action A en dev, action B en
+  prod": cada upload empujaba la unión al server que estuviera linkeado en ese
+  momento, contaminando las listas entre sí. La resolución nunca fue el
+  problema (`resolveDeployActions` ya es server-first y cada target tiene su
+  propio perfil por `remote_path`); faltaba poder decir "edita las actions **de
+  este target**". Ahora `--from <target>`/`--remote` es el **selector de
+  scope**: con él la operación es un read-modify-write directo del
+  `[[deploy.actions]]` del perfil de server de ese target, sin leer ni escribir
+  la lista local; sin él edita solo la lista local (el fallback). Se elimina el
+  prompt "Upload these actions to the server profile?" —el mecanismo que
+  causaba la contaminación cruzada—, porque el scope ya es explícito. Además,
+  como la resolución es wholesale, vaciar la lista de un server **no** significa
+  "sin actions" sino que ese target cae al fallback local: un `rm` que borra la
+  última entrada del server ahora emite un WARNING nombrando la lista local que
+  toma el relevo. Las escrituras server-scoped siguen prod-gated. La resolución
+  en tiempo de deploy queda intacta.
 - **`deploy --rollback` ya no destruye el checkpoint: por default lo conserva
   y el punto queda restaurable de nuevo.** Antes, el rollback del método `db`
   restauraba renombrando el checkpoint encima de la BD viva (`DROP` viva +

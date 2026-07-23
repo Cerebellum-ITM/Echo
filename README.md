@@ -737,16 +737,26 @@ TOML by hand:
 | `actions add`                 | Wizard: name → phase → where → exec dir → command                 |
 | `actions edit [<name>]`       | Edit an action in place (picker when no name)                     |
 | `actions rm [<name>] [--force]` | Delete an action (picker when no name)                          |
-| `  --from <t>` / `--remote`    | Resolve a remote target for the exec-dir picker and the upload offer |
+| `  --from <t>` / `--remote`    | **Scope**: operate on that target's server profile instead of the local list |
 | `  --json`                    | Emit the list as JSON (with `list`)                               |
+
+**`--from`/`--remote` is the scope selector.** With a remote flag,
+`add`/`edit`/`rm` read and write **that target's** server profile
+(`~/.config/echo/projects/<key>.toml` on the server, keyed by its
+`remote_path`) and never touch the local list; without one they edit the
+**local** list — the fallback that applies to any target whose server declares
+no actions. That is how one addons repo feeding several environments gives each
+one its own actions: put them on each server, scoped by `--from`.
+
+Because resolution is wholesale, emptying a server's list does **not** mean "no
+actions run" — that target falls back to the local list, so an `rm` that
+removes the last server entry warns and names the local set that takes over.
+Server-scoped writes are prod-gated (`--force` skips).
 
 The wizard's exec-dir step offers **Project root**, **Addons directory**
 (resolved from the profile), **Pick a directory…** (the remote SSH browser for
 a `remote` action, a local browser for a `local` one), or **Type a path** — a
-picked path is stored relative when it falls under the root. Edits persist to
-the **local** `[[deploy.actions]]`; after each change Echo can optionally
-upload the set to the server's project profile over SSH (rewriting only the
-`[[deploy.actions]]` section, prod-gated).
+picked path is stored relative when it falls under the root.
 
 `actions` lists the effective set — name · phase · where · exec_path · run —
 so you can see at a glance what runs around each deploy:
