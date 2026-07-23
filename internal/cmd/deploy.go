@@ -1688,8 +1688,10 @@ func resolveDeployRemote(opts DeployOpts, from string) (sshHost, remotePath, fro
 func resolveRemoteTarget(cfg *config.Config, palette theme.Palette, from string, log func(level, sub, msg, db string, fields ...[2]string)) (sshHost, remotePath, fromName string, err error) {
 	sshHost, remotePath, err = resolvePullRemote(cfg, from)
 	if errors.Is(err, ErrNoPullRemote) && from == "" {
+		// No binding to mark here — this fires precisely when the directory
+		// has none, so the picker opens on the first row.
 		t, perr := pickConnectTarget(cfg.ConnectTargets, palette,
-			"Select connect target", log)
+			"Select connect target", "", log)
 		if perr != nil {
 			if errors.Is(perr, ErrNoConnectTargets) {
 				return "", "", "", ErrNoPullRemote

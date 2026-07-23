@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **`link` se vuelve un switcher de entornos: `--next`, `--list` y un picker
+  que marca dónde estás.** El binding de `link` es a lo que cae cualquier
+  comando cuando no pasas `--from`, así que *es* el "sistema actual"; pero
+  cambiarlo obligaba a reescribir `link <nombre>` de memoria y el picker no
+  mostraba cuál era el actual ni con qué lo estabas comparando. Ahora: el
+  `link` pelado abre el picker con el target actual **marcado (`●`) y
+  preseleccionado** (el cursor arranca en esa fila, vía el nuevo
+  `runSingleFuzzyPickerAt`), y sus filas llevan `nombre · db · host:path`;
+  elegir el actual es **no-op** (INFO `already linked`, sin `SaveProject` ni
+  probe). `--next` cicla al siguiente target del registro con wrap —con dos
+  targets es un toggle directo dev ⇄ prod, sin picker— y es `ErrUsage` con
+  menos de dos; si el directorio no está linkeado (o el binding fue escrito a
+  mano y no casa con ningún target) arranca en el primero. `--list` inventaría
+  los targets marcando el actual, con `--json` para scripting, y **sin SSH ni
+  escritura**, a diferencia de `--show`, que sondea el binding actual.
+  Decisión explícita: ninguno de los tres hace SSH —resolver el `stage` de cada
+  target costaría un round trip por fila y convertiría el toggle en un stall—.
+  `--next`/`--list`/`--show`/`--rm`/positional son mutuamente excluyentes y
+  `--json` solo acompaña a `--list`. El rebind real conserva el invariante de
+  siempre: guarda antes de sondear, y un remoto inalcanzable es WARNING, no
+  fallo.
+
 ### Changed
 - **`actions add|edit|rm` ahora se scopean con `--from`/`--remote`: cada target
   puede tener sus propias actions desde una sola carpeta.** Antes los tres

@@ -33,8 +33,11 @@ func (sess *session) runLink(ctx context.Context, args []string) {
 
 	switch {
 	case errors.Is(err, cmd.ErrCancelled), errors.Is(err, huh.ErrUserAborted),
-		errors.Is(err, cmd.ErrNonInteractive):
+		errors.Is(err, cmd.ErrNonInteractive), errors.Is(err, cmd.ErrUsage):
 		sess.finalize("link", stats.errors, stats.warnings, err)
+		if errors.Is(err, cmd.ErrUsage) {
+			sess.exitCode = exitUsage
+		}
 	case err != nil:
 		sess.commandFailureLog("link", err, stats.errors, stats.warnings)
 	default:

@@ -101,7 +101,9 @@ and every command is wired to the right containers.
 | `  --list` | List all project aliases                                         |
 | `  --rm <name>` | Remove an alias                                            |
 | `  --migrate` | Backfill aliases from connect targets with local paths       |
-| `link [<target>]` | Bind this directory to a connect target (no args: picker)  |
+| `link [<target>]` | Switch this directory's connect target (no args: picker, current marked) |
+| `  --next` | Switch to the next target, wrapping — the two-target toggle      |
+| `  --list [--json]` | List the targets, marking the current one (no SSH, no write) |
 | `  --show` | Show the binding, probe the remote, stream its `compose ps`     |
 | `  --rm`   | Remove this directory's `[connect]` binding                     |
 | `help`   | Print the in-REPL command list, grouped by area                    |
@@ -529,6 +531,22 @@ Then, each deploy (after the server has pulled the new code):
 echo deploy --dry-run             # pick commits, see the plan, touch nothing
 echo deploy                       # the real thing (red confirm if the remote stage is prod)
 ```
+
+**Switching between environments.** One repo usually feeds more than one
+target (a dev instance and the client-facing staging one). The `link` binding
+is what every command falls back to when `--from` is absent, so it *is* the
+"current system" — and `link` is how you move it:
+
+```sh
+echo link --list                  # who's registered, current marked ● (no SSH, no write)
+echo link                         # picker, opens on the current target
+echo link --next                  # switch to the next one — a plain toggle with two targets
+```
+
+Picking the target you are already on is a no-op (no rewrite, no probe). The
+switcher, `--next` and `--list` never open an SSH connection, so they are
+instant; `--show` is the one that probes the current binding. And any single
+command can still cross over without switching at all: `deploy --from staging`.
 
 ```
   ❯ echo deploy
