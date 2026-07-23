@@ -386,12 +386,12 @@ func TestRestoreCheckpointDBMethodOrder(t *testing.T) {
 		return []byte(""), nil
 	}
 	entry := config.CheckpointEntry{Name: "mydb__ckpt_x", Method: "db", DB: "mydb"}
-	consumed, err := restoreCheckpoint(context.Background(), testRSC(), entry, nil, nil)
+	consumed, err := restoreCheckpoint(context.Background(), testRSC(), entry, true, nil, nil)
 	if err != nil {
 		t.Fatalf("restore: %v", err)
 	}
 	if !consumed {
-		t.Error("db-method restore must consume the checkpoint")
+		t.Error("db-method restore with consume=true must consume the checkpoint")
 	}
 	iDrop := indexOfCall(calls, `DROP DATABASE IF EXISTS "mydb"`)
 	iRename := indexOfCall(calls, "RENAME TO")
@@ -412,6 +412,41 @@ func TestRestoreCheckpointDBMethodOrder(t *testing.T) {
 	}
 }
 
+func TestRestoreCheckpointDBMethodKeep(t *testing.T) {
+	var calls []string
+	orig := ckptRunSSH
+	defer func() { ckptRunSSH = orig }()
+	ckptRunSSH = func(ctx context.Context, host, remoteCmd string, stdin []byte) ([]byte, error) {
+		calls = append(calls, remoteCmd)
+		return []byte(""), nil
+	}
+	entry := config.CheckpointEntry{Name: "mydb__ckpt_x", Method: "db", DB: "mydb"}
+	consumed, err := restoreCheckpoint(context.Background(), testRSC(), entry, false, nil, nil)
+	if err != nil {
+		t.Fatalf("restore: %v", err)
+	}
+	if consumed {
+		t.Error("db-method restore with consume=false must preserve the checkpoint")
+	}
+	// The checkpoint must be copied back via TEMPLATE, never renamed away.
+	iDrop := indexOfCall(calls, `DROP DATABASE IF EXISTS "mydb"`)
+	iCopy := indexOfCall(calls, `CREATE DATABASE "mydb" TEMPLATE "mydb__ckpt_x"`)
+	if iDrop < 0 || iCopy < 0 {
+		t.Fatalf("missing drop/template-copy: %v", calls)
+	}
+	if iDrop > iCopy {
+		t.Errorf("drop must precede the template copy (drop=%d copy=%d)", iDrop, iCopy)
+	}
+	if indexOfCall(calls, "RENAME TO") >= 0 {
+		t.Errorf("keep path must not rename the checkpoint: %v", calls)
+	}
+	// The fresh live DB must have connections enabled after the copy.
+	iReenable := indexOfCall(calls, "ALLOW_CONNECTIONS true")
+	if iReenable < iCopy {
+		t.Errorf("ALLOW_CONNECTIONS true must come after the copy (reenable=%d copy=%d)", iReenable, iCopy)
+	}
+}
+
 func TestRestoreCheckpointDumpMethod(t *testing.T) {
 	var calls, streamCmds []string
 	origSSH := ckptRunSSH
@@ -426,7 +461,7 @@ func TestRestoreCheckpointDumpMethod(t *testing.T) {
 		return nil
 	}
 	entry := config.CheckpointEntry{Name: "d.dump", Method: "dump", DB: "mydb", DumpPath: "backups/checkpoints/d.dump"}
-	consumed, err := restoreCheckpoint(context.Background(), testRSC(), entry, nil, nil)
+	consumed, err := restoreCheckpoint(context.Background(), testRSC(), entry, false, nil, nil)
 	if err != nil {
 		t.Fatalf("restore dump: %v", err)
 	}

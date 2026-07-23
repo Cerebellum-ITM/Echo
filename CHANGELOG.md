@@ -8,6 +8,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- **`deploy --rollback` ya no destruye el checkpoint: por default lo conserva
+  y el punto queda restaurable de nuevo.** Antes, el rollback del método `db`
+  restauraba renombrando el checkpoint encima de la BD viva (`DROP` viva +
+  `RENAME` checkpoint→viva): rápido y sin disco extra, pero **consumía** el
+  checkpoint —su objeto y su entrada de metadata desaparecían—, así que tras un
+  rollback ya no había punto de retorno. Ahora `restoreCheckpoint` copia el
+  checkpoint de vuelta con `CREATE DATABASE … TEMPLATE` (la BD rota se dropea
+  primero, liberando el espacio que la copia necesita) y lo deja intacto
+  (sigue oculto para Odoo), de modo que puedes repetir el rollback o
+  redeployar y volver a rollback. Cuesta ~1× de disco más durante la restauración
+  que el rename. Se agrega `--consume-checkpoint` (solo con `--rollback`) para
+  recuperar el comportamiento antiguo cuando el disco esté justo: renombra y
+  destruye el checkpoint. El método `dump` no cambia (su archivo ya se
+  preservaba). El auto-rollback en fallo de deploy sigue consumiendo su
+  checkpoint recién creado, porque su propósito termina al revertir el deploy
+  fallido.
 - **Pickers: la columna secundaria deja de perderse contra el fondo.** La cola
   de cada fila (metadata a la derecha del nombre, p. ej. `(wt: proj-develop)`)
   se pintaba con `Dim`, que sobre el fondo daba un contraste ~3:1 y "se perdía".

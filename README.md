@@ -379,6 +379,7 @@ the code there — that's for the tool you use to sync the working tree.
 | `  --test-add` / `--test-rm <list>` | Add/remove modules from the pinned test list (no deploy) |
 | `  --test-clear`   | Clear the pinned test modules — back to testing what's deployed (no deploy) |
 | `  --rollback`     | Restore the target's most recent checkpoint (no deploy)  |
+| `  --consume-checkpoint` | With `--rollback`: restore a `db` checkpoint by renaming it over the live DB (cheaper on disk, but destroys the checkpoint — no restore point remains) |
 
 **Push by default.** For an image-built remote where a deploy always ships
 code, make `--push` the default instead of typing it every time: `deploy
@@ -437,10 +438,11 @@ later inspection, no prompt). The explicit flag wins over `--force` and over the
 TTY prompt; without either flag, behavior is unchanged. `watch` always restores.
 
 Two methods: `db` (the default — `CREATE DATABASE … TEMPLATE`, a fast
-file-level copy, `STRATEGY FILE_COPY` on PostgreSQL 15+; rollback is a near-
-instant `DROP` + `RENAME`) and `dump` (`pg_dump -Fc` kept under the server's
-`backups/checkpoints/`, slower but with a low disk peak). Checkpointing is
-**on for `staging`/`prod`, off for `dev`** by default.
+file-level copy, `STRATEGY FILE_COPY` on PostgreSQL 15+; rollback copies the
+checkpoint back the same way, leaving it intact so the point stays restorable)
+and `dump` (`pg_dump -Fc` kept under the server's `backups/checkpoints/`, slower
+but with a low disk peak). Checkpointing is **on for `staging`/`prod`, off for
+`dev`** by default.
 
 The policy — `mode = "auto"|"on"|"off"`, `method = "db"|"dump"`, `keep = N` —
 lives in a `[checkpoint]` section and is resolved **server-first**: it is read
@@ -465,7 +467,13 @@ for "it passed, but I found the bug 20 minutes later". It picks the most recent
 checkpoint (a picker when there are several on a TTY), red-confirms with an
 explicit **age warning** when the checkpoint is over an hour old (that's how
 much captured data a restore would discard), restores, and un-marks the
-commits so they can be redeployed.
+commits so they can be redeployed. By default the checkpoint is **preserved**
+(the `db` method copies it back rather than consuming it), so the same point
+stays restorable — repeat the rollback, or redeploy and roll back again. Pass
+`--consume-checkpoint` to use the older near-instant `DROP` + `RENAME` instead:
+it needs no extra disk but destroys the checkpoint, leaving no restore point.
+The on-failure auto-rollback (during a deploy) still consumes its just-made
+checkpoint, since its purpose ends the moment the failed deploy is reverted.
 
 The `checkpoint` command inspects and cleans them:
 

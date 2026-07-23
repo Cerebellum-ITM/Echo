@@ -41,6 +41,8 @@ func TestParseDeployArgs(t *testing.T) {
 		{[]string{"--auto", "--json", "--dry-run"}, deployArgs{limit: 20, auto: true, jsonOut: true, dryRun: true}, false},
 		{[]string{"--auto", "--modules=sale"}, deployArgs{}, true}, // mutually exclusive
 		{[]string{"--auto", "--commits=a1b2"}, deployArgs{}, true}, // mutually exclusive
+		{[]string{"--rollback", "--consume-checkpoint"}, deployArgs{limit: 20, rollback: true, consumeCheckpoint: true}, false},
+		{[]string{"--consume-checkpoint"}, deployArgs{}, true}, // requires --rollback
 	}
 	for _, tc := range cases {
 		got, err := parseDeployArgs(tc.in)

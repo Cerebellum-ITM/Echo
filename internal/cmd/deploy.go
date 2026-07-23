@@ -88,6 +88,12 @@ type deployArgs struct {
 	// rollback restores the target's most recent checkpoint instead of
 	// deploying (deploy --rollback). Mutually exclusive with any selection.
 	rollback bool
+	// consumeCheckpoint restores a "db"-method checkpoint by renaming it over
+	// the live DB (the pre-Unit behavior) instead of copying it back — cheaper
+	// on disk but it destroys the checkpoint, leaving no restore point. Applies
+	// only to `deploy --rollback`; ignored for the "dump" method, which always
+	// preserves its file.
+	consumeCheckpoint bool
 	// noActions skips all declared deploy actions (Unit 92) for this run —
 	// the escape hatch when a server-declared action is broken.
 	noActions bool
@@ -277,6 +283,8 @@ func parseDeployArgs(args []string) (deployArgs, error) {
 			out.setCheckpoint.keep = &n
 		case a == "--rollback":
 			out.rollback = true
+		case a == "--consume-checkpoint":
+			out.consumeCheckpoint = true
 		case a == "--no-git":
 			out.noGit = true
 		case a == "--restore-code":
@@ -362,6 +370,9 @@ func parseDeployArgs(args []string) (deployArgs, error) {
 	}
 	if out.rollback && (out.auto || len(out.commits) > 0 || len(out.modules) > 0 || out.push) {
 		return out, fmt.Errorf("%w: --rollback cannot be combined with --commits/--modules/--auto/--push", ErrUsage)
+	}
+	if out.consumeCheckpoint && !out.rollback {
+		return out, fmt.Errorf("%w: --consume-checkpoint only applies to --rollback", ErrUsage)
 	}
 	if out.restoreCodeSet && (out.rollback || out.auto || out.push ||
 		len(out.commits) > 0 || len(out.modules) > 0 || out.isTestManage()) {
@@ -1403,7 +1414,10 @@ func handleDeployFailure(ctx context.Context, opts DeployOpts, rsc remoteShellCo
 	opts.log("INFO", "rollback", "stopping app before restore", rsc.prof.DBName)
 	_ = runSSHStream(ctx, rsc.sshHost, remoteStopApp(rsc), nil, opts.StreamOut)
 
-	consumed, rerr := restoreCheckpoint(ctx, rsc, entry, opts.StreamOut, opts.Log)
+	// On-failure auto-rollback keeps consuming the just-made checkpoint (its
+	// purpose is served the moment the failed deploy is reverted). The
+	// keep-a-restore-point behavior is opt-in via `deploy --rollback`.
+	consumed, rerr := restoreCheckpoint(ctx, rsc, entry, true, opts.StreamOut, opts.Log)
 	if rerr != nil {
 		// The rollback itself failed: keep the checkpoint recorded for a manual
 		// retry and surface both failures.
@@ -1487,7 +1501,10 @@ func runDeployRollback(ctx context.Context, opts DeployOpts, p deployArgs) (Depl
 	if err := runSSHStream(ctx, rsc.sshHost, remoteStopApp(rsc), nil, opts.StreamOut); err != nil {
 		return DeployResult{}, fmt.Errorf("stop failed: %w", err)
 	}
-	consumed, rerr := restoreCheckpoint(ctx, rsc, chosen, opts.StreamOut, opts.Log)
+	// Keep the checkpoint by default (restore leaves it intact, so the point
+	// stays restorable); --consume-checkpoint opts into the cheaper rename that
+	// destroys it. The "dump" method preserves its file regardless.
+	consumed, rerr := restoreCheckpoint(ctx, rsc, chosen, p.consumeCheckpoint, opts.StreamOut, opts.Log)
 	if rerr != nil {
 		return DeployResult{}, fmt.Errorf("restore failed: %w", rerr)
 	}
@@ -1505,13 +1522,18 @@ func runDeployRollback(ctx context.Context, opts DeployOpts, p deployArgs) (Depl
 	}
 
 	// Un-mark the checkpoint's commits so they can be corrected and redeployed;
-	// drop a consumed (db-method) checkpoint from the store.
+	// drop a consumed (--consume-checkpoint) checkpoint from the store. When it
+	// was preserved (the default), the entry stays so the point is restorable
+	// again.
 	_ = config.UnmarkDeployed(projectKey, targetKey, chosen.DeploySHAs)
+	disposition := "preserved"
 	if consumed {
 		_ = config.RemoveCheckpoint(projectKey, targetKey, chosen.Name)
+		disposition = "consumed"
 	}
 	opts.log("INFO", "", "rollback complete", rsc.prof.DBName,
-		[2]string{"checkpoint", chosen.Name}, [2]string{"unmarked", strconv.Itoa(len(chosen.DeploySHAs))})
+		[2]string{"checkpoint", chosen.Name}, [2]string{"disposition", disposition},
+		[2]string{"unmarked", strconv.Itoa(len(chosen.DeploySHAs))})
 	return DeployResult{
 		Target:     rsc.fromName,
 		DB:         rsc.prof.DBName,
