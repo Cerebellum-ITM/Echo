@@ -215,10 +215,17 @@ func projectlessOneShot(name string, args []string) bool {
 	return false
 }
 
-// hasRemoteFlag reports whether args select the remote mode.
+// hasRemoteFlag reports whether args select the remote mode — a named or
+// linked connect target (`--from`/`--remote`) or a Reverb environment
+// (`-E`/`--env`, Unit 107). All of them reach an instance over SSH, so the
+// command needs no local compose project.
 func hasRemoteFlag(args []string) bool {
 	for _, a := range args {
-		if a == "--remote" || a == "--from" || strings.HasPrefix(a, "--from=") {
+		switch {
+		case a == "--remote", a == "--from", strings.HasPrefix(a, "--from="):
+			return true
+		case a == "-E", a == "--env",
+			strings.HasPrefix(a, "-E="), strings.HasPrefix(a, "--env="):
 			return true
 		}
 	}

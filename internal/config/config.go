@@ -168,6 +168,17 @@ type Config struct {
 	// "project", or "" when unset (Unit 103). Kept so `promote --show-branch`
 	// can report provenance without re-reading the TOML files.
 	PromoteBranchSource string
+
+	// Reverb ([reverb] in global.toml only, Unit 107) — the daemon that
+	// resolves `-E <project>/<env>` targets at call time. ReverbToken is a
+	// SECRET: it grants the environment's DB password through resolve, so it
+	// is never logged, never surfaced in an error, and never written to a
+	// project profile. ReverbComposeCmd overrides the compose binary used on
+	// a Reverb host (default "docker compose") — unlike a classic remote,
+	// a Reverb host has no Echo profile of its own to read it from.
+	ReverbURL        string
+	ReverbToken      string
+	ReverbComposeCmd string
 }
 
 // DeployAction is one declared step in the deploy lifecycle. Phase is
@@ -235,6 +246,7 @@ type globalFile struct {
 	Push           *pushConfig                   `toml:"push"`
 	Deploy         *deployFile                   `toml:"deploy"`
 	Promote        *promoteConfig                `toml:"promote"`
+	Reverb         *reverbConfig                 `toml:"reverb"`
 	ConnectTargets map[string]*connectTargetFile `toml:"connect_targets"`
 	ProjectAliases map[string]string             `toml:"project_aliases"`
 }
@@ -244,6 +256,17 @@ type globalFile struct {
 // into; a nil pointer (section absent) leaves the branch unconfigured.
 type promoteConfig struct {
 	Branch string `toml:"branch"`
+}
+
+// reverbConfig is the [reverb] table, valid in global.toml ONLY (Unit 107).
+// It points Echo at a Reverb daemon so `-E <project>/<env>` can resolve a
+// target over HTTP instead of reading it from [connect_targets]. It is
+// machine-wide by design: Token is a credential, not project state, and is
+// never copied into a project profile by SaveProject.
+type reverbConfig struct {
+	URL        string `toml:"url"`
+	Token      string `toml:"token"`
+	ComposeCmd string `toml:"compose_cmd"`
 }
 
 // pushConfig is the [push] table, valid in both global.toml and a project
@@ -480,6 +503,7 @@ func Load(projectPath string) (*Config, error) {
 	applyCmdLogs(cfg, g.CmdLogs)
 	applyCheckpoint(cfg, g.Checkpoint)
 	applyPush(cfg, g.Push)
+	applyReverb(cfg, g.Reverb)
 	if g.Promote != nil && g.Promote.Branch != "" {
 		cfg.PromoteBranch = g.Promote.Branch
 		cfg.PromoteBranchSource = "global"
@@ -583,6 +607,18 @@ func applyPush(cfg *Config, f *pushConfig) {
 	}
 	cfg.PushPath = f.Path
 	cfg.PushMkdir = f.Mkdir
+}
+
+// applyReverb copies the [reverb] table onto the config. Global-only and
+// nil-safe: an absent section leaves Reverb mode unconfigured, which is
+// what `-E` reports when used without it.
+func applyReverb(cfg *Config, f *reverbConfig) {
+	if f == nil {
+		return
+	}
+	cfg.ReverbURL = f.URL
+	cfg.ReverbToken = f.Token
+	cfg.ReverbComposeCmd = f.ComposeCmd
 }
 
 // RemoteProfile is the subset of a server-side Echo configuration the
@@ -965,6 +1001,7 @@ func LoadGlobal() (*Config, error) {
 	cfg.LogDBMax = g.LogDBMax
 	applyCmdLogs(cfg, g.CmdLogs)
 	applyCheckpoint(cfg, g.Checkpoint)
+	applyReverb(cfg, g.Reverb)
 	cfg.ConnectTargets = sortedConnectTargets(g.ConnectTargets)
 	cfg.ProjectAliases = g.ProjectAliases
 	applyDefaults(cfg)

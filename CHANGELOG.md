@@ -8,6 +8,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Modo Reverb: `-E <project>/<env>` apunta Echo a un entorno gestionado por
+  [Reverb](https://github.com/pascualchavez/reverb) resolviéndolo por HTTP en
+  el momento de la llamada, sin configurar nada por entorno.** Hasta ahora un
+  target remoto tenía que existir como `[connect_targets.<n>]` en `global.toml`
+  y Echo leía el resto por SSH (el perfil de Echo del servidor + su `.env`).
+  Reverb ya publica todo eso en una sola llamada, así que `-E` construye el
+  target **en memoria** y no escribe nada. Se configura una vez con la sección
+  global `[reverb]` (`url`, `token` de scope `echo`, `compose_cmd` opcional);
+  el token es un **secreto** —da acceso a la contraseña de la BD— y nunca se
+  loguea, ni aparece en un error, ni se copia a un perfil de proyecto.
+  `-E <spec>` es azúcar para `--from env:<spec>`: `env:` queda como **prefijo
+  reservado** del namespace de referencias de target, de modo que todo comando
+  que ya hilaba un `from` llega a modo Reverb sin cambiar de firma. Acepta
+  `<project>/<env>` o un `<env>` pelado, que resuelve el proyecto por
+  `GET /api/v1/envs` (y si el nombre existe en varios proyectos, el error los
+  nombra). Un `409 not_ready` (entorno aprovisionándose) se **reintenta** 3
+  veces cada 2s en vez de fallar; `401`/`403` se reportan como problemas de
+  configuración; un payload sin `ssh_host` señala el `public_host`
+  (`REVERB_PUBLIC_HOST`) del daemon en vez de caer a otro host. Funciona de
+  entrada en `shell`, `shell-run`, `logs`, `view`, `compare`, `update`, `test`,
+  `db-pull`, `actions` y `sequence` — la superficie de diagnóstico entera.
+- **`push` en modo Reverb escribe en el *overlay*, no en `addons`.** Reverb es
+  dueño del directorio de addons y lo reemplaza **por completo** en cada
+  deploy; el overlay es el único que nunca toca, y un módulo ahí **eclipsa**
+  la copia de git (`get_module_path` lo resuelve al overlay). Así que el
+  destino por defecto pasa a ser `paths.overlay`, un `--dest`/`[push] path`
+  que caiga bajo `paths.addons` se **rechaza** explicando que el próximo deploy
+  destruiría el código, y cada módulo empujado que además exista en `addons`
+  emite un WARNING avisando que el código que corre es el del overlay.
+  `push --clean` vacía el overlay (sin exigir un target `git_deploy`: el
+  overlay no es un checkout de git, se borra en vez de revertirse), con el
+  mismo dry-run y el mismo confirm destructivo.
 - **`link` se vuelve un switcher de entornos: `--next`, `--list` y un picker
   que marca dónde estás.** El binding de `link` es a lo que cae cualquier
   comando cuando no pasas `--from`, así que *es* el "sistema actual"; pero

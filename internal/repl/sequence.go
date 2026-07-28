@@ -568,7 +568,10 @@ func reorderLogsLast(steps []string) (out []string, followLogs bool) {
 // `--remote` — with no `--from` they default to the project's [connect]
 // binding, so they get no flag.
 func bakeRemote(command, line, from string, remote bool) string {
-	if strings.Contains(line, "--from") || strings.Contains(line, "--remote") {
+	// A step that already names its own target is left alone — including the
+	// `-E`/`--env` Reverb forms, which bake below as `--from=env:<p>/<e>`.
+	if strings.Contains(line, "--from") || strings.Contains(line, "--remote") ||
+		strings.Contains(line, "-E ") || strings.Contains(line, "--env") {
 		return line
 	}
 	switch {

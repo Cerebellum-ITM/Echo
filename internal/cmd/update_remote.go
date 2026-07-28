@@ -95,9 +95,10 @@ func parseRemoteUpdateFlags(rest []string) (all, i18n, installed bool, modules [
 			installed = true
 		case a == "--force", a == "--remote":
 			// consumed by confirmRemoteProd / remoteFlagsIn
-		case a == "--from":
+		case a == "--from", a == "-E", a == "--env":
 			i++ // skip the target value; captured by remoteFlagsIn
-		case strings.HasPrefix(a, "--from="):
+		case strings.HasPrefix(a, "--from="), strings.HasPrefix(a, "-E="),
+			strings.HasPrefix(a, "--env="):
 			// consumed by remoteFlagsIn
 		case a == "--last":
 			return false, false, false, nil,

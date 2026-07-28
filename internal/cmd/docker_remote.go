@@ -18,9 +18,10 @@ func remoteServiceArgs(args []string) []string {
 	for i := 0; i < len(args); i++ {
 		a := args[i]
 		switch {
-		case a == "--from":
+		case a == "--from", a == "-E", a == "--env":
 			i++ // skip the target name
-		case strings.HasPrefix(a, "--from="):
+		case strings.HasPrefix(a, "--from="), strings.HasPrefix(a, "-E="),
+			strings.HasPrefix(a, "--env="):
 		case a == "--remote", a == "--force":
 		default:
 			out = append(out, a)
@@ -34,6 +35,9 @@ func remoteServiceArgs(args []string) []string {
 // brings up the whole remote stack, matching the local default. Output
 // streams live through opts.StreamOut.
 func runRemoteUp(ctx context.Context, opts DockerOpts, from string) error {
+	if err := requireNoReverb("up", from); err != nil {
+		return err
+	}
 	rsc, err := resolveRemoteShell(ctx, opts.Cfg, opts.Palette, opts.Root, from, opts.Log)
 	if err != nil {
 		return err
@@ -48,6 +52,9 @@ func runRemoteUp(ctx context.Context, opts DockerOpts, from string) error {
 // production stack is disruptive. With no service it stops the whole remote
 // stack. Output streams live through opts.StreamOut.
 func runRemoteStop(ctx context.Context, opts DockerOpts, from string) error {
+	if err := requireNoReverb("stop", from); err != nil {
+		return err
+	}
 	rsc, err := resolveRemoteShell(ctx, opts.Cfg, opts.Palette, opts.Root, from, opts.Log)
 	if err != nil {
 		return err
@@ -65,6 +72,9 @@ func runRemoteStop(ctx context.Context, opts DockerOpts, from string) error {
 // the local `logs` default. A `prod` remote stage gates on confirmRemoteProd
 // (`--force` bypass). Output streams live through opts.StreamOut.
 func runRemoteRestart(ctx context.Context, opts DockerOpts, from string) error {
+	if err := requireNoReverb("restart", from); err != nil {
+		return err
+	}
 	rsc, err := resolveRemoteShell(ctx, opts.Cfg, opts.Palette, opts.Root, from, opts.Log)
 	if err != nil {
 		return err

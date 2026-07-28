@@ -85,6 +85,19 @@ func parseI18nPullArgs(args []string) (i18nPullArgs, error) {
 			i++
 		case strings.HasPrefix(a, "--from="):
 			out.from = strings.TrimPrefix(a, "--from=")
+		// -E is recognized only so the Reverb guard can explain why i18n-pull
+		// does not support a Reverb target yet, instead of the opaque
+		// "unknown flag" the catch-all would produce.
+		case a == "-E", a == "--env":
+			if i+1 >= len(args) {
+				return out, fmt.Errorf("%w: -E requires <project>/<env>", ErrUsage)
+			}
+			out.from = ReverbRef(args[i+1])
+			i++
+		case strings.HasPrefix(a, "-E="):
+			out.from = ReverbRef(strings.TrimPrefix(a, "-E="))
+		case strings.HasPrefix(a, "--env="):
+			out.from = ReverbRef(strings.TrimPrefix(a, "--env="))
 		case a == "--lang":
 			if i+1 >= len(args) {
 				return out, fmt.Errorf("--lang requires a language code")
@@ -195,6 +208,11 @@ func pickPullTarget(opts I18nPullOpts) (string, error) {
 func RunI18nPull(ctx context.Context, opts I18nPullOpts) error {
 	p, err := parseI18nPullArgs(opts.Args)
 	if err != nil {
+		return err
+	}
+	// i18n-pull resolves its target through resolvePullRemote (it reads the
+	// server's own Echo profile), a path Reverb mode does not go through.
+	if err := requireNoReverb("i18n-pull", p.from); err != nil {
 		return err
 	}
 

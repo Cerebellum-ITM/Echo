@@ -36,6 +36,13 @@ func RunUp(ctx context.Context, opts DockerOpts) error {
 }
 
 func RunDown(ctx context.Context, opts DockerOpts) error {
+	// `down` has no remote mode, so a target reference must not be silently
+	// ignored and applied to the LOCAL stack instead.
+	if from, _ := remoteFlagsIn(opts.Args); from != "" {
+		if err := requireNoReverb("down", from); err != nil {
+			return err
+		}
+	}
 	if err := maybeConfirmDockerProd(opts, "down"); err != nil {
 		return err
 	}
@@ -163,9 +170,10 @@ func parseLogsArgs(args []string) (follow, copyMode, all bool, tail string, serv
 			}
 		case a == "--remote":
 			// remote-mode switch, not a service
-		case a == "--from":
+		case a == "--from", a == "-E", a == "--env":
 			i++ // skip the target name
-		case strings.HasPrefix(a, "--from="):
+		case strings.HasPrefix(a, "--from="), strings.HasPrefix(a, "-E="),
+			strings.HasPrefix(a, "--env="):
 			// remote-mode switch, not a service
 		default:
 			services = append(services, a)

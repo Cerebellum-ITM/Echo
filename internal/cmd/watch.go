@@ -98,9 +98,10 @@ func parseWatchArgs(args []string) (watchArgs, error) {
 			if err := setInterval(strings.TrimPrefix(a, "--interval=")); err != nil {
 				return watchArgs{}, err
 			}
-		case a == "--from":
+		case a == "--from", a == "-E", a == "--env":
 			i++ // skip the target value; captured by remoteFlagsIn
-		case strings.HasPrefix(a, "--from="), a == "--remote":
+		case strings.HasPrefix(a, "--from="), strings.HasPrefix(a, "-E="),
+			strings.HasPrefix(a, "--env="), a == "--remote":
 			// consumed by remoteFlagsIn
 		case strings.HasPrefix(a, "-"):
 			return watchArgs{}, fmt.Errorf("%w: unknown flag: %s", ErrUsage, a)
@@ -123,6 +124,9 @@ func RunWatch(ctx context.Context, opts WatchOpts) error {
 	}
 	p, err := parseWatchArgs(opts.Args)
 	if err != nil {
+		return err
+	}
+	if err := requireNoReverb("watch", p.from); err != nil {
 		return err
 	}
 	// No branch given → offer a picker of the repo's local branches (most

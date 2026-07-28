@@ -572,6 +572,19 @@ var buildHelpEntries = []helpEntry{
 	{"<cmd> --build", "Interactively compose the command (pickers + flags), then run/copy it"},
 }
 
+// reverbHelpEntries document Reverb mode (Unit 107) as one block rather
+// than repeating the same flag row under every command that accepts it.
+// Outside helpSections() for the same reason as the two above.
+var reverbHelpEntries = []helpEntry{
+	{"-E <project>/<env>", "Target a Reverb environment, resolved over HTTP (no local config)"},
+	{"-E <env>", "Same, with the project inferred when the name is unambiguous"},
+	{"  works with", "shell, shell-run, logs, view, compare, update, test, push, db-pull, actions, sequence"},
+	{"  push lands in", "the environment's overlay — Reverb replaces addons on every deploy"},
+	{"  push --clean", "Empties the overlay (--all = every module in it)"},
+	{"  config", "[reverb] url + token (scope: echo) in global.toml; the token is a secret"},
+	{"  not yet", "deploy, watch, checkpoint, up/down/stop/restart — Reverb owns those"},
+}
+
 // runHelp shows the command reference. It opens the paginated viewer (one
 // section per page, ←/→ to move) in the interactive REPL and for a one-shot
 // `echo help` run on a real terminal; inside a recipe, on a non-TTY (piped /
@@ -620,6 +633,8 @@ func (sess *session) printHelpFlat() {
 	printSection("Scripting (one-shot, outside the REPL)", scriptingHelpEntries)
 	sess.print(Line{Kind: "out", Text: ""})
 	printSection("Build mode (compose interactively)", buildHelpEntries)
+	sess.print(Line{Kind: "out", Text: ""})
+	printSection("Reverb mode (resolve a target by name)", reverbHelpEntries)
 }
 
 // helpCommandNames extracts the flat set of top-level command names

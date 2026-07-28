@@ -99,9 +99,10 @@ func parsePushArgs(args []string) (pushArgs, error) {
 			if strings.TrimSpace(out.dest) == "" {
 				return pushArgs{}, fmt.Errorf("%w: --dest needs a path", ErrUsage)
 			}
-		case a == "--from":
+		case a == "--from", a == "-E", a == "--env":
 			i++ // skip the target value; captured by remoteFlagsIn
-		case strings.HasPrefix(a, "--from="), a == "--remote":
+		case strings.HasPrefix(a, "--from="), strings.HasPrefix(a, "-E="),
+			strings.HasPrefix(a, "--env="), a == "--remote":
 			// consumed by remoteFlagsIn
 		case strings.HasPrefix(a, "-"):
 			return pushArgs{}, fmt.Errorf("%w: unknown flag: %s", ErrUsage, a)
@@ -191,6 +192,9 @@ func RunPush(ctx context.Context, opts PushOpts) error {
 	destBase, err := resolvePushDestination(ctx, rsc, opts, p, modules)
 	if err != nil {
 		return err
+	}
+	if rsc.reverb != nil {
+		warnOverlayShadow(ctx, rsc, opts, modules)
 	}
 
 	files, err := pushModuleSet(ctx, rsc, opts, modules, opts.Root, destBase, p.dryRun, p.del)
@@ -585,7 +589,8 @@ func localAddonsSubpath(cfg *config.Config, root, module string) (string, error)
 }
 
 // remoteDirExists reports whether dir exists on the remote host.
-func remoteDirExists(ctx context.Context, sshHost, dir string) bool {
+// A package var so tests can stub the SSH probe, like listRemoteDirs.
+var remoteDirExists = func(ctx context.Context, sshHost, dir string) bool {
 	_, err := runSSH(ctx, sshHost, "test -d "+shellQuote(dir), nil)
 	return err == nil
 }

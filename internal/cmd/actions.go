@@ -65,9 +65,10 @@ func parseActionsArgs(args []string) (actionsArgs, error) {
 	for i := 0; i < len(args); i++ {
 		a := args[i]
 		switch {
-		case a == "--from":
+		case a == "--from", a == "-E", a == "--env":
 			i++ // value consumed by remoteFlagsIn
-		case strings.HasPrefix(a, "--from="), a == "--remote":
+		case strings.HasPrefix(a, "--from="), strings.HasPrefix(a, "-E="),
+			strings.HasPrefix(a, "--env="), a == "--remote":
 			// consumed by remoteFlagsIn
 		case a == "--json":
 			out.jsonOut = true

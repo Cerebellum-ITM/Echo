@@ -48,9 +48,10 @@ func parseCompareArgs(args []string) (module string, copyFlag, all bool, from st
 			copyFlag = true
 		case a == "--all":
 			all = true
-		case a == "--from":
+		case a == "--from", a == "-E", a == "--env":
 			i++ // skip the target value; captured by remoteFlagsIn
-		case strings.HasPrefix(a, "--from="), a == "--remote":
+		case strings.HasPrefix(a, "--from="), strings.HasPrefix(a, "-E="),
+			strings.HasPrefix(a, "--env="), a == "--remote":
 			// consumed by remoteFlagsIn
 		case strings.HasPrefix(a, "-"):
 			return "", false, false, "", false, fmt.Errorf("unknown flag: %s", a)

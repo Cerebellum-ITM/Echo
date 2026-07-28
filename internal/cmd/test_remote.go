@@ -25,6 +25,15 @@ func parseTestArgs(args []string) (modules []string, tags string, update bool, f
 			}
 		case strings.HasPrefix(a, "--from="):
 			from = strings.TrimPrefix(a, "--from=")
+		case a == "-E", a == "--env":
+			if i+1 < len(args) {
+				from = reverbRefPrefix + args[i+1]
+				i++
+			}
+		case strings.HasPrefix(a, "-E="):
+			from = reverbRefPrefix + strings.TrimPrefix(a, "-E=")
+		case strings.HasPrefix(a, "--env="):
+			from = reverbRefPrefix + strings.TrimPrefix(a, "--env=")
 		case a == "--remote":
 			remote = true
 		case a == "--tags":

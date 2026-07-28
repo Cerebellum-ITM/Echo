@@ -84,6 +84,9 @@ func boolVal(b *bool) bool { return b != nil && *b }
 // → auto-detect, with a TTY picker fallback when auto-detect can't find a
 // place to write (container-internal remote / no addons dir).
 func resolvePushDestination(ctx context.Context, rsc remoteShellContext, opts PushOpts, p pushArgs, modules []string) (string, error) {
+	if rsc.reverb != nil {
+		return reverbPushDestination(ctx, rsc, opts, p)
+	}
 	rv := remoteView{rsc: rsc}
 	if p.pickDest {
 		return pickAndMaybePersist(ctx, rsc, opts, rv)

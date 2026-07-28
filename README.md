@@ -864,6 +864,60 @@ runs on, without re-invoking it.
 
 <p align="center"><img src="demo/gifs/logview.gif" alt="echo logview — run list, per-run log view, live text and level filters" width="860"></p>
 
+## Reverb mode
+
+A remote target normally lives in `global.toml` as a `[connect_targets.<name>]`,
+and Echo reads the rest of the mapping off the server over SSH — its own Echo
+profile plus the project's `.env`. When the instance is managed by
+[Reverb](https://github.com/pascualchavez/reverb), all of that is already
+published on one endpoint, so `-E` resolves the target **at call time** and
+builds it in memory. Nothing is written to `global.toml`: that is the whole
+point — zero per-environment configuration.
+
+Point Echo at the daemon once, globally:
+
+```toml
+[reverb]
+url   = "https://reverb.example.com"
+token = "rvb_…"                      # scope: echo, minted in the Reverb UI
+```
+
+The token is a **secret** — it grants the environment's DB password through
+resolve. Echo never logs it, never puts it in an error, and never copies it
+into a project profile.
+
+```bash
+echo shell-run report.py -E acme/feature-x   # <project>/<env>
+echo logs -E feature-x                       # bare env when the name is unique
+```
+
+`-E <spec>` is sugar for `--from env:<spec>` — `env:` is a reserved prefix in
+the target-reference namespace, which is why every remote-capable command
+supports it: `shell`, `shell-run`, `logs`, `view`, `compare`, `update`, `test`,
+`push`, `db-pull`, `actions`, `sequence`. A bare `<env>` is looked up across
+projects and, if the name exists in more than one, the error names the
+candidates. An environment still provisioning (`409 not_ready`) is retried
+rather than failed; a `401`/`403` is reported as a configuration problem; a
+payload with no `ssh_host` points at the daemon's own `public_host`
+(`REVERB_PUBLIC_HOST`) instead of silently falling back to another host.
+
+**`push` lands in the overlay.** Reverb owns the addons directory and replaces
+it wholesale on every deploy; the overlay is the one directory it never
+touches, and a module there shadows the git copy (Odoo's `get_module_path`
+resolves it to the overlay). So in Reverb mode the default destination is
+`paths.overlay`, a `--dest` / `[push] path` that resolves under `paths.addons`
+is **refused** (the next deploy would destroy the code), and a pushed module
+that also exists in addons emits a warning so you know the running code is the
+overlay's. `push --clean` empties the overlay — it is a plain directory, not a
+git checkout, so it is removed rather than reverted, with the same dry-run
+preview and destructive confirm.
+
+`deploy`, `watch`, `checkpoint` and `up`/`down`/`stop`/`restart` refuse a
+Reverb target for now: Reverb runs its own deploy, keeps its own snapshots and
+reconciles desired vs observed container state, so Echo doing any of that
+behind its back would be overwritten or show up as drift. Each says so when
+you try.
+
 ## Build mode
 
 Any command accepts a universal `--build` / `-b` flag that composes it
@@ -1008,7 +1062,7 @@ projects. Stage modifies the prompt accent: `dev` (green), `staging`
 
 ```
 ~/.config/echo/
-├── global.toml          # theme, logo, compose flavor, prompt, log_db_max, connect targets, project aliases
+├── global.toml          # theme, logo, compose flavor, prompt, log_db_max, connect targets, project aliases, [reverb]
 ├── history              # REPL command history
 ├── run-logs/            # `echo run --log` transcripts + last-run.json (for `report`)
 ├── connect-sessions/    # cached `connect` web sessions, per target

@@ -58,9 +58,10 @@ func parseCheckpointArgs(args []string) (checkpointArgs, error) {
 	for i := 0; i < len(args); i++ {
 		a := args[i]
 		switch {
-		case a == "--from":
+		case a == "--from", a == "-E", a == "--env":
 			i++ // value consumed by remoteFlagsIn
-		case strings.HasPrefix(a, "--from="), a == "--remote":
+		case strings.HasPrefix(a, "--from="), strings.HasPrefix(a, "-E="),
+			strings.HasPrefix(a, "--env="), a == "--remote":
 			// consumed by remoteFlagsIn
 		case a == "--json":
 			out.jsonOut = true
@@ -130,6 +131,9 @@ type CheckpointResult struct {
 func RunCheckpoint(ctx context.Context, opts CheckpointOpts) (CheckpointResult, error) {
 	p, err := parseCheckpointArgs(opts.Args)
 	if err != nil {
+		return CheckpointResult{}, err
+	}
+	if err := requireNoReverb("checkpoint", p.from); err != nil {
 		return CheckpointResult{}, err
 	}
 	logFn := func(level, sub, msg, db string, fields ...[2]string) { opts.log(level, sub, msg, db, fields...) }
@@ -376,8 +380,8 @@ func confirmRollback(palette theme.Palette, db string, entry config.CheckpointEn
 	confirmed := false
 	form := huh.NewForm(huh.NewGroup(
 		huh.NewConfirm().
-			Title("⚠  Deploy run failed on "+red).
-			Description("Roll back to checkpoint "+entry.Name+"? (declining keeps the broken DB for inspection)").
+			Title("⚠  Deploy run failed on " + red).
+			Description("Roll back to checkpoint " + entry.Name + "? (declining keeps the broken DB for inspection)").
 			Affirmative("Roll back").
 			Negative("Keep broken DB").
 			Value(&confirmed),
@@ -410,7 +414,7 @@ func confirmRollbackAged(palette theme.Palette, db string, entry config.Checkpoi
 	confirmed := false
 	form := huh.NewForm(huh.NewGroup(
 		huh.NewConfirm().
-			Title("⚠  Roll back database "+redDB).
+			Title("⚠  Roll back database " + redDB).
 			Description(desc).
 			Affirmative("Roll back").
 			Negative("Cancel").
@@ -437,8 +441,8 @@ func confirmCheckpointRm(palette theme.Palette, db, what string) error {
 	confirmed := false
 	form := huh.NewForm(huh.NewGroup(
 		huh.NewConfirm().
-			Title("⚠  Remove "+red).
-			Description("This deletes the checkpoint on "+db+" permanently.").
+			Title("⚠  Remove " + red).
+			Description("This deletes the checkpoint on " + db + " permanently.").
 			Affirmative("Remove").
 			Negative("Cancel").
 			Value(&confirmed),

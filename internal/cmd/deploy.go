@@ -203,6 +203,19 @@ func parseDeployArgs(args []string) (deployArgs, error) {
 			i++
 		case strings.HasPrefix(a, "--from="):
 			out.from = strings.TrimPrefix(a, "--from=")
+		// -E is recognized only so the Reverb guard can explain why deploy
+		// does not support a Reverb target yet, instead of the opaque
+		// "unknown flag" the catch-all would produce.
+		case a == "-E", a == "--env":
+			if i+1 >= len(args) {
+				return out, fmt.Errorf("%w: -E requires <project>/<env>", ErrUsage)
+			}
+			out.from = ReverbRef(args[i+1])
+			i++
+		case strings.HasPrefix(a, "-E="):
+			out.from = ReverbRef(strings.TrimPrefix(a, "-E="))
+		case strings.HasPrefix(a, "--env="):
+			out.from = ReverbRef(strings.TrimPrefix(a, "--env="))
 		case a == "--limit":
 			if i+1 >= len(args) {
 				return out, fmt.Errorf("--limit requires a number")
@@ -758,6 +771,9 @@ var deploySubjectRe = regexp.MustCompile(`^\[[^\]]+\]\s*([A-Za-z0-9_]+)\s*:`)
 func RunDeploy(ctx context.Context, opts DeployOpts) (DeployResult, error) {
 	p, err := parseDeployArgs(opts.Args)
 	if err != nil {
+		return DeployResult{}, err
+	}
+	if err := requireNoReverb("deploy", p.from); err != nil {
 		return DeployResult{}, err
 	}
 

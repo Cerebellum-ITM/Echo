@@ -6,6 +6,11 @@
 
 ## Current Goal
 
+Unit 107 (reverb-mode-foundation) entregada: `-E <project>/<env>` apunta Echo a
+un entorno de Reverb resolviéndolo por HTTP, sin config por entorno; toda la
+superficie de diagnóstico sale gratis y `push` aterriza en el overlay. Quedan
+como siguientes unidades del doc de Reverb: 108 deploy delegado + jobs, 109
+checkpoint→snapshots, 110 docker vía API, 111 `modpath`. Antes:
 Unit 98 (db-pull-projectless-download) entregada: `db-pull` ahora es projectless
 y **descarga por defecto** (dump remoto → `./backups/`, sin stack local); el
 restore-a-local es opt-in con `--restore`. Antes: Unit 97 (promote-worktree-funnel):
@@ -28,6 +33,64 @@ _(siguiente: Unit 14 — meta-commands. Fix deploy-build-muting: el builder de `
 
 
 ## Completed
+
+- [x] Unit 107 — reverb-mode-foundation. Modo Reverb: `-E <project>/<env>`
+  resuelve un entorno gestionado por Reverb **por HTTP en el momento de la
+  llamada** y construye el target **en memoria** (nada se escribe a
+  `global.toml`). Hallazgo que definió el alcance: todo comando remoto pasa por
+  UN embudo, `resolveRemoteShell()` (22 call sites), que hace exactamente las
+  tres cosas que el `resolve` de Reverb reemplaza en una llamada
+  (`resolveRemoteTarget` → host/path, `fetchRemoteProfile` → SSH `cat` de los
+  TOML de Echo del servidor, `remotePullEnv` → SSH `cat` del `.env`) → un solo
+  branch arriba de esa función habilita la superficie remota entera.
+  `-E <spec>` es **azúcar para `--from env:<spec>`**: `env:` queda como prefijo
+  RESERVADO del namespace de referencias de target, de modo que el flag viaja
+  por el mismo string `from` que los 22 call sites ya hilan (cero cambios de
+  firma). Nuevo paquete `internal/reverb` (cliente HTTP; tipos con los nombres
+  del contrato **congelado** de Reverb —`internal/api/resolve.go` allá—;
+  sentinelas `ErrNotReady`/`ErrUnauthorized`/`ErrForbidden`/`ErrNotFound`/
+  `ErrNotConfigured` mapeadas desde el envelope `{"error":{"code","message"}}`;
+  `ResolveWithRetry` reintenta `409 not_ready` 3× cada 2s con callback de log;
+  `FindEnv` resuelve el `<env>` pelado por `GET /api/v1/envs` y nombra los
+  candidatos si es ambiguo). Config global `[reverb]` (`url`/`token`/
+  `compose_cmd`; `applyReverb` en `Load` y `LoadGlobal`) — **solo global**,
+  nunca la emite `SaveProject`: el token es un SECRETO (da la contraseña de la
+  BD vía resolve) y no se loguea ni aparece en ningún error (test que lo
+  verifica). Sin `ssh_host` en el payload → error que señala `public_host`
+  (`REVERB_PUBLIC_HOST`) del daemon, **sin fallback** a otro host, como manda
+  el doc de contrato. Cambio de comportamiento en `push`: en modo Reverb el
+  destino por defecto es `paths.overlay` (Reverb reemplaza `addons` **entero**
+  en cada deploy y jamás toca el overlay, donde un módulo eclipsa la copia de
+  git); un `--dest`/`[push] path` bajo `paths.addons` se **rechaza**;
+  `warnOverlayShadow` avisa por cada módulo que también existe en addons;
+  `push --clean` vacía el overlay (`rm -rf`, no `git checkout --`) sin exigir
+  `git_deploy`. Diferidos con error explícito (`requireNoReverb`): `deploy`,
+  `watch`, `checkpoint`, `up`/`down`/`stop`/`restart`, `i18n-pull` — cada uno
+  nombra por qué correrlo igual corrompería estado. **Gotcha atrapado en la
+  verificación en vivo**: `remoteFlagsIn` solo LEE el flag; cada parser de
+  comando debe además CONSUMIR el par `-E <valor>` o el valor se lee como
+  positional (`shell-run -E acme/main` intentaba abrir `acme/main` como script)
+  → parcheados los 12 parsers, espejando cómo ya tratan `--from`.
+  Archivos: `internal/reverb/client.go`+test (nuevo paquete),
+  `internal/cmd/reverb.go`+`reverb_test.go` y `push_reverb.go` (nuevos),
+  `shell_remote.go` (`-E` en `remoteFlagsIn` + branch + campo
+  `remoteShellContext.reverb`), `push.go`/`push_dest.go`/`push_clean.go`,
+  guards en `deploy.go`/`watch.go`/`checkpoint.go`/`docker.go`/
+  `docker_remote.go`/`i18n_pull.go`, parsers de `actions`/`compare`/`view`/
+  `db_pull`/`update_remote`/`test_remote`/`repl/shellrun.go`,
+  `config.go` (`[reverb]`), `repl/commands.go` (flags), `repl/build.go`
+  (`buildGlobalAliases` dropea `-E` como alias corto de `--env`),
+  `repl/repl.go`+`helppager.go` (bloque de ayuda "Reverb mode"),
+  `repl/sequence.go` (`bakeRemote` respeta `-E`), `main.go` (`hasRemoteFlag`),
+  README (sección "Reverb mode") + CHANGELOG. build/vet/test verdes.
+  **Verificado EN VIVO** contra un Reverb simulado (servidor HTTP de prueba):
+  resolve OK → target + destino overlay, `<env>` ambiguo nombra los candidatos,
+  falta de `ssh_host` señala `REVERB_PUBLIC_HOST`, 404, token inválido, rechazo
+  de `--dest` bajo addons, `--pick-dest` rechazado, y el token ausente del log.
+  **Pendiente verificación contra un Reverb REAL** (correr antes el `curl` de
+  aceptación del doc). Spec: `context/specs/107-reverb-mode-foundation.md`.
+  Siguientes: 108 deploy delegado + jobs, 109 checkpoint→snapshots, 110 docker
+  vía API, 111 `modpath`.
 
 - [x] Unit 104 — deploy-set-checkpoint. Setter config-only (calcado de
   `--set-push`) que fija la política de checkpoint del **proyecto** desde la CLI

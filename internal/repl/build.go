@@ -28,10 +28,15 @@ func stripBuildFlag(args []string) (clean []string, build bool) {
 // would invite a duplicate token in the composed line.
 var buildFlagAliases = map[string][]string{"logs": {"-c"}}
 
+// buildGlobalAliases are dropped from every command's build-mode picker:
+// `-E` is the short alias of `--env` (Reverb mode, Unit 107) and both are
+// declared wherever the mode is supported, so only the long form is offered.
+var buildGlobalAliases = []string{"-E"}
+
 // buildFlags returns the command's user-facing flags with aliased
 // duplicates removed, preserving commandFlags (help) order.
 func buildFlags(command string) []string {
-	drop := buildFlagAliases[command]
+	drop := append(append([]string(nil), buildFlagAliases[command]...), buildGlobalAliases...)
 	out := make([]string, 0, len(commandFlags[command]))
 	for _, f := range commandFlags[command] {
 		aliased := false

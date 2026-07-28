@@ -38,6 +38,11 @@ func runPushClean(ctx context.Context, opts PushOpts, p pushArgs) error {
 	if err != nil {
 		return err
 	}
+	// A Reverb environment's overlay is a plain directory, not a git
+	// checkout, so it is emptied rather than reverted.
+	if rsc.reverb != nil {
+		return runPushCleanReverb(ctx, opts, p, rsc)
+	}
 	g := resolveGitDeploy(opts.Cfg, rsc.fromName, rsc.sshHost, rsc.remotePath)
 	if !g.enabled {
 		return fmt.Errorf("%w: push --clean needs a git-deploy target (set git_deploy on it)", ErrUsage)
