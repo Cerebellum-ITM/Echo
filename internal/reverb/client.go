@@ -13,6 +13,7 @@
 package reverb
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -72,11 +73,21 @@ func New(baseURL, token string) (*Client, error) {
 // Env is the resolve payload: everything Echo needs to target one
 // environment. Mirrors Reverb's resolveView exactly.
 type Env struct {
-	Project     string     `json:"project"`
-	Env         string     `json:"env"`
-	Stage       string     `json:"stage"`
-	URL         string     `json:"url"`
-	SSHHost     string     `json:"ssh_host"`
+	// ID addresses every route past resolve (/environments/{id}/deploy,
+	// /snapshots, /overlay, …). A client holding only <project>/<env> can
+	// read but not act, so this is what unlocks the snapshot and lifecycle
+	// surfaces.
+	ID      int64  `json:"id"`
+	Project string `json:"project"`
+	Env     string `json:"env"`
+	Stage   string `json:"stage"`
+	URL     string `json:"url"`
+	SSHHost string `json:"ssh_host"`
+	// SSHPort is the daemon's public SSH port, omitted when it is 22. Echo
+	// does NOT turn it into `ssh -p N`: the transport is configured through
+	// the user's own ~/.ssh/config in both modes (see [reverb] ssh_host).
+	// It is read purely to diagnose a host that cannot be dialled.
+	SSHPort     int        `json:"ssh_port"`
 	OdooVersion string     `json:"odoo_version"`
 	Containers  Containers `json:"containers"`
 	DB          DB         `json:"db"`
@@ -146,8 +157,11 @@ func (g Git) BranchValue() string {
 }
 
 // EnvRef is one row of the compact GET /envs listing — no secrets, so it
-// is the cheap call used to infer a project from a bare env name.
+// is the cheap call used to infer a project from a bare env name, and to
+// recover an environment's id when resolve itself is unavailable (a 409
+// while it provisions).
 type EnvRef struct {
+	ID      int64   `json:"id"`
 	Project string  `json:"project"`
 	Env     string  `json:"env"`
 	Stage   string  `json:"stage"`
@@ -165,16 +179,41 @@ type errorBody struct {
 }
 
 // get performs an authenticated GET and decodes the JSON body into out.
-// A non-2xx response is mapped to a sentinel by its machine code (with
-// the HTTP status as the fallback), carrying Reverb's message for
-// context. The token never appears in the returned error.
 func (c *Client) get(ctx context.Context, path string, out any) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.BaseURL+path, nil)
+	return c.do(ctx, http.MethodGet, path, nil, out)
+}
+
+// post performs an authenticated POST with a JSON body (nil for none)
+// and decodes the response into out (nil to discard it).
+func (c *Client) post(ctx context.Context, path string, body, out any) error {
+	var raw []byte
+	if body != nil {
+		var err error
+		if raw, err = json.Marshal(body); err != nil {
+			return err
+		}
+	}
+	return c.do(ctx, http.MethodPost, path, raw, out)
+}
+
+// do performs an authenticated request and decodes the JSON body into
+// out. A non-2xx response is mapped to a sentinel by its machine code
+// (with the HTTP status as the fallback), carrying Reverb's message for
+// context. The token never appears in the returned error.
+func (c *Client) do(ctx context.Context, method, path string, body []byte, out any) error {
+	var rdr io.Reader
+	if body != nil {
+		rdr = bytes.NewReader(body)
+	}
+	req, err := http.NewRequestWithContext(ctx, method, c.BaseURL+path, rdr)
 	if err != nil {
 		return err
 	}
 	req.Header.Set("Authorization", "Bearer "+c.Token)
 	req.Header.Set("Accept", "application/json")
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
 
 	resp, err := c.HTTP.Do(req)
 	if err != nil {
@@ -184,14 +223,17 @@ func (c *Client) get(ctx context.Context, path string, out any) error {
 	}
 	defer resp.Body.Close()
 
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
+	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
 	if err != nil {
 		return fmt.Errorf("reverb response: %w", err)
 	}
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		return apiError(resp.StatusCode, body)
+		return apiError(resp.StatusCode, respBody)
 	}
-	if err := json.Unmarshal(body, out); err != nil {
+	if out == nil {
+		return nil
+	}
+	if err := json.Unmarshal(respBody, out); err != nil {
 		return fmt.Errorf("reverb sent an unreadable response: %w", err)
 	}
 	return nil
@@ -282,11 +324,11 @@ func (c *Client) ResolveWithRetry(ctx context.Context, project, env string, atte
 	return Env{}, lastErr
 }
 
-// FindEnv locates the environment named `env` across all projects,
-// for the bare `-E <env>` form. An unambiguous match returns its project;
-// several matches error naming every candidate so the user can qualify
-// the reference.
-func FindEnv(refs []EnvRef, env string) (project string, err error) {
+// FindEnv locates the environment named `env` across all projects, for
+// the bare `-E <env>` form. An unambiguous match returns its row (project
+// AND id — the id is what the action routes take); several matches error
+// naming every candidate so the user can qualify the reference.
+func FindEnv(refs []EnvRef, env string) (EnvRef, error) {
 	var hits []EnvRef
 	for _, r := range refs {
 		if r.Env == env {
@@ -295,15 +337,15 @@ func FindEnv(refs []EnvRef, env string) (project string, err error) {
 	}
 	switch len(hits) {
 	case 0:
-		return "", fmt.Errorf("%w: no reverb environment named %q", ErrNotFound, env)
+		return EnvRef{}, fmt.Errorf("%w: no reverb environment named %q", ErrNotFound, env)
 	case 1:
-		return hits[0].Project, nil
+		return hits[0], nil
 	default:
 		names := make([]string, 0, len(hits))
 		for _, h := range hits {
 			names = append(names, h.Project+"/"+h.Env)
 		}
-		return "", fmt.Errorf("environment %q exists in several projects (%s) — qualify it as <project>/<env>",
+		return EnvRef{}, fmt.Errorf("environment %q exists in several projects (%s) — qualify it as <project>/<env>",
 			env, strings.Join(names, ", "))
 	}
 }

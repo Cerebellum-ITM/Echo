@@ -86,25 +86,44 @@ func ensureRemoteDir(ctx context.Context, rsc remoteShellContext, dir string, dr
 	return nil
 }
 
-// warnOverlayShadow flags each pushed module that also exists in the
-// environment's git-deployed addons directory. The push still proceeds —
-// shadowing is the intended mechanism — but the user should know the
-// running code is now the overlay's copy, not the deployed one.
+// warnOverlayShadow flags the pushed modules that shadow a module deployed
+// from git. The push still proceeds — shadowing is the intended mechanism —
+// but the user should know the running code is now the overlay's copy.
+//
+// The comparison is the SERVER's to make: the interesting question is what
+// the overlay hides in the deployed git tree, and the client has no local
+// copy of that tree. So this asks GET /environments/{id}/overlay rather
+// than probing paths.addons over SSH (which was also N round-trips).
+//
+// This is an advisory: the push already succeeded, so a failure to fetch
+// it degrades to no warning rather than failing the command.
 func warnOverlayShadow(ctx context.Context, rsc remoteShellContext, opts PushOpts, modules []string) {
-	addons := strings.TrimSpace(rsc.reverb.paths.Addons)
-	if addons == "" {
+	if rsc.reverb.id == 0 {
 		return
 	}
+	client, err := reverbClient(opts.Cfg)
+	if err != nil {
+		return
+	}
+	ov, err := client.GetOverlay(ctx, rsc.reverb.id)
+	if err != nil {
+		opts.log("WARNING", "", "could not read the environment overlay report", rsc.prof.DBName,
+			[2]string{"err", err.Error()})
+		return
+	}
+	// Only what this push touched — the overlay may hold older modules the
+	// user is not thinking about right now.
+	pushed := moduleSet(modules)
 	var shadowed []string
-	for _, m := range modules {
-		if remoteDirExists(ctx, rsc.sshHost, path.Join(addons, m)) {
+	for _, m := range ov.Shadowed {
+		if pushed[m] {
 			shadowed = append(shadowed, m)
 		}
 	}
 	if len(shadowed) == 0 {
 		return
 	}
-	opts.log("WARNING", "", "overlay shadows modules deployed from git — the running code is the overlay's",
+	opts.log("WARNING", "", "these modules now shadow the deployed copy — odoo loads the overlay's, not git's",
 		rsc.prof.DBName,
 		[2]string{"modules", strings.Join(shadowed, ",")},
 		[2]string{"count", strconv.Itoa(len(shadowed))})

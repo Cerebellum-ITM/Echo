@@ -242,14 +242,16 @@ func TestResolveWithRetryDoesNotRetryOtherErrors(t *testing.T) {
 
 func TestFindEnv(t *testing.T) {
 	refs := []EnvRef{
-		{Project: "acme", Env: "main"},
-		{Project: "acme", Env: "feature-x"},
-		{Project: "beta", Env: "main"},
+		{ID: 3, Project: "acme", Env: "main"},
+		{ID: 7, Project: "acme", Env: "feature-x"},
+		{ID: 9, Project: "beta", Env: "main"},
 	}
-	if got, err := FindEnv(refs, "feature-x"); err != nil || got != "acme" {
-		t.Errorf("FindEnv(feature-x) = (%q, %v), want (acme, nil)", got, err)
+	// The row carries the id, which is what every action route takes.
+	got, err := FindEnv(refs, "feature-x")
+	if err != nil || got.Project != "acme" || got.ID != 7 {
+		t.Errorf("FindEnv(feature-x) = (%+v, %v), want acme/7", got, err)
 	}
-	_, err := FindEnv(refs, "main")
+	_, err = FindEnv(refs, "main")
 	if err == nil || !strings.Contains(err.Error(), "acme/main") || !strings.Contains(err.Error(), "beta/main") {
 		t.Errorf("ambiguous err = %v, want both candidates named", err)
 	}

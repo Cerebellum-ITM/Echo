@@ -8,6 +8,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **`[reverb] ssh_host`: nombra tú el host, y el transporte vuelve a
+  configurarse igual en los dos modos.** Echo nunca ha tenido campo de puerto:
+  pasa el host verbatim a `ssh`/`rsync` y deja que tu `~/.ssh/config` resuelva
+  puerto, usuario, llave y ProxyJump. Eso funciona con un target clásico porque
+  `ssh_host` es un nombre que **tú** escribiste — un alias que matchea uno de
+  tus bloques `Host`. El host del payload lo escribe el daemon y es un literal
+  `user@ip`, que no matchea ningún bloque: se pierden puerto, llave y jump, ssh
+  intenta el 22 y reporta un *connection refused* que se lee como host caído.
+  `[reverb] ssh_host` deja que vuelvas a nombrarlo (un bloque por **host** de
+  Reverb, no por entorno, así que la promesa de cero-config-por-entorno queda
+  intacta). Sin él, Echo sigue usando el host del payload y **avisa** cuando el
+  daemon reporta un `ssh_port` distinto de 22, nombrando las dos salidas —
+  nunca sintetiza un `ssh -p`: el payload puede dar el puerto pero por contrato
+  jamás la identidad ("Reverb ships no keys"), así que un segundo canal de
+  configuración solo resolvería un tercio del problema.
+- **`checkpoint` en modo Reverb mapea a los snapshots del servidor.**
+  `checkpoint list` muestra los snapshots del entorno y `checkpoint create`
+  toma uno siguiendo su job; **no** se escribe nada en el store local de
+  checkpoints (un store paralelo duplicaría estado y confundiría el rollback).
+  `checkpoint rm` se rechaza explicando que borrar un snapshot tira estado y
+  el contrato lo deja admin-scoped.
+- **`up`/`down`/`stop`/`restart` pasan por la API de Reverb** en vez de
+  `ssh docker compose`: Reverb reconcilia estado deseado vs observado, y un
+  compose corrido por detrás aparece como drift en su UI. `down` mapea a stop
+  **y lo dice** — Reverb modela un estado deseado, no hay teardown estilo
+  compose. `ps` y `logs` siguen por SSH; son read-only.
+
+### Changed
+- **Un `409 not_ready` ahora se espera siguiendo el job, no reintentando a
+  ciegas.** Antes eran 3 intentos cada 2s = 6 segundos, y un `env_create` real
+  tarda 60–90s, así que apuntar a un entorno recién creado fallaba siempre.
+  Ahora Echo busca el `env_create`/`env_fork` en vuelo (vía el `id` que el
+  contrato agregó a `/resolve` y a `/envs`) y **streamea sus eventos de
+  progreso** —los mismos que muestra la UI de Reverb— hasta que termina, con
+  una ventana de gracia para el hueco entre "el job terminó" y "resolve dice
+  listo", que son dos observaciones distintas. Si el job no se puede
+  identificar, degrada a una espera acotada de 2 minutos en vez de 6 segundos.
+- **El aviso de shadowing del overlay lo calcula el servidor.** Tras un `push`
+  en modo Reverb, Echo pide `GET /environments/{id}/overlay` en vez de probar
+  `paths.addons` por SSH módulo por módulo: la comparación interesante es
+  contra el árbol de git desplegado, del que el cliente no tiene copia local
+  (y de paso deja de ser N round-trips de SSH). Si la llamada falla, degrada a
+  no avisar — el push ya ocurrió y un aviso no debe tumbar el comando.
+
 - **Modo Reverb: `-E <project>/<env>` apunta Echo a un entorno gestionado por
   [Reverb](https://github.com/pascualchavez/reverb) resolviéndolo por HTTP en
   el momento de la llamada, sin configurar nada por entorno.** Hasta ahora un

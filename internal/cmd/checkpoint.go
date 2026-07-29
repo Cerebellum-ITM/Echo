@@ -133,14 +133,17 @@ func RunCheckpoint(ctx context.Context, opts CheckpointOpts) (CheckpointResult, 
 	if err != nil {
 		return CheckpointResult{}, err
 	}
-	if err := requireNoReverb("checkpoint", p.from); err != nil {
-		return CheckpointResult{}, err
-	}
 	logFn := func(level, sub, msg, db string, fields ...[2]string) { opts.log(level, sub, msg, db, fields...) }
 	rsc, err := resolveRemoteShell(ctx, opts.Cfg, opts.Palette, opts.Root, p.from, logFn)
 	if err != nil {
 		return CheckpointResult{}, err
 	}
+	// A Reverb environment keeps its history server-side as snapshots; the
+	// local checkpoint store is never touched for it.
+	if rsc.reverb != nil {
+		return runCheckpointReverb(ctx, opts, rsc, p)
+	}
+
 	projectKey := config.ProjectKey(opts.Root)
 	targetKey := config.DeployTargetKey(rsc.sshHost, rsc.remotePath)
 

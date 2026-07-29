@@ -36,11 +36,15 @@ func RunUp(ctx context.Context, opts DockerOpts) error {
 }
 
 func RunDown(ctx context.Context, opts DockerOpts) error {
-	// `down` has no remote mode, so a target reference must not be silently
-	// ignored and applied to the LOCAL stack instead.
-	if from, _ := remoteFlagsIn(opts.Args); from != "" {
-		if err := requireNoReverb("down", from); err != nil {
-			return err
+	// A Reverb environment stops through the API; classic remotes have no
+	// `down` and keep their existing local-only behavior.
+	if spec, _ := remoteFlagsIn(opts.Args); spec != "" {
+		if _, isReverb := reverbRefIn(spec); isReverb {
+			rsc, err := resolveRemoteShell(ctx, opts.Cfg, opts.Palette, opts.Root, spec, opts.Log)
+			if err != nil {
+				return err
+			}
+			return runReverbEnvAction(ctx, opts, rsc, "down")
 		}
 	}
 	if err := maybeConfirmDockerProd(opts, "down"); err != nil {

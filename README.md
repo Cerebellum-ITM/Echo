@@ -878,13 +878,47 @@ Point Echo at the daemon once, globally:
 
 ```toml
 [reverb]
-url   = "https://reverb.example.com"
-token = "rvb_…"                      # scope: echo, minted in the Reverb UI
+url      = "https://reverb.example.com"
+token    = "rvb_…"        # scope: echo, minted in the Reverb UI
+ssh_host = "reverb-dev"   # optional: your own ~/.ssh/config alias for the host
 ```
 
 The token is a **secret** — it grants the environment's DB password through
 resolve. Echo never logs it, never puts it in an error, and never copies it
 into a project profile.
+
+If the daemon has no public URL yet (`reverbd` binds `127.0.0.1:8484`), tunnel
+to it and point `url` at the local end:
+
+```bash
+ssh -L 8484:127.0.0.1:8484 <host>    # then url = "http://127.0.0.1:8484"
+```
+
+**`ssh_host`: name the host yourself.** Echo has never had a port field, in
+any mode — it passes the host verbatim to `ssh`/`rsync` and lets your
+`~/.ssh/config` resolve port, user, identity and ProxyJump. That works for a
+classic target because `ssh_host` is a name *you* wrote, an alias matching one
+of your `Host` blocks. The resolve payload's host is written by the daemon and
+is a literal `user@ip`, which matches no `Host` block — so the port, key and
+jump that block carried are all lost, and ssh tries port 22 and reports a
+connection refused that reads like a dead host.
+
+Setting `ssh_host` puts the transport back where it lives in classic mode:
+
+```
+Host reverb-dev
+  HostName 10.0.0.5
+  User deploy
+  Port 1024
+  IdentityFile ~/.ssh/id_ed25519
+```
+
+That is one block **per Reverb host**, not per environment, so the zero
+per-environment promise is untouched. Without it, Echo still uses the payload's
+host and warns when the daemon reports a non-default `ssh_port`, naming both
+fixes — it never synthesizes an `ssh -p`, because the payload can supply the
+port but, by contract, never the identity ("Reverb ships no keys"), so a second
+configuration channel would only ever solve a third of the problem.
 
 ```bash
 echo shell-run report.py -E acme/feature-x   # <project>/<env>
@@ -894,12 +928,17 @@ echo logs -E feature-x                       # bare env when the name is unique
 `-E <spec>` is sugar for `--from env:<spec>` — `env:` is a reserved prefix in
 the target-reference namespace, which is why every remote-capable command
 supports it: `shell`, `shell-run`, `logs`, `view`, `compare`, `update`, `test`,
-`push`, `db-pull`, `actions`, `sequence`. A bare `<env>` is looked up across
-projects and, if the name exists in more than one, the error names the
-candidates. An environment still provisioning (`409 not_ready`) is retried
-rather than failed; a `401`/`403` is reported as a configuration problem; a
-payload with no `ssh_host` points at the daemon's own `public_host`
-(`REVERB_PUBLIC_HOST`) instead of silently falling back to another host.
+`push`, `db-pull`, `actions`, `sequence`, plus `checkpoint` and the container
+lifecycle verbs. A bare `<env>` is looked up across projects and, if the name
+exists in more than one, the error names the candidates.
+
+An environment still provisioning (`409 not_ready`) is **waited out**, not
+failed: Echo finds the in-flight `env_create`/`env_fork` job and streams its
+progress events, the same ones Reverb's UI shows, then resolves once it
+finishes (a real create takes 60–90s). A `401`/`403` is reported as a
+configuration problem; a payload with no `ssh_host` points at the daemon's own
+`public_host` (`REVERB_PUBLIC_HOST`) instead of silently falling back to
+another host.
 
 **`push` lands in the overlay.** Reverb owns the addons directory and replaces
 it wholesale on every deploy; the overlay is the one directory it never
@@ -907,16 +946,28 @@ touches, and a module there shadows the git copy (Odoo's `get_module_path`
 resolves it to the overlay). So in Reverb mode the default destination is
 `paths.overlay`, a `--dest` / `[push] path` that resolves under `paths.addons`
 is **refused** (the next deploy would destroy the code), and a pushed module
-that also exists in addons emits a warning so you know the running code is the
-overlay's. `push --clean` empties the overlay — it is a plain directory, not a
+that shadows a deployed one emits a warning so you know the running code is
+the overlay's. That shadow report comes from the server
+(`GET /environments/{id}/overlay`): the comparison is against the deployed git
+tree, which your machine has no copy of. `push --clean` empties the overlay — it is a plain directory, not a
 git checkout, so it is removed rather than reverted, with the same dry-run
 preview and destructive confirm.
 
-`deploy`, `watch`, `checkpoint` and `up`/`down`/`stop`/`restart` refuse a
-Reverb target for now: Reverb runs its own deploy, keeps its own snapshots and
-reconciles desired vs observed container state, so Echo doing any of that
-behind its back would be overwritten or show up as drift. Each says so when
-you try.
+**`checkpoint` maps to Reverb's snapshots**, and keeps no local checkpoint
+store for these targets — a parallel store would duplicate state and confuse
+rollback. `checkpoint list` shows the environment's snapshots; `checkpoint
+create` takes one and follows the job. `checkpoint rm` is refused: deleting a
+snapshot throws state away, so the contract keeps it admin-scoped.
+
+**`up`/`down`/`stop`/`restart` go through the API** rather than
+`ssh docker compose`, because Reverb reconciles desired vs observed state and a
+compose command run behind its back shows up as drift in its UI. `down` maps to
+stop and says so — Reverb models a desired state, so there is no compose-style
+teardown. `ps` and `logs` stay on SSH; they are read-only.
+
+`deploy` and `watch` still refuse a Reverb target: Reverb runs its own deploy,
+and delegating to it means first pushing the branch to the Reverb remote — a
+design that has not landed yet. Each says so when you try.
 
 ## Build mode
 

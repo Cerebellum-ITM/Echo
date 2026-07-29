@@ -581,8 +581,11 @@ var reverbHelpEntries = []helpEntry{
 	{"  works with", "shell, shell-run, logs, view, compare, update, test, push, db-pull, actions, sequence"},
 	{"  push lands in", "the environment's overlay — Reverb replaces addons on every deploy"},
 	{"  push --clean", "Empties the overlay (--all = every module in it)"},
+	{"  checkpoint", "list/create map to Reverb snapshots (rm is admin-scoped)"},
+	{"  up/down/stop/restart", "Go through the Reverb API so the state doesn't read as drift"},
 	{"  config", "[reverb] url + token (scope: echo) in global.toml; the token is a secret"},
-	{"  not yet", "deploy, watch, checkpoint, up/down/stop/restart — Reverb owns those"},
+	{"  ssh_host", "Optional [reverb] ssh_host = your own ~/.ssh/config alias for the host"},
+	{"  not yet", "deploy, watch — delegating those needs the push-to-Reverb remote"},
 }
 
 // runHelp shows the command reference. It opens the paginated viewer (one

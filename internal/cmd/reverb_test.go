@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/pascualchavez/echo/internal/config"
 	"github.com/pascualchavez/echo/internal/reverb"
@@ -114,7 +115,7 @@ func TestReverbComposeCmd(t *testing.T) {
 // The deferred commands must refuse a Reverb target with a usage error
 // naming why — and must not touch a classic target.
 func TestRequireNoReverb(t *testing.T) {
-	for _, name := range []string{"deploy", "watch", "checkpoint", "up", "down", "stop", "restart"} {
+	for _, name := range []string{"deploy", "watch", "i18n-pull"} {
 		err := requireNoReverb(name, "env:acme/main")
 		if !errors.Is(err, ErrUsage) {
 			t.Errorf("%s: err = %v, want ErrUsage", name, err)
@@ -126,6 +127,13 @@ func TestRequireNoReverb(t *testing.T) {
 	for _, from := range []string{"", "muutrade"} {
 		if err := requireNoReverb("deploy", from); err != nil {
 			t.Errorf("classic target %q must pass, got %v", from, err)
+		}
+	}
+	// The lifecycle and checkpoint verbs were only blocked by token scope,
+	// which the contract has since granted — they must NOT refuse anymore.
+	for _, name := range []string{"checkpoint", "up", "down", "stop", "restart"} {
+		if err := requireNoReverb(name, "env:acme/main"); err != nil {
+			t.Errorf("%s must no longer refuse a Reverb target: %v", name, err)
 		}
 	}
 }
@@ -171,7 +179,7 @@ func reverbCtx() remoteShellContext {
 		remotePath: "/data/acme/envs/main",
 		fromName:   "env:acme/main",
 		reverb: &reverbEnv{
-			project: "acme", env: "main",
+			id: 48, project: "acme", env: "main",
 			paths: reverb.Paths{
 				Addons:     "/data/acme/envs/main/addons",
 				Overlay:    "/data/acme/envs/main/overlay",
@@ -283,4 +291,133 @@ func stubRemoteDirExists(t *testing.T, exists bool) func() {
 	orig := remoteDirExists
 	remoteDirExists = func(ctx context.Context, sshHost, dir string) bool { return exists }
 	return func() { remoteDirExists = orig }
+}
+
+// --- ssh identity ------------------------------------------------------
+
+// The transport is configured the same way in both modes: a name the user
+// wrote, passed verbatim. The alias must win over the payload's host.
+func TestReverbSSHHostPrefersLocalAlias(t *testing.T) {
+	cfg := &config.Config{ReverbSSHHost: "reverb-dev"}
+	env := reverb.Env{SSHHost: "deploy@10.0.0.5", SSHPort: 1024}
+	var lines []string
+	got := reverbSSHHost(cfg, env, func(level, sub, msg, db string, f ...[2]string) {
+		lines = append(lines, level+" "+msg)
+	})
+	if got != "reverb-dev" {
+		t.Errorf("host = %q, want the local alias", got)
+	}
+	// With an alias, ssh_config carries the port — no warning is warranted.
+	for _, l := range lines {
+		if strings.HasPrefix(l, "WARNING") {
+			t.Errorf("unexpected warning with an alias set: %q", l)
+		}
+	}
+}
+
+// Without an alias the payload's host is used unchanged, and a non-default
+// port produces a diagnostic naming the fix — never an `ssh -p` argv.
+func TestReverbSSHHostWarnsOnNonDefaultPort(t *testing.T) {
+	env := reverb.Env{SSHHost: "deploy@10.0.0.5", SSHPort: 1024}
+	var warned string
+	got := reverbSSHHost(&config.Config{}, env, func(level, sub, msg, db string, f ...[2]string) {
+		if level == "WARNING" {
+			warned = msg
+			for _, kv := range f {
+				warned += " " + kv[0] + "=" + kv[1]
+			}
+		}
+	})
+	if got != "deploy@10.0.0.5" {
+		t.Errorf("host = %q, want the payload's host unchanged", got)
+	}
+	if !strings.Contains(warned, "1024") || !strings.Contains(warned, "ssh_host") {
+		t.Errorf("warning = %q, want it to name the port and the override", warned)
+	}
+}
+
+// Port 22 (and an omitted port, which decodes to 0) is the default: no noise.
+func TestReverbSSHHostQuietOnDefaultPort(t *testing.T) {
+	for _, port := range []int{0, 22} {
+		var warned bool
+		reverbSSHHost(&config.Config{}, reverb.Env{SSHHost: "h", SSHPort: port},
+			func(level, sub, msg, db string, f ...[2]string) {
+				if level == "WARNING" {
+					warned = true
+				}
+			})
+		if warned {
+			t.Errorf("port %d must not warn", port)
+		}
+	}
+}
+
+func TestReverbEventLevel(t *testing.T) {
+	cases := map[string]string{
+		"info": "INFO", "debug": "INFO", "": "INFO",
+		"warn": "WARNING", "warning": "WARNING",
+		"error": "ERROR", "fatal": "ERROR", "ERROR": "ERROR",
+	}
+	for in, want := range cases {
+		if got := reverbEventLevel(in); got != want {
+			t.Errorf("reverbEventLevel(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+// --- lifecycle mapping -------------------------------------------------
+
+func TestReverbActionFor(t *testing.T) {
+	cases := []struct {
+		verb, action string
+		wantNote     bool
+	}{
+		{"up", reverb.ActionStart, false},
+		{"stop", reverb.ActionStop, false},
+		{"restart", reverb.ActionRestart, false},
+		// `down` has no counterpart in a desired-state model, so it maps to
+		// stop AND says so rather than silently doing something else.
+		{"down", reverb.ActionStop, true},
+	}
+	for _, tc := range cases {
+		action, note := reverbActionFor(tc.verb)
+		if action != tc.action {
+			t.Errorf("%s → %q, want %q", tc.verb, action, tc.action)
+		}
+		if (note != "") != tc.wantNote {
+			t.Errorf("%s note = %q, wantNote = %v", tc.verb, note, tc.wantNote)
+		}
+	}
+}
+
+// --- snapshots ---------------------------------------------------------
+
+func TestSnapshotRow(t *testing.T) {
+	note := "before the update"
+	size := int64(2048)
+	s := reverb.Snapshot{
+		ID: "snap_1", Kind: "manual", Note: &note, SizeBytes: &size,
+		CreatedAt: time.Now().Add(-90 * time.Minute).Format(time.RFC3339),
+	}
+	row := snapshotRow(s)
+	if row.Name != "snap_1" || row.Method != "manual" || row.Status != "ok" {
+		t.Errorf("row = %+v", row)
+	}
+	if row.SizeBytes != 2048 || row.Size == "" {
+		t.Errorf("size = %d / %q", row.SizeBytes, row.Size)
+	}
+	if row.AgeSeconds < 5000 || row.Age == "—" {
+		t.Errorf("age = %d / %q, want it derived from created_at", row.AgeSeconds, row.Age)
+	}
+	if len(row.DeploySHAs) != 1 || row.DeploySHAs[0] != note {
+		t.Errorf("note column = %v", row.DeploySHAs)
+	}
+}
+
+// A null note/size and an unparseable timestamp must degrade, not panic.
+func TestSnapshotRowTolerantOfNulls(t *testing.T) {
+	row := snapshotRow(reverb.Snapshot{ID: "snap_2", Kind: "pre_deploy", CreatedAt: "not-a-date"})
+	if row.Name != "snap_2" || row.SizeBytes != 0 || row.Age != "—" || len(row.DeploySHAs) != 0 {
+		t.Errorf("row = %+v", row)
+	}
 }

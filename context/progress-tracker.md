@@ -6,6 +6,11 @@
 
 ## Current Goal
 
+Unit 108 (reverb-real-host) entregada: modo Reverb usable contra un host real
+— `[reverb] ssh_host` (alias local, un mecanismo de SSH para los dos modos),
+espera de `not_ready` siguiendo el job, shadow del overlay desde el servidor, y
+des-diferidos `checkpoint`→snapshots y los verbos de ciclo de vida por API.
+Falta correr el acceptance check REAL (36/36) contra un Reverb vivo. Antes:
 Unit 107 (reverb-mode-foundation) entregada: `-E <project>/<env>` apunta Echo a
 un entorno de Reverb resolviéndolo por HTTP, sin config por entorno; toda la
 superficie de diagnóstico sale gratis y `push` aterriza en el overlay. Quedan
@@ -33,6 +38,65 @@ _(siguiente: Unit 14 — meta-commands. Fix deploy-build-muting: el builder de `
 
 
 ## Completed
+
+- [x] Unit 108 — reverb-real-host. Cierra los defectos que solo aparecieron al
+  correr el acceptance check REAL de Reverb (`scripts/echo-contract-check.sh`)
+  contra el host de dev — la Unit 107 solo se había verificado contra un
+  simulador, que por construcción responde en el puerto que le marques y
+  autoriza lo que le pidas. **(1) Identidad SSH:** nuevo `[reverb] ssh_host`
+  (alias local) que **gana** sobre el `ssh_host` del payload. Decisión de
+  diseño que se aparta del brief del lado Reverb (pedía plomería de
+  `ssh -p <ssh_port>`) y hay que reportarla: Echo NUNCA ha tenido campo de
+  puerto —pasa el host verbatim y deja que `~/.ssh/config` resuelva puerto,
+  usuario, llave y ProxyJump—, y eso funciona en modo clásico porque el
+  `ssh_host` es un alias que escribió el usuario; el del payload es un literal
+  `user@ip` que no matchea ningún bloque `Host`, así que se pierde TODO, no
+  solo el puerto. Como el payload por contrato jamás trae la identidad
+  ("Reverb ships no keys"), honrar `ssh_port` habría abierto un **segundo canal
+  de configuración** que resuelve un tercio del problema y deja el bloque de
+  ssh_config igual por escribir. `ssh_port` se lee **solo como diagnóstico**:
+  WARNING que nombra el puerto y las dos salidas, para que el "connection
+  refused" deje de leerse como host caído. Costo aceptado: un bloque por HOST
+  de Reverb (no por entorno → la promesa de cero-config-por-entorno intacta).
+  **(2) Ventana de `not_ready`:** eran 3×2s = 6s contra un `env_create` real de
+  60–90s → siempre fallaba. Ahora `resolveWaiting` busca el job en vuelo
+  (`ListJobs` por el `id` que el contrato agregó a `/resolve` y `/envs`),
+  `FollowJob` streamea sus eventos deduplicados por `seq`, y al terminar
+  re-resuelve con `reverbSettleWait` (20s) — bug encontrado EN VIVO: "job
+  terminó" y "resolve dice listo" son dos observaciones distintas y un
+  `Resolve` pelado perdía la carrera. Fallback acotado a 2min si el job no se
+  identifica. **(3) Shadow del overlay del servidor:** `warnOverlayShadow` usa
+  `GET /environments/{id}/overlay` en vez de N `ssh test -d` — la comparación
+  es contra el árbol de git desplegado, que el cliente no tiene; falla → no
+  avisa (advisory, no tumba el push). **(4)** El error de `<env>` ambiguo ya
+  listaba candidatos desde 107 (verificado); `FindEnv` ahora devuelve el
+  `EnvRef` completo porque el `id` es lo que abre las rutas de acción.
+  **(5) Des-diferidos §6 y §7** (solo estaban bloqueados por scope del token,
+  que el contrato ya concedió): `checkpoint list/create` → snapshots
+  (`checkpoint_reverb.go`, **sin** tocar el store local), `checkpoint rm`
+  rechazado por admin-scoped; `up/down/stop/restart` → `POST /projects/{p}/
+  envs/{e}/{start,stop,restart}` siguiendo el job, con `down`→stop **avisando**
+  que Reverb modela estado deseado. `requireNoReverb` pasó de switch con
+  default-refuse a un **mapa `reverbDeferred`** (ausente = soportado); quedan
+  solo `deploy`, `watch` e `i18n-pull`. Archivos: `internal/reverb/ops.go`
+  +test (nuevo: Overlay/Snapshot/Job/EnvAction/Deploy/FollowJob/
+  ProvisioningJob/JobFailure, `post`+`do` compartidos), `client.go` (`ID`,
+  `SSHPort`, `EnvRef.ID`, `FindEnv`→EnvRef), `internal/cmd/reverb.go`
+  (`reverbSSHHost`, `resolveWaiting`, `resolveBounded`, `reverbEventLevel`,
+  `reverbDeferred`), `checkpoint_reverb.go` (nuevo), `push_reverb.go`,
+  `checkpoint.go`, `docker.go`+`docker_remote.go`, `config.go`
+  (`ReverbSSHHost`), `commands.go`, `repl.go` (ayuda), `main.go` (`down`
+  projectless con flag remoto), README + CHANGELOG. build/vet/test verdes.
+  **Verificado EN VIVO** contra un simulador ampliado: alias gana y silencia el
+  aviso, sin alias avisa del puerto 1024, job-following con 3 eventos + settle,
+  snapshots listados/creados, `up`/`down`/`restart` por API, `checkpoint rm` y
+  `deploy` rechazados. **PENDIENTE — el gate real de la unidad**: correr
+  `REVERB_API=… ECHO_CHECK_KEY=… bash scripts/echo-contract-check.sh <p> <e>`
+  (36/36) contra un Reverb vivo y replicar el flujo con los comandos de Echo;
+  no fue posible aquí (el daemon escucha en 127.0.0.1:8484 sin ruta pública →
+  necesita `ssh -L 8484:127.0.0.1:8484 <host>`). Spec:
+  `context/specs/108-reverb-real-host.md`. Siguiente: 109 deploy delegado +
+  push al remoto de Reverb.
 
 - [x] Unit 107 — reverb-mode-foundation. Modo Reverb: `-E <project>/<env>`
   resuelve un entorno gestionado por Reverb **por HTTP en el momento de la

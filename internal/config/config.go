@@ -179,6 +179,13 @@ type Config struct {
 	ReverbURL        string
 	ReverbToken      string
 	ReverbComposeCmd string
+	// ReverbSSHHost overrides the ssh_host the daemon reports. The payload's
+	// host is a literal `user@ip` (Reverb's public_host), which matches no
+	// `Host` block in the user's ~/.ssh/config — so the port, identity and
+	// ProxyJump that block carries are all lost. Naming a local alias here
+	// puts the transport back where it lives in classic mode: ssh_config
+	// resolves it, and Echo passes the alias verbatim as it always has.
+	ReverbSSHHost string
 }
 
 // DeployAction is one declared step in the deploy lifecycle. Phase is
@@ -267,6 +274,7 @@ type reverbConfig struct {
 	URL        string `toml:"url"`
 	Token      string `toml:"token"`
 	ComposeCmd string `toml:"compose_cmd"`
+	SSHHost    string `toml:"ssh_host"`
 }
 
 // pushConfig is the [push] table, valid in both global.toml and a project
@@ -619,6 +627,7 @@ func applyReverb(cfg *Config, f *reverbConfig) {
 	cfg.ReverbURL = f.URL
 	cfg.ReverbToken = f.Token
 	cfg.ReverbComposeCmd = f.ComposeCmd
+	cfg.ReverbSSHHost = f.SSHHost
 }
 
 // RemoteProfile is the subset of a server-side Echo configuration the
