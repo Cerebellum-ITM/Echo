@@ -380,7 +380,7 @@ func helpSections() []helpSection {
 			{"  --copy", "Copy the file to the clipboard instead"},
 			{"  --last", "Re-display this session's last viewed file (skips pickers)"},
 			{"  --from <t>", "View the file from a remote target (or --remote for the link binding)"},
-			{"lint [<mod>...|<path>]", "Check Odoo XML the way the data loader does (offline)"},
+			{"lint [<mod>...]", "Check Odoo XML the way the data loader does (also a file path)"},
 			{"  --json", "Emit findings + summary as JSON to stdout (logs to stderr)"},
 			{"compare [<mod>]", "Diff a local module file against its Docker copy"},
 			{"  --all", "Compare the whole module: changed/added/missing table"},
