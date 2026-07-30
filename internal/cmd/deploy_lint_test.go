@@ -211,3 +211,37 @@ func TestDeployManagePathsBypassLint(t *testing.T) {
 		}
 	}
 }
+
+// The pre-flight inherits Unit 111 with no changes of its own: a
+// listed-but-missing file blocks, an unlisted one does not.
+func TestDeployLintPreflightManifestRules(t *testing.T) {
+	root := t.TempDir()
+	write := func(rel, content string) {
+		path := filepath.Join(root, rel)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("addons/mod_gone/__manifest__.py", "{'name': 'G', 'data': ['views/ghost.xml']}")
+	write("addons/mod_orphan/__manifest__.py", "{'name': 'O', 'data': []}")
+	write("addons/mod_orphan/views/orphan.xml", "<odoo><record id=\"a\" model=\"m\"/></odoo>")
+
+	err, lines := runPreflight(t, root, deployArgs{}, []string{"mod_gone"})
+	if !errors.Is(err, ErrLintBlocked) {
+		t.Fatalf("err = %v, want ErrLintBlocked for a listed-but-missing file", err)
+	}
+	if !hasLine(lines, "ERROR", "not on disk") {
+		t.Error("the missing-entry finding was not reported")
+	}
+
+	err, lines = runPreflight(t, root, deployArgs{}, []string{"mod_orphan"})
+	if err != nil {
+		t.Fatalf("err = %v, want nil for an unlisted file", err)
+	}
+	if !hasLine(lines, "WARNING", "no manifest lists this file") {
+		t.Error("the unlisted finding was not reported as a warning")
+	}
+}

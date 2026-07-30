@@ -30,7 +30,7 @@ func lintFixture(t *testing.T) string {
 }`)
 	write("addons/mod_a/views/listed.xml", "<odoo>\n<!-- roto -- aqui -->\n</odoo>\n")
 	write("addons/mod_a/views/dead.xml", "<odoo>\n<!-- otro -- roto -->\n</odoo>\n")
-	write("addons/mod_b/__manifest__.py", "{'name': 'B', 'data': []}")
+	write("addons/mod_b/__manifest__.py", "{'name': 'B', 'data': ['views/ok.xml']}")
 	write("addons/mod_b/views/ok.xml", "<odoo>\n<record id=\"a\" model=\"m\"/>\n</odoo>\n")
 	return root
 }
@@ -106,7 +106,7 @@ func TestRunLintScopesToNamedModule(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(res.Findings) != 0 {
-		t.Fatalf("linting a clean module reported: %+v", res.Findings)
+		t.Fatalf("linting a consistent, clean module reported: %+v", res.Findings)
 	}
 	if !reflect.DeepEqual(res.Modules, []string{"mod_b"}) {
 		t.Errorf("Modules = %v, want [mod_b]", res.Modules)
@@ -122,11 +122,16 @@ func TestRunLintSeverityFromManifest(t *testing.T) {
 	if res.Errors() != 1 {
 		t.Errorf("Errors() = %d, want 1 (only listed.xml is in a manifest)", res.Errors())
 	}
-	if res.Warnings() != 1 {
-		t.Errorf("Warnings() = %d, want 1 (dead.xml is listed nowhere)", res.Warnings())
-	}
 
+	// The markup findings are what severity is about: same defect in both
+	// files, different consequence. dead.xml also draws a manifest-unlisted
+	// warning, which is a different rule and counted separately below.
+	markup := 0
 	for _, f := range res.Findings {
+		if f.Rule == odoolint.RuleManifestUnlisted {
+			continue
+		}
+		markup++
 		switch filepath.Base(f.File) {
 		case "listed.xml":
 			if f.Kind != odoolint.KindErr {
@@ -137,9 +142,26 @@ func TestRunLintSeverityFromManifest(t *testing.T) {
 				t.Errorf("dead.xml = %q, want %q", f.Kind, odoolint.KindWarn)
 			}
 		default:
-			t.Errorf("unexpected finding in %s", f.File)
+			t.Errorf("unexpected markup finding in %s", f.File)
 		}
 	}
+	if markup != 2 {
+		t.Errorf("got %d markup findings, want 2", markup)
+	}
+	if got := len(findingsWithRule(res.Findings, odoolint.RuleManifestUnlisted)); got != 1 {
+		t.Errorf("got %d unlisted findings, want 1 (dead.xml)", got)
+	}
+}
+
+// findingsWithRule filters findings by rule.
+func findingsWithRule(fs []odoolint.Finding, rule string) []odoolint.Finding {
+	var out []odoolint.Finding
+	for _, f := range fs {
+		if f.Rule == rule {
+			out = append(out, f)
+		}
+	}
+	return out
 }
 
 func TestRunLintExplicitFile(t *testing.T) {
@@ -231,5 +253,84 @@ func TestRelPath(t *testing.T) {
 	}
 	if got := RelPath(root, "/etc/other.xml"); got != "/etc/other.xml" {
 		t.Errorf("RelPath outside root = %q, want it unchanged", got)
+	}
+}
+
+// The manifest cross-check (Unit 111) runs inside the ordinary lint, so a
+// listed-but-missing file blocks and an unlisted one only warns.
+func TestRunLintManifestCrossCheck(t *testing.T) {
+	root := t.TempDir()
+	write := func(rel, content string) {
+		path := filepath.Join(root, rel)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("addons/mod_x/__manifest__.py", "{'name': 'X', 'data': ['views/ghost.xml']}")
+	write("addons/mod_x/views/orphan.xml", "<odoo><record id=\"a\" model=\"m\"/></odoo>")
+
+	res, err := RunLint(LintOpts{Cfg: lintCfg(), Root: root, Args: []string{"mod_x"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var missing, unlisted int
+	for _, f := range res.Findings {
+		switch f.Rule {
+		case odoolint.RuleManifestMissing:
+			missing++
+			if f.Kind != odoolint.KindErr {
+				t.Errorf("manifest-missing = %q, want %q", f.Kind, odoolint.KindErr)
+			}
+		case odoolint.RuleManifestUnlisted:
+			unlisted++
+			if f.Kind != odoolint.KindWarn {
+				t.Errorf("manifest-unlisted = %q, want %q", f.Kind, odoolint.KindWarn)
+			}
+		}
+	}
+	if missing != 1 || unlisted != 1 {
+		t.Fatalf("missing=%d unlisted=%d, want 1 and 1; findings: %+v", missing, unlisted, res.Findings)
+	}
+	if res.Errors() != 1 {
+		t.Errorf("Errors() = %d, want 1", res.Errors())
+	}
+}
+
+// An explicit file argument still gets its module cross-checked, so a hook
+// on one file can report that nothing lists it.
+func TestRunLintExplicitFileCrossChecksItsModule(t *testing.T) {
+	root := t.TempDir()
+	write := func(rel, content string) string {
+		path := filepath.Join(root, rel)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return path
+	}
+	write("addons/mod_y/__manifest__.py", "{'name': 'Y', 'data': []}")
+	target := write("addons/mod_y/views/orphan.xml", "<odoo><record id=\"a\" model=\"m\"/></odoo>")
+
+	res, err := RunLint(LintOpts{Cfg: lintCfg(), Root: root, Args: []string{target}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, f := range res.Findings {
+		if f.Rule == odoolint.RuleManifestUnlisted {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("no unlisted finding for an explicit file: %+v", res.Findings)
+	}
+	if res.Errors() != 0 {
+		t.Errorf("Errors() = %d, want 0 (unlisted never blocks)", res.Errors())
 	}
 }

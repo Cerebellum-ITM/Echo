@@ -53,7 +53,23 @@ const (
 	// RuleSchema is markup that parses but that Odoo's data-file
 	// grammar refuses.
 	RuleSchema = "odoo-schema"
+	// RuleManifestMissing is a manifest entry with no file on disk. The
+	// loader aborts on the first listed file it cannot read.
+	RuleManifestMissing = "manifest-missing"
+	// RuleManifestUnlisted is a data-shaped .xml no manifest mentions, so
+	// nothing loads it.
+	RuleManifestUnlisted = "manifest-unlisted"
 )
+
+// selfSeverityRules carry their severity from the rule itself rather than
+// from whether a manifest lists the file, and applySeverity must leave
+// them alone. Both structural rules qualify, for opposite reasons: a
+// missing listed file always aborts the load, and an unlisted file can
+// never abort it. See internal/odoolint/manifest.go.
+var selfSeverityRules = map[string]bool{
+	RuleManifestMissing:  true,
+	RuleManifestUnlisted: true,
+}
 
 // Finding is one defect, located in the file the user edits — never in a
 // decoded fragment, even when that is where the parse failed.
@@ -85,6 +101,10 @@ type Options struct {
 	// Xmllint is the resolved xmllint binary. Empty means absent: the
 	// Go pass still runs, the libxml2 passes are skipped.
 	Xmllint string
+
+	// ManifestDirs are the module directories to cross-check against disk
+	// (Unit 111). Nil runs the markup passes only.
+	ManifestDirs []string
 }
 
 // Result is the outcome of a run: the findings plus what was actually
@@ -125,6 +145,11 @@ func Check(paths []string, opt Options) (Result, error) {
 		return Result{}, err
 	}
 	res := Result{Files: len(files)}
+
+	// Structural pass: the manifest cross-check (Unit 111). Same question
+	// as the markup passes — what will the loader refuse — reached from the
+	// project structure rather than from the bytes of a file.
+	res.Findings = append(res.Findings, CheckManifests(opt.ManifestDirs)...)
 
 	// Pass 1: encoding/xml, on every file. This is the floor — compiled
 	// in, so it cannot be skipped on any platform Echo cross-compiles
@@ -227,6 +252,10 @@ func underStatic(path string) bool {
 func applySeverity(findings []Finding, manifest map[string]bool) []Finding {
 	out := make([]Finding, 0, len(findings))
 	for _, f := range findings {
+		if selfSeverityRules[f.Rule] {
+			out = append(out, f)
+			continue
+		}
 		f.Kind = KindWarn
 		if manifest[absOrSelf(f.File)] {
 			f.Kind = KindErr

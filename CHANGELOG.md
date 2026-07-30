@@ -8,6 +8,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **El `lint` cruza el `__manifest__.py` contra el disco, en los dos sentidos.**
+  Es la otra mitad de "qué va a rechazar el loader", por otra puerta: sin comando
+  ni flag nuevos, corre dentro del `lint` que ya existe y por lo tanto dentro del
+  pre-flight de `deploy` sin cablear nada. **`manifest-missing`** — una entrada de
+  `data`/`demo` que no existe en disco — es **siempre** `err`, y es el único punto
+  donde el modelo manifest-aware de la Unit 109 no aplica porque *no puede*: ese
+  modelo pregunta si un manifiesto lista el archivo para decidir si el loader lo
+  va a leer, y aquí la respuesta es sí por construcción — la ausencia **es** el
+  defecto, y el loader aborta cada vez. Se ancla a la línea del `__manifest__.py`,
+  no al archivo fantasma, porque esa es la línea que hay que editar (una ruta que
+  no existe no es navegable), y cubre entradas no-XML: un
+  `security/ir.model.access.csv` faltante aborta igual. **`manifest-unlisted`** —
+  un `.xml` con forma de data file que ningún manifiesto menciona — es **siempre**
+  `warn`, nunca más: un `.xml` sin listar es rutina mientras se escribe un módulo,
+  y bloquear un deploy por eso volvería el pre-flight inusable en un día; este
+  check se gana su lugar explicando por qué un hallazgo ahí es inerte, no
+  gateando. Para quedarse lo bastante callado como para dejarlo prendido, solo
+  cuenta con raíz `<odoo>`/`<openerp>` (los `<templates>` de OWL llegan por el
+  assets bundle, no por `data`) y se salta `static/`, `tests/`, `migrations/` e
+  `i18n/`. Verificado en `all_odoo`: cero `manifest-missing` —lo esperado en un
+  repo que despliega hoy— y 14 `manifest-unlisted`, todos huérfanos reales
+  (incluido un literal `new_note_view (copy).xml`); uno de ellos es el mismo
+  archivo que ya cargaba un hallazgo de markup, así que ahora el reporte
+  **explica** por qué ese defecto es inerte.
 - **`deploy` lintea antes de mandar nada, y se niega a desplegar XML que el
   loader va a rechazar.** El pre-flight corre el lint de la Unit 109 sobre los
   módulos que la selección ya resolvió — no sobre el repo: un archivo roto en un

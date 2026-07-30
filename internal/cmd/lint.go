@@ -132,6 +132,7 @@ func RunLint(opts LintOpts) (LintResult, error) {
 	// and reads as success.
 	var targets []string
 	var modules []string
+	var manifestDirs []string
 	for _, m := range p.modules {
 		dir := moduleDir(roots, m)
 		if dir == "" {
@@ -140,6 +141,14 @@ func RunLint(opts LintOpts) (LintResult, error) {
 		}
 		targets = append(targets, dir)
 		modules = append(modules, m)
+		manifestDirs = append(manifestDirs, dir)
+	}
+	// An explicit file still gets its own module cross-checked, so a hook
+	// on one file can report "nothing lists this".
+	for _, f := range p.files {
+		if dir := odoolint.ModuleDirFor(f); dir != "" {
+			manifestDirs = append(manifestDirs, dir)
+		}
 	}
 	targets = append(targets, p.files...)
 
@@ -148,6 +157,7 @@ func RunLint(opts LintOpts) (LintResult, error) {
 			return LintResult{}, fmt.Errorf("%w: no addons paths to lint under %s", ErrUsage, opts.Root)
 		}
 		targets = roots
+		manifestDirs = odoolint.ModuleDirs(roots)
 	}
 	sort.Strings(modules)
 
@@ -162,9 +172,10 @@ func RunLint(opts LintOpts) (LintResult, error) {
 	}
 
 	res, err := odoolint.Check(targets, odoolint.Options{
-		Grammar:     grammar,
-		Xmllint:     odoolint.FindXmllint(),
-		ManifestSet: odoolint.ManifestSet(odoolint.ModuleDirs(manifestRoots)),
+		Grammar:      grammar,
+		Xmllint:      odoolint.FindXmllint(),
+		ManifestSet:  odoolint.ManifestSet(odoolint.ModuleDirs(manifestRoots)),
+		ManifestDirs: dedupeStrings(manifestDirs),
 	})
 	if err != nil {
 		return LintResult{}, err
@@ -208,9 +219,10 @@ func LintModules(cfg *config.Config, root string, modules []string) (LintResult,
 
 	grammar, major, exact := odoolint.Grammar(cfg.OdooVersion)
 	res, err := odoolint.Check(targets, odoolint.Options{
-		Grammar:     grammar,
-		Xmllint:     odoolint.FindXmllint(),
-		ManifestSet: odoolint.ManifestSet(targets),
+		Grammar:      grammar,
+		Xmllint:      odoolint.FindXmllint(),
+		ManifestSet:  odoolint.ManifestSet(targets),
+		ManifestDirs: targets,
 	})
 	if err != nil {
 		return LintResult{}, missing, err
@@ -228,9 +240,19 @@ func LintModules(cfg *config.Config, root string, modules []string) (LintResult,
 
 // RelPath renders p relative to root when it is inside it, so findings
 // read as the paths the user typed rather than absolute noise.
-func RelPath(root, p string) string {
-	if rel, err := filepath.Rel(root, p); err == nil && !strings.HasPrefix(rel, "..") {
-		return rel
+func RelPath(root, p string) string { return odoolint.RelTo(root, p) }
+
+// dedupeStrings returns s without duplicates, order preserved. Module dirs
+// can be named twice (a module plus a file inside it).
+func dedupeStrings(s []string) []string {
+	seen := map[string]bool{}
+	out := make([]string, 0, len(s))
+	for _, v := range s {
+		if seen[v] {
+			continue
+		}
+		seen[v] = true
+		out = append(out, v)
 	}
-	return p
+	return out
 }
