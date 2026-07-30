@@ -8,6 +8,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **`deploy` lintea antes de mandar nada, y se niega a desplegar XML que el
+  loader va a rechazar.** El pre-flight corre el lint de la Unit 109 sobre los
+  módulos que la selección ya resolvió — no sobre el repo: un archivo roto en un
+  módulo que este deploy no toca no es problema de este deploy, y bloquear por
+  eso enseña a todos a escribir `--no-lint`. Va **después de la selección**
+  (que es lo que define el alcance) y **antes del primer SSH**: antes del push,
+  del checkpoint y del `-u`, así que un bloqueo cuesta cero — no se copió
+  código, no avanzó ninguna rama, no se tomó checkpoint, no hay nada que rodar
+  atrás. Esa es toda la diferencia contra hoy, donde el mismo defecto aparece
+  cuando el registry ya abortó y el checkpoint ya se escribió. Bloquea **solo**
+  con hallazgos en archivos que un manifiesto lista, que es lo que impide que
+  `deploy` sea más estricto que Odoo. Encendido por defecto con `--no-lint`
+  per-run, que emite un WARNING visible en el transcript — y a propósito **sin**
+  llave de config: un opt-out persistente lo prendería una vez quien pegara con
+  un falso positivo y quedaría apagado para siempre en la máquina que más lo
+  necesita. Un lint que *no puede correr* es WARNING y el deploy sigue: el lint
+  es la guardia, no el trabajo. `--rollback`/`--restore-code`/`--set-*` retornan
+  antes de la selección y nunca lintean. Verificado contra un target
+  irresoluble: el run bloqueado nunca llega a `reading remote profile`.
 - **`lint`: atrapa el XML que el loader va a rechazar, sin salir de tu máquina.**
   Dos fallas mecánicas abortan la carga completa del registry y ambas costaron
   deploys en una tarde: un `--` dentro de un comentario XML y un

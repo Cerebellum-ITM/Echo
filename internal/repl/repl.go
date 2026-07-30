@@ -500,6 +500,7 @@ func helpSections() []helpSection {
 			{"  --rollback", "Restore the target's most recent checkpoint (no deploy)"},
 			{"  --restore-code [<sha>]", "Move a git-deploy target's code to a hash (bare = picker over branch history) and restart Odoo (no DB)"},
 			{"  --no-git", "Force the legacy rsync push on a git-deploy target for this run"},
+			{"  --no-lint", "Skip the pre-flight lint of the selected modules (see lint)"},
 			{"watch [<branch>]", "Auto push+deploy when new commits land on a branch; no branch → picker (Ctrl+C to stop)"},
 			{"  --from <target>", "Use a named connect target (default: this dir's link)"},
 			{"  --remote", "Target this directory's linked remote"},

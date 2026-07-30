@@ -40,7 +40,7 @@ Unit 109's manifest-aware severity is the precondition. This unit blocks on
 | finding | pre-flight |
 |---|---|
 | `err` — file listed in `data`/`demo` of a deployed module's manifest | **blocks** |
-| `warn` — unlisted file, or a render-time field | reported, does not block |
+| `warn` — no manifest lists the file | reported, does not block |
 
 So the blocking set is exactly "markup the loader will read and refuse".
 
@@ -48,7 +48,7 @@ So the blocking set is exactly "markup the loader will read and refuse".
 
 **Scope: the selected modules, not the repo.** `RunDeploy` already computes the
 module set it is deploying — `modules`, sorted and deduped at
-[deploy.go:989](internal/cmd/deploy.go:989). The pre-flight lints those modules
+[deploy.go:996](internal/cmd/deploy.go:996). The pre-flight lints those modules
 and nothing else.
 
 Linting the whole tree would be both wasted work and actively wrong: a broken
@@ -56,12 +56,13 @@ file in a module this deploy does not touch is not this deploy's problem, and
 blocking on it would train everyone to reach for `--no-lint`.
 
 **Placement: after selection, before the first remote contact.** The insertion
-point is immediately after `sort.Strings(modules)` and before
-`fetchRemoteProfile` — i.e. before the run's first SSH, before the code push,
-before the DB checkpoint, before `-u`.
+point is immediately after `sort.Strings(modules)` ([deploy.go:996](internal/cmd/deploy.go:996))
+and before `fetchRemoteProfile` ([deploy.go:1013](internal/cmd/deploy.go:1013)),
+which is the run's **first SSH**.
 
 ```
-subcommands (--set-push, --set-checkpoint, --rollback, …)
+subcommands (--set-push, --set-checkpoint, --rollback, --restore-code, …)
+remote resolution  (local config / picker — no SSH)
 selection (dirty modules, commits ahead, pickDeployItems)
 module resolution → `modules`
 ──────────── pre-flight lint ────────────      ← nothing remote has happened yet
@@ -70,6 +71,12 @@ code push  (rsync overlay or git branch advance)
 DB checkpoint
 module install / update
 ```
+
+Note `resolveDeployRemote` runs earlier than the lint, at
+[deploy.go:841](internal/cmd/deploy.go:841). That is deliberate and harmless: it
+reads local config and may open a picker, but it opens no connection. The
+invariant that matters is that nothing has been *sent* or *changed* when the
+lint decides.
 
 It has to be **after** selection because that is what defines the scope. It is
 **before** everything remote so that a blocked deploy costs exactly nothing:
@@ -116,17 +123,22 @@ before selection and therefore never lint — they deploy no new code.
 `RunDeploy` gains one local step. No new package, no new config table:
 
 ```go
-if !p.noLint {
-    findings, err := odoolint.Check(modulePaths(opts.Root, modules), lintOpts)
-    // stream findings through opts.log; count Kind == err
-    // blocking → return DeployResult{}, deployLintError(n)
-}
+// internal/cmd/deploy_lint.go
+func deployLintPreflight(opts DeployOpts, p deployArgs, modules []string) error
 ```
 
+It calls `cmd.LintModules(cfg, root, modules)` — the same entry point that
+resolves the grammar and the manifest set for the `lint` command, so the two
+call sites cannot drift — streams the findings through `opts.log` under sub
+`lint`, and returns `ErrLintBlocked` when any finding is `err`.
+
 `parseDeployArgs` gains `--no-lint` (bool, in `commandFlags["deploy"]`, help and
-autocomplete). Grammar resolution and the manifest set come from Unit 109's
-library exactly as the `lint` command builds them — the two call sites share the
-resolution helper so they cannot drift.
+autocomplete).
+
+One deliberate asymmetry: a lint that *fails to run* (an unreadable tree, an
+xmllint that dies) is a `WARNING` and the deploy continues. The lint is a guard,
+not the job; a broken guard must not take the deploy down with it. Only findings
+block.
 
 ### Deliberately not configurable
 
@@ -139,34 +151,55 @@ a config flag that hides it.
 
 ## Tests
 
-- Pre-flight blocks: a manifest-listed file with a `--` comment in a selected
-  module → `RunDeploy` returns an error, and **no** remote call was made (fake
-  SSH/rsync layer records zero invocations).
-- Pre-flight does not block: the same defect in a file no manifest lists →
-  `WARNING`, deploy proceeds.
-- Scope: a broken manifest-listed file in a module *not* selected → deploy
-  proceeds, nothing reported.
-- `--no-lint`: the broken selected module deploys, and the `WARNING` naming the
-  skip is present in the emitted lines.
-- Placement: on a block, no checkpoint was created and no push ran — asserted on
-  the fakes, not just on the returned error.
-- `parseDeployArgs`: `--no-lint` parses, defaults false, and is accepted
-  alongside `--auto`/`--modules`/`--commits`.
-- `--rollback` / `--restore-code` / `--set-push` never invoke the lint.
-- `xmllint` absent + a `--` defect in a listed file: still blocks, with the
-  skipped-pass warning present.
+Unit tests run against `deployLintPreflight` with a capturing logger, which is
+where all the decisions live:
+
+- Blocks: a manifest-listed file with a `--` comment in a selected module →
+  `ErrLintBlocked`, the finding reported as `ERROR`, and the error text names
+  `--no-lint`.
+- Does not block: the same defect in a file no manifest lists → `WARNING` plus
+  a clean verdict, no error.
+- Scope: with a clean module selected, a broken module elsewhere in the repo is
+  neither reported nor blocking.
+- `--no-lint`: no error, and the skip `WARNING` is the *only* line emitted.
+- A module absent locally (a rename in flight) is a `WARNING`, not a failure.
+- `parseDeployArgs`: `--no-lint` parses, defaults false, and survives alongside
+  `--auto` / `--modules` / `--push`.
+- `--rollback` / `--restore-code` / `--set-push` / `--test-clear` are all
+  recognised as manage/restore paths, which return before the selection and so
+  never reach the lint.
+
+**Not unit-tested, and why.** The spec originally called for asserting on fake
+SSH/rsync layers that a blocked run made zero remote calls. `deploy` has no such
+fake layer — `RunDeploy` is only exercised in tests through the config-only
+path that returns before any remote work — and building one is a larger change
+than this unit. The placement invariant is instead verified end to end against a
+deliberately unresolvable host (see below), which is a stronger check than a
+mock would be: a real DNS failure would be impossible to miss.
 
 ## Verify when done
 
-- Reintroduce the `--` comment in a manifest-listed file of a real module and
-  run `echo_cli deploy`: the run stops with the server's own message, before any
-  SSH, in well under a second. Nothing on the server changed — confirm with
-  `push --clean` showing no drift and no new checkpoint in the index.
-- Same file, `echo_cli deploy --no-lint`: the deploy proceeds and fails the way
-  it does today (registry abort), proving the escape hatch is real and the old
-  behaviour is one flag away.
-- A normal clean deploy is indistinguishable from before apart from one extra
-  `INFO` summary line, and no measurable added wall time.
+Verified against a scratch project whose configured target is a host that
+cannot resolve (`host.que.no.existe.invalid`), which turns "did it touch the
+network?" into an unmissable observation:
+
+- **Blocked**: a `--` comment in a manifest-listed file → the run emits the
+  finding and `pre-flight blocked the deploy`, exits 1, and **never logs
+  `reading remote profile`** — no DNS failure appears, because no connection was
+  attempted. Nothing to roll back because nothing happened.
+- **`--no-lint`**: emits `pre-flight skipped flag=--no-lint`, then proceeds to
+  `reading remote profile` and fails on the unresolvable host — proving the
+  escape hatch really does reach the remote path.
+- **Clean file**: emits `pre-flight clean modules=demo_mod files=1 warnings=0`
+  and then proceeds to the remote exactly as before, one extra `INFO` line and
+  no measurable added wall time.
+
+Still to confirm against a live host (needs a real remote, unavailable in the
+dev environment):
+
+- A blocked run leaves no drift (`push --clean` shows nothing) and no new
+  checkpoint in the index. The reasoning is sound — the block precedes both
+  steps — but it has not been observed.
 - `watch`-driven deploy inherits the pre-flight without extra wiring.
 
 ## Follow-up this unblocks

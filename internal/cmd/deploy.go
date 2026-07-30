@@ -136,6 +136,11 @@ type deployArgs struct {
 	// noGit forces the legacy rsync push for one run on a git-deploy target
 	// (Unit 102), the escape hatch when the git advance can't or shouldn't run.
 	noGit bool
+	// noLint skips the pre-flight lint for one run (Unit 110). Per-run and
+	// logged, deliberately not a config key: a persisted opt-out would be
+	// set once by whoever hit a false positive and then stay off forever on
+	// the machine that needed the check most.
+	noLint bool
 	// restoreCode / restoreCodeSet drive the standalone code-only restore of a
 	// git-deploy target (deploy --restore-code [<sha>]) — no DB, no checkpoint.
 	// restoreCodeSet is true whenever the flag is present; restoreCode holds the
@@ -300,6 +305,8 @@ func parseDeployArgs(args []string) (deployArgs, error) {
 			out.consumeCheckpoint = true
 		case a == "--no-git":
 			out.noGit = true
+		case a == "--no-lint":
+			out.noLint = true
 		case a == "--restore-code":
 			// The SHA is optional: a following non-flag token is the target
 			// hash; a bare --restore-code opens the interactive picker.
@@ -987,6 +994,16 @@ func RunDeploy(ctx context.Context, opts DeployOpts) (DeployResult, error) {
 		return DeployResult{}, fmt.Errorf("no deployable modules: every selected commit was skipped")
 	}
 	sort.Strings(modules)
+
+	// Pre-flight lint (Unit 110): the selected modules are checked against
+	// the data loader's own rules here — after the selection, which is what
+	// defines the scope, and before the first remote contact. A block at
+	// this point costs nothing: no push, no checkpoint, no `-u`, nothing to
+	// roll back. It blocks on manifest-listed defects only, so it can never
+	// be stricter than the server (see deployLintPreflight).
+	if lerr := deployLintPreflight(opts, p, modules); lerr != nil {
+		return DeployResult{}, lerr
+	}
 
 	// Remote profile + DB credentials, same as i18n-pull.
 	cfgRemote := *opts.Cfg
