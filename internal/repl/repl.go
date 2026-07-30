@@ -212,7 +212,7 @@ var dispatchNames = []string{
 	"help", "clear", "copy-last", "report", "logview", "sequence",
 	"init", "reset", "alias", "link",
 	"up", "down", "stop", "restart", "ps", "logs", "push", "deploy", "watch", "checkpoint", "actions", "promote",
-	"install", "update", "uninstall", "test", "modules", "modinfo", "modstate", "view", "compare",
+	"install", "update", "uninstall", "test", "modules", "modinfo", "modstate", "view", "compare", "lint",
 	"i18n-export", "i18n-update", "i18n-pull",
 	"db-admin", "db-backup", "db-restore", "db-pull", "db-drop", "db-neutralize", "db-list", "db-use",
 	"shell", "shell-run", "bash", "psql", "connect",
@@ -297,6 +297,8 @@ func (sess *session) dispatchParsed(ctx context.Context, cmd string, args []stri
 		sess.runView(ctx, args)
 	case "compare":
 		sess.runCompare(ctx, args)
+	case "lint":
+		sess.runLint(args)
 	case "i18n-export", "i18n-update":
 		sess.runI18n(ctx, cmd, args)
 	case "i18n-pull":
@@ -378,6 +380,8 @@ func helpSections() []helpSection {
 			{"  --copy", "Copy the file to the clipboard instead"},
 			{"  --last", "Re-display this session's last viewed file (skips pickers)"},
 			{"  --from <t>", "View the file from a remote target (or --remote for the link binding)"},
+			{"lint [<mod>...|<path>]", "Check Odoo XML the way the data loader does (offline)"},
+			{"  --json", "Emit findings + summary as JSON to stdout (logs to stderr)"},
 			{"compare [<mod>]", "Diff a local module file against its Docker copy"},
 			{"  --all", "Compare the whole module: changed/added/missing table"},
 			{"  --from <t>", "Compare against a remote target (or --remote for the link binding)"},

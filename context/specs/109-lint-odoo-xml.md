@@ -124,12 +124,24 @@ Sub-documents get parsed too. There are **three** shapes, not two:
 | shape | handling |
 |---|---|
 | inline `<field name="arch"><form>…</form></field>` | already covered by the outer parse — nothing to do |
-| `CDATA` body (a contract's `body_qweb`) | unwrap and re-parse; invisible to the outer parse |
+| `CDATA` body | unwrap and re-parse; invisible to the outer parse |
 | entity-escaped arch (`&lt;form&gt;…`) | unescape and re-parse |
 
 Findings inside a sub-document are reported at the **containing file's** line
 number: the sub-parse's line is offset by the line where the sub-document
 starts. A finding reported at "line 3 of the fragment" is useless to a hook.
+
+**Only XML-bearing fields are re-parsed** — `arch` and `arch_db`. Those hold
+view definitions the view loader really does parse as XML, so a defect in them
+aborts a load exactly like one in the surrounding file.
+
+Every other field is skipped, and `body_html` is why. It holds HTML, which Odoo
+parses with `lxml.html`; an HTML parser accepts unclosed `<p>`/`<br>`, bare `%`
+template directives and entities an XML parser rejects outright. Checking those
+as XML produced **five false positives against two genuine findings** on the
+first real repo this ran against — every one of them a mail template. A linter
+that cries wolf on every mail template is one people switch off, so the rule is
+narrow by construction rather than broad with exceptions.
 
 **Severity is manifest-aware.** This is what makes the tool honest about what it
 found, and it is what makes Unit 110 safe to default on:
@@ -139,16 +151,19 @@ found, and it is what makes Unit 110 safe to default on:
 | listed in `data` or `demo` of a `__manifest__.py` | `err` |
 | not listed in any manifest | `warn` |
 
+That is the whole rule — one axis, the manifest.
+
 The loader only ever reads manifest-listed files. A finding in a file nothing
 lists is real information ("this will break the day someone adds it" — both of
 the prototype's findings were exactly this) but it is not a reason to fail a
 run. Without this split the lint is **stricter than the server**, which is the
 one thing a pre-flight must not be.
 
-Second severity rule, for the same reason: a finding in a field the server
-parses at **render** time rather than load time (a mail template's `body_qweb`)
-is a `warn`. It does not abort the registry load, and calling it `err` would
-overstate what a red run means.
+An earlier draft carried a second axis — a `warn` for fields parsed at *render*
+time rather than load time. It is gone: the honest fix for content the loader
+parses differently is not to soften the severity but to **not check it as XML at
+all**, which is what the XML-field rule above does. A `warn` on a mail template
+would still be a false positive, just a quieter one.
 
 **What the schema pass covers.** Files whose root element is `<odoo>` or
 `<openerp>` and that live outside `static/` — the ones the data loader reads.
@@ -186,6 +201,12 @@ type Options struct {
     Grammar     []byte              // embedded RNG for the resolved major
     ManifestSet map[string]bool     // abs paths listed in data/demo
     Xmllint     string              // resolved binary path; "" = absent
+}
+
+type Result struct {
+    Findings      []Finding
+    Files         int
+    SkippedPasses []string   // passes that did not run; callers MUST surface these
 }
 
 func Check(paths []string, opt Options) ([]Finding, error)
@@ -314,7 +335,9 @@ Each phase is independently useful and independently shippable.
 - Sub-document line offset: a finding inside a `CDATA` block at fragment line 3
   reports the containing file's line, not 3.
 - Severity: the same defect in a manifest-listed file is `err` and in an
-  unlisted file is `warn`; a defect in a render-time field is `warn`.
+  unlisted file is `warn`.
+- Field scope: a broken comment in a `CDATA` `arch` is caught; the same in a
+  `body_html` (HTML, parsed by `lxml.html`) is not reported at all.
 - Grammar selection: majors 17, 18 and 19 all resolve to the embedded grammar;
   an unknown major → newest with a warning; the embedded file parses as XML (a
   guard against a corrupt vendored copy) and matches the recorded sha256.
@@ -331,14 +354,18 @@ Each phase is independently useful and independently shippable.
 
 - `echo_cli lint` over `all_odoo` reproduces the prototype's result: the two
   known dead files, nothing else — and both as `warn`, not `err`, because no
-  manifest lists them. Exit 0.
+  manifest lists them. Exit 0. *(Verified: 356 files, 0.27 s, `errors=0
+  warnings=2` — `ccima_crm_reassign/views/product_overlay_templates.xml:169`,
+  a stray `<` from inline JS, and
+  `pragtech_crm_facebook_leads/views/facebook_dashboard_view.xml:57`, content
+  after the root element.)
 - Reintroducing each of the two real failures (the `--` comment, the
   `t-translation` attribute) in a manifest-listed file is caught locally, with
   the same message the server gives, as `err`, exit non-zero.
 - A duplicate attribute in a manifest-listed file is caught (proves the
   `xmllint` pass is wired, since Go accepts it).
-- `echo_cli lint ccima_contract` finishes well under a second, so a hook on
-  every file write is not felt.
+- A single module finishes well under a second, so a hook on every file write
+  is not felt. *(Verified: `lint ccima_crm_reassign`, 0.03 s.)*
 - `echo_cli lint --json | jq` gives one record per finding.
 - With `xmllint` renamed out of `PATH`: the `--` comment is still caught, the
   duplicate attribute and the `t-translation` are not, a warning names both

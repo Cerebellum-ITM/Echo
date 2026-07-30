@@ -7,7 +7,7 @@ import "strings"
 // determines the order of the match list rendered on a double-Tab.
 var Registry = []string{
 	"init", "reset", "alias", "link",
-	"install", "update", "uninstall", "test", "modules", "modinfo", "modstate", "view", "compare",
+	"install", "update", "uninstall", "test", "modules", "modinfo", "modstate", "view", "compare", "lint",
 	"i18n-export", "i18n-update", "i18n-pull",
 	"db-admin", "db-backup", "db-restore", "db-pull", "db-drop", "db-neutralize", "db-list", "db-use",
 	"bash", "psql", "shell", "shell-run", "connect",
@@ -30,6 +30,7 @@ var commandFlags = map[string][]string{
 	"modules":       {"--config"},
 	"modinfo":       {"--copy", "--last"},
 	"modstate":      {"--all", "--json"},
+	"lint":          {"--json"},
 	"view":          {"--copy", "--last", "--from", "--remote", "-E", "--env"},
 	"compare":       {"--all", "--copy", "--from", "--remote", "-E", "--env"},
 	"i18n-export":   {"--out"},

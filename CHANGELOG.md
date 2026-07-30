@@ -8,6 +8,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **`lint`: atrapa el XML que el loader va a rechazar, sin salir de tu máquina.**
+  Dos fallas mecánicas abortan la carga completa del registry y ambas costaron
+  deploys en una tarde: un `--` dentro de un comentario XML y un
+  `t-translation="off"` sobre `<template>`. `lint [<mod>...|<archivo>]` las
+  encuentra offline en milisegundos y sale con código ≠ 0, así que sirve como
+  hook de git, hook `PostToolUse` del editor y paso de CI — que es el punto: la
+  única defensa era una nota escrita que decía "no pongas `--` en un comentario",
+  y el agente que la escribió tropezó dos veces el mismo día. Un check que hay
+  que recordar no es un check. Dos pases: **well-formedness**, donde `xmllint`
+  es la autoridad (misma libxml2 que el lxml del servidor ⇒ mismo veredicto,
+  mensaje y línea) y `encoding/xml` es el piso que ninguna plataforma del
+  cross-compile puede saltarse — Go solo no basta porque acepta en silencio
+  atributo duplicado, dos raíces y `<?xml?>` a media página, que el servidor sí
+  rechaza; y **schema**, contra el `odoo/import_xml.rng` embebido, que es
+  literalmente el archivo que valida `odoo/tools/convert.py`. Una sola copia
+  cubre 17, 18 y 19 porque la gramática es byte-idéntica en las tres. La
+  severidad se decide por manifiesto: `err` si el archivo está en `data`/`demo`
+  de un `__manifest__.py` (el loader lo va a leer), `warn` si no lo lista nadie
+  — sin ese corte el linter sería más estricto que Odoo. Los sub-documentos
+  (`CDATA` y arch escapado con entidades) se re-parsean con la línea corregida a
+  la del archivo contenedor, y solo en campos que Odoo parsea como XML (`arch`,
+  `arch_db`): `body_html` es HTML y revisarlo como XML daba cinco falsos
+  positivos contra dos hallazgos reales. Sin `xmllint` el pase de Go sigue
+  corriendo y los pases saltados se **nombran** en un WARNING: una corrida
+  degradada que dice "limpio" es una mentira. `--json` para pipear a `jq`; CLI y
+  REPL; corre sin proyecto compose, porque un hook se ejecuta donde se guardó el
+  archivo.
 - **`[reverb] ssh_host`: nombra tú el host, y el transporte vuelve a
   configurarse igual en los dos modos.** Echo nunca ha tenido campo de puerto:
   pasa el host verbatim a `ssh`/`rsync` y deja que tu `~/.ssh/config` resuelva
