@@ -38,6 +38,15 @@ func runDeploySetGitBranch(ctx context.Context, opts DeployOpts, p deployArgs) (
 		return DeployResult{Target: fromName, JSON: p.jsonOut}, nil
 	}
 
+	if p.dryRun {
+		what := "would set the deploy branch"
+		if p.rename {
+			what += " and rename it on the server"
+		}
+		opts.log("INFO", "git", what, "", [2]string{"branch", name}, [2]string{"prev", g.branch})
+		return DeployResult{Target: fromName, Planned: true, JSON: p.jsonOut}, nil
+	}
+
 	if err := saveGitBranch(opts, fromName, sshHost, remotePath, name); err != nil {
 		return DeployResult{}, err
 	}

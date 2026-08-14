@@ -152,3 +152,35 @@ func TestReadDeployedCode(t *testing.T) {
 		t.Errorf("got ref=%q sha=%q at=%q", ref, sha, at)
 	}
 }
+
+func TestSetGitBranchDryRunWritesNothing(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	target := config.ConnectTarget{
+		Name: "develop", SSHHost: "host", RemotePath: "/srv/odoo",
+		GitDeploy: true, GitBranch: "staging",
+	}
+	if err := config.SaveConnectTarget(target); err != nil {
+		t.Fatalf("seed target: %v", err)
+	}
+	calls := scriptedGit(t, map[string]scriptResp{})
+	opts := DeployOpts{Cfg: &config.Config{ConnectTargets: []config.ConnectTarget{target}}}
+	p := deployArgs{setGitBranch: "echo/deploy", rename: true, dryRun: true, from: "develop"}
+
+	res, err := runDeploySetGitBranch(context.Background(), opts, p)
+	if err != nil {
+		t.Fatalf("dry run: %v", err)
+	}
+	if !res.Planned {
+		t.Error("a dry run must report itself as planned")
+	}
+	if len(*calls) > 0 {
+		t.Errorf("a dry run must not touch the server, ran: %v", *calls)
+	}
+	g, err := config.LoadGlobal()
+	if err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	if g.ConnectTargets[0].GitBranch != "staging" {
+		t.Errorf("a dry run must not persist the branch, got %q", g.ConnectTargets[0].GitBranch)
+	}
+}

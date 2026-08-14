@@ -32,7 +32,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   con `origin` —y Echo nunca hace pull, empuja objetos y mueve el puntero, así
   que la divergiría en cada deploy— además de que `--set-code` acepta tags y
   SHAs, donde no hay rama que crear, y de que volvería a un comando de contenido
-  un escritor de configuración.
+  un escritor de configuración. `--dry-run` reporta el plan sin escribir nada
+  —ni la config local ni el server—, como el resto de `deploy`.
 - **La línea de despliegue ahora se puede re-basar: `deploy --set-code <ref>` y
   `promote --reset`.** Cierra el hueco que dejó la Unit 102: `gitAdvance` exige
   fast-forward y, cuando falla, dice *"restore or reset it first"* — un reset que
