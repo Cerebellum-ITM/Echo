@@ -243,6 +243,7 @@ func runLinkShow(ctx context.Context, opts LinkOpts) error {
 	if !ok {
 		return nil
 	}
+	reportDeployedCode(ctx, opts, name, prof.DBName)
 	opts.log("INFO", "remote", "remote containers", prof.DBName)
 	if opts.OnPS != nil {
 		jsonCmd := remoteComposeCmd(opts.Cfg.ConnectRemotePath, prof.ComposeCmd, "ps", "--format", "json")
@@ -259,6 +260,30 @@ func runLinkShow(ctx context.Context, opts LinkOpts) error {
 		return fmt.Errorf("remote ps: %w", err)
 	}
 	return nil
+}
+
+// reportDeployedCode adds the git-deploy line to `link --show`: which branch
+// the server's code lives on, the SHA it is at, and the ref it came from
+// (Unit 113). Non-git targets print nothing, and fields the checkout does not
+// carry are omitted rather than shown empty — an older deploy simply reports
+// less.
+func reportDeployedCode(ctx context.Context, opts LinkOpts, name, db string) {
+	g := resolveGitDeploy(opts.Cfg, name, opts.Cfg.ConnectSSHHost, opts.Cfg.ConnectRemotePath)
+	if !g.enabled {
+		return
+	}
+	absDir := absGitDir(opts.Cfg.ConnectRemotePath, g.path)
+	fields := [][2]string{{"branch", g.branch}}
+	ref, sha, at := readDeployedCode(ctx, opts.Cfg.ConnectSSHHost, absDir)
+	if sha == "" {
+		sha, _ = remoteGitOut(ctx, remoteShellContext{sshHost: opts.Cfg.ConnectSSHHost}, absDir, "rev-parse", "HEAD")
+	}
+	for _, f := range [][2]string{{"sha", shortSHA(sha)}, {"ref", ref}, {"at", at}} {
+		if f[1] != "" {
+			fields = append(fields, f)
+		}
+	}
+	opts.log("INFO", "", "deploy code", db, fields...)
 }
 
 // runLinkRm clears the per-project [connect] binding. Idempotent.

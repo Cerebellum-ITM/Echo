@@ -123,7 +123,7 @@ func TestApplyGitSetCodeOrderAndNoFFGate(t *testing.T) {
 	}
 	opts := DeployOpts{Root: newTestRepo(t)}
 	if err := applyGitSetCode(context.Background(), opts, testRSC(),
-		gitDeployConfig{enabled: true, branch: "echo/deploy"}, plan, "tipsha"); err != nil {
+		gitDeployConfig{enabled: true, branch: "echo/deploy"}, plan, "tipsha", "origin/main"); err != nil {
 		t.Fatalf("apply: %v", err)
 	}
 

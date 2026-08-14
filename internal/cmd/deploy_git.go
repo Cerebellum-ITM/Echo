@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/pascualchavez/echo/internal/config"
 )
@@ -346,6 +347,7 @@ func gitDeployCommitted(ctx context.Context, opts DeployOpts, rsc remoteShellCon
 	if err := gitAdvance(ctx, rsc, absDir, g.branch, tip, true, opts.Log); err != nil {
 		return err
 	}
+	recordDeployedRef(ctx, rsc.sshHost, absDir, localBranchName(ctx, opts.Root), tip, opts.Log)
 	opts.log("INFO", "git", "code synced", rsc.prof.DBName,
 		[2]string{"branch", g.branch}, [2]string{"sha", shortSHA(tip)})
 	return nil
@@ -472,6 +474,79 @@ func gitAheadBehind(ctx context.Context, root, base, branch string) (ahead, behi
 	return ahead, behind, nil
 }
 
+// Provenance keys Echo writes into the server checkout's own git config
+// (Unit 113). They live with the checkout, survive every reset because they are
+// not tracked content, and answer "what is this server running, and where did
+// it come from?" with `git config --get echo.deployed-ref` — no Echo needed on
+// the other side.
+const (
+	deployedRefKey = "echo.deployed-ref"
+	deployedSHAKey = "echo.deployed-sha"
+	deployedAtKey  = "echo.deployed-at"
+)
+
+// recordDeployedRef stamps the checkout with the ref, SHA and time of the move
+// that just happened. An empty ref clears the key rather than leaving it
+// describing a line the checkout is no longer on (a rollback has no ref).
+//
+// Metadata, never a gate: a write that fails warns and the deploy stands.
+func recordDeployedRef(ctx context.Context, sshHost, absDir, ref, sha string, log logFn) {
+	if ref == "" {
+		// --unset exits 5 when the key is absent; nothing to report either way.
+		_, _ = gitRunSSH(ctx, sshHost, remoteGitCmd(absDir, "config", "--unset", deployedRefKey), nil)
+	} else if _, err := gitRunSSH(ctx, sshHost, remoteGitCmd(absDir, "config", deployedRefKey, ref), nil); err != nil {
+		ckptLog(log, "WARNING", "git", "could not record the deployed ref on the server", "",
+			[2]string{"reason", err.Error()})
+		return
+	}
+	_, _ = gitRunSSH(ctx, sshHost, remoteGitCmd(absDir, "config", deployedSHAKey, sha), nil)
+	_, _ = gitRunSSH(ctx, sshHost, remoteGitCmd(absDir, "config", deployedAtKey, time.Now().UTC().Format(time.RFC3339)), nil)
+}
+
+// readDeployedCode reads back what recordDeployedRef wrote. Every field is
+// best-effort: a checkout that predates the unit, or one deployed by an older
+// Echo, simply reports fewer fields.
+func readDeployedCode(ctx context.Context, sshHost, absDir string) (ref, sha, at string) {
+	get := func(key string) string {
+		out, err := gitRunSSH(ctx, sshHost, remoteGitCmd(absDir, "config", "--get", key), nil)
+		if err != nil {
+			return ""
+		}
+		return firstLine(string(out))
+	}
+	return get(deployedRefKey), get(deployedSHAKey), get(deployedAtKey)
+}
+
+// gitRenameBranch renames a branch on the server in place. Renaming the current
+// branch touches neither the working tree nor the index, so the dirty overlay
+// survives — that is why the deploy branch can be renamed without a redeploy.
+func gitRenameBranch(ctx context.Context, sshHost, absDir, from, to string) error {
+	if _, err := gitRunSSH(ctx, sshHost, remoteGitCmd(absDir, "branch", "-m", from, to), nil); err != nil {
+		return fmt.Errorf("rename %s to %s on the remote: %w", from, to, err)
+	}
+	return nil
+}
+
+// gitRemoteBranchExists reports whether a branch exists in the server checkout.
+func gitRemoteBranchExists(ctx context.Context, sshHost, absDir, branch string) bool {
+	_, err := gitRunSSH(ctx, sshHost,
+		remoteGitCmd(absDir, "rev-parse", "--verify", "--quiet", "refs/heads/"+branch), nil)
+	return err == nil
+}
+
+// localBranchName is the branch a deploy ran from, used as the provenance ref
+// for a commit deploy. A detached HEAD has no meaningful name and yields "".
+func localBranchName(ctx context.Context, root string) string {
+	out, err := gitOutput(ctx, root, "rev-parse", "--abbrev-ref", "HEAD")
+	if err != nil {
+		return ""
+	}
+	if name := firstLine(string(out)); name != "HEAD" {
+		return name
+	}
+	return ""
+}
+
 // setCodePlan is what a `deploy --set-code` would do to the server, gathered
 // read-only so the move can be previewed and confirmed before anything changes.
 type setCodePlan struct {
@@ -510,7 +585,7 @@ func planGitSetCode(ctx context.Context, opts DeployOpts, rsc remoteShellContext
 // Order is bootstrap → clean → transfer → advance. Cleaning before the advance
 // leaves it no collisions to discard, so the only report of removed files is
 // the plan's — one list, not two.
-func applyGitSetCode(ctx context.Context, opts DeployOpts, rsc remoteShellContext, g gitDeployConfig, plan setCodePlan, tip string) error {
+func applyGitSetCode(ctx context.Context, opts DeployOpts, rsc remoteShellContext, g gitDeployConfig, plan setCodePlan, tip, ref string) error {
 	if _, err := gitBootstrap(ctx, rsc, plan.absDir, g.branch, opts.Log); err != nil {
 		return err
 	}
@@ -524,7 +599,11 @@ func applyGitSetCode(ctx context.Context, opts DeployOpts, rsc remoteShellContex
 	if err := gitPushObjects(ctx, opts.Root, rsc.sshHost, plan.absDir, tip); err != nil {
 		return err
 	}
-	return gitAdvance(ctx, rsc, plan.absDir, g.branch, tip, false, opts.Log)
+	if err := gitAdvance(ctx, rsc, plan.absDir, g.branch, tip, false, opts.Log); err != nil {
+		return err
+	}
+	recordDeployedRef(ctx, rsc.sshHost, plan.absDir, ref, tip, opts.Log)
+	return nil
 }
 
 // gitRestoreCode moves the deploy branch back to sha (no FF gate — sha is an
@@ -537,7 +616,13 @@ func gitRestoreCode(ctx context.Context, rsc remoteShellContext, g gitDeployConf
 	absDir := absGitDir(rsc.remotePath, g.path)
 	ckptLog(log, "INFO", "git", "restoring code", rsc.prof.DBName,
 		[2]string{"branch", g.branch}, [2]string{"sha", shortSHA(sha)})
-	return gitAdvance(ctx, rsc, absDir, g.branch, sha, false, log)
+	if err := gitAdvance(ctx, rsc, absDir, g.branch, sha, false, log); err != nil {
+		return err
+	}
+	// A restore lands on a hash, not on a ref: clearing the provenance is the
+	// only honest answer to "where did this come from?".
+	recordDeployedRef(ctx, rsc.sshHost, absDir, "", sha, log)
+	return nil
 }
 
 // resolveGitTip returns the single tip the selected commit SHAs advance the

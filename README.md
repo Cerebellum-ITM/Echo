@@ -385,6 +385,7 @@ the code there — that's for the tool you use to sync the working tree.
 | `  --restore-code [<sha>]` | Move a git-deploy target's code back to a hash it already ran (bare = picker over the branch's history), then restart (no DB) |
 | `  --set-code <ref>` | Re-baseline a git-deploy target's code onto **any** ref — branch, tag, SHA — then restart (no DB, see below) |
 | `  --keep-overlay` / `--with-local` / `--fetch` / `--no-fetch` | `--set-code` modifiers (overlay, local branch, remote refresh) |
+| `  --set-git-branch <name>` | Name the branch the target's code lives on and exit (no deploy); `--rename` also moves the one already on the server |
 
 **Push by default.** For an image-built remote where a deploy always ships
 code, make `--push` the default instead of typing it every time: `deploy
@@ -423,6 +424,42 @@ run `update` yourself when the new base changes module code.
 Pair it with `promote --reset` (below) to bring the local deploy branch to the
 same place, or do both at once with `--with-local`, which runs the local reset
 **first** so a worktree that can't be re-based aborts before the server moves.
+
+**The ref name never travels.** Only the commit objects do: the server's code
+always lives on the target's own `git_branch` (default `echo/deploy`), and
+`--set-code` moves *that* branch. No branch named after the ref is created
+there — which is deliberate, because a server branch carrying a real branch
+name would diverge from `origin` on every deploy (Echo pushes objects and moves
+the pointer; it never pulls).
+
+Two commands cover what that leaves open:
+
+```
+deploy --set-git-branch echo/deploy --from dev            # name the line (config only)
+deploy --set-git-branch echo/deploy --from dev --rename   # …and rename the one already there
+```
+
+`--set-git-branch` persists the target's `git_branch` and exits; the next deploy
+creates that branch at the checkout's current HEAD and switches to it, leaving
+the working tree and the overlay untouched. `--rename` does it now instead
+(`git branch -m` on the server — the ref moves, files don't), so the previous
+branch isn't left behind pointing at the last deployed SHA. Give the line a
+name that can't collide with a real branch: a `git_branch = "staging"` is a
+branch Echo rewrites on every deploy, and anyone who runs `git pull` in that
+checkout will find it diverged.
+
+And to see what a server is running without Echo, every git-mode move stamps
+the checkout's own git config:
+
+```sh
+git config --get echo.deployed-ref     # origin/deploy/dev
+git config --get echo.deployed-sha
+git config --get echo.deployed-at
+```
+
+`link --show` reports the same thing (`deploy code branch=… sha=… ref=… at=…`).
+A `--restore-code` clears the ref, since a rollback lands on a hash and not on a
+line.
 
 #### Deploy + test in one command
 

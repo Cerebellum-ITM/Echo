@@ -160,6 +160,11 @@ type deployArgs struct {
 	noFetch     bool
 	keepOverlay bool
 	withLocal   bool
+	// setGitBranch names the branch a git-deploy target's code lives on (Unit
+	// 113). Config-only unless rename is set, which also moves the branch that
+	// is already on the server.
+	setGitBranch string
+	rename       bool
 }
 
 // isTestManage reports whether the args carry a config-only test-management
@@ -350,6 +355,19 @@ func parseDeployArgs(args []string) (deployArgs, error) {
 			if strings.TrimSpace(out.setCode) == "" {
 				return out, fmt.Errorf("%w: --set-code needs a ref (branch, tag or SHA)", ErrUsage)
 			}
+		case a == "--set-git-branch":
+			if i+1 >= len(args) || strings.HasPrefix(args[i+1], "-") {
+				return out, fmt.Errorf("%w: --set-git-branch needs a branch name", ErrUsage)
+			}
+			out.setGitBranch = args[i+1]
+			i++
+		case strings.HasPrefix(a, "--set-git-branch="):
+			out.setGitBranch = strings.TrimPrefix(a, "--set-git-branch=")
+			if strings.TrimSpace(out.setGitBranch) == "" {
+				return out, fmt.Errorf("%w: --set-git-branch needs a branch name", ErrUsage)
+			}
+		case a == "--rename":
+			out.rename = true
 		case a == "--fetch":
 			out.fetch = true
 		case a == "--no-fetch":
@@ -450,6 +468,13 @@ func parseDeployArgs(args []string) (deployArgs, error) {
 	}
 	if !out.setCodeSet && (out.fetch || out.noFetch || out.keepOverlay || out.withLocal) {
 		return out, fmt.Errorf("%w: --fetch/--no-fetch/--keep-overlay/--with-local only apply to --set-code", ErrUsage)
+	}
+	if out.setGitBranch != "" && (out.setCodeSet || out.restoreCodeSet || out.rollback || out.auto || out.push ||
+		len(out.commits) > 0 || len(out.modules) > 0 || out.isTestManage() || out.isCheckpointManage()) {
+		return out, fmt.Errorf("%w: --set-git-branch names the deploy branch and exits (no deploy selection)", ErrUsage)
+	}
+	if out.rename && out.setGitBranch == "" {
+		return out, fmt.Errorf("%w: --rename only applies to --set-git-branch", ErrUsage)
 	}
 	if out.test && out.noTest {
 		return out, fmt.Errorf("%w: --test and --no-test are mutually exclusive", ErrUsage)
@@ -883,6 +908,12 @@ func RunDeploy(ctx context.Context, opts DeployOpts) (DeployResult, error) {
 	// deploy branch to a hash and restart Odoo, without touching the DB.
 	if p.restoreCodeSet {
 		return runDeployRestoreCode(ctx, opts, p)
+	}
+
+	// deploy --set-git-branch names the target's deploy branch: config-only
+	// unless --rename also moves the branch already on the server.
+	if p.setGitBranch != "" {
+		return runDeploySetGitBranch(ctx, opts, p)
 	}
 
 	// deploy --set-code re-baselines the target's code onto any ref — a force

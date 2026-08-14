@@ -6,6 +6,14 @@
 
 ## Current Goal
 
+Unit 113 (deploy-branch-provenance) entregada: `deploy --set-git-branch <name>`
+(config-only; `--rename` mueve además la rama que ya está en el server con
+`git branch -m`, sin tocar working tree ni overlay) y procedencia estampada en
+el git config del checkout remoto (`echo.deployed-ref`/`-sha`/`-at`, reportada
+por `link --show`, borrada por `--restore-code`). Se descartó que `--set-code`
+creara la rama con el nombre del ref en el server (divergiría de `origin` en
+cada deploy). **Pendiente de verificación EN VIVO** igual que la 112: la mitad
+remota solo está probada contra los seams de SSH. Antes:
 Unit 112 (deploy-line-rebase) entregada: re-basar la línea de despliegue —
 `deploy --set-code <ref>` mueve un target git-deploy a cualquier ref (sin gate
 de fast-forward, limpiando el overlay con scope de módulo, re-baselineando el

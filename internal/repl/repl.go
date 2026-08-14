@@ -500,6 +500,7 @@ func helpSections() []helpSection {
 			{"  --rollback", "Restore the target's most recent checkpoint (no deploy)"},
 			{"  --restore-code [<sha>]", "Move a git-deploy target's code to a hash (bare = picker over branch history) and restart Odoo (no DB)"},
 			{"  --set-code <ref>", "Re-baseline a git-deploy target's code onto ANY ref (branch/tag/SHA) and restart Odoo (no DB)"},
+			{"  --set-git-branch <name>", "Name the branch the target's code lives on and exit (no deploy); --rename moves the one already there"},
 			{"  --keep-overlay", "With --set-code: keep the server's dirty overlay (default: clean the module paths)"},
 			{"  --with-local", "With --set-code: reset the local [promote] branch onto the same ref first"},
 			{"  --fetch/--no-fetch", "With --set-code: force / suppress the fetch of the ref's remote before resolving"},

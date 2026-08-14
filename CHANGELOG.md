@@ -8,6 +8,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **La rama de despliegue del server ahora se puede nombrar, y el server dice
+  qué está corriendo.** Dos huecos que dejaron las Units 102 y 112. **(1)**
+  `deploy --set-git-branch <name>` nombra la rama donde vive el código del
+  target — hasta ahora eso solo se podía editando `global.toml` a mano. Es
+  config-only como sus hermanos (`--set-push`, `--set-checkpoint`): persiste y
+  sale, y el siguiente deploy crea esa rama en el HEAD del checkout y se cambia
+  a ella sin tocar el working tree ni el overlay. `--rename` hace la mitad
+  remota ahora (`git branch -m` en el server: se mueve el ref, no los archivos),
+  que es la forma de no dejar la rama vieja colgada apuntando al último SHA
+  desplegado. Se llama como la llave de config que escribe (`git_branch`) y no
+  `--set-branch` porque esa ya existe en `promote` y significa otra cosa —la
+  rama de acumulación local— en otra máquina. **(2)** Cada movimiento en modo
+  git estampa el checkout remoto con `echo.deployed-ref`, `echo.deployed-sha` y
+  `echo.deployed-at` en su **propio git config**: vive con el checkout,
+  sobrevive todos los resets porque no es contenido versionado, y contesta "¿qué
+  trae este server y de dónde salió?" con un comando que cualquiera ya conoce
+  (`git config --get echo.deployed-ref`), sin Echo del otro lado. `link --show`
+  lo reporta también. Un `--restore-code` **borra** el ref en vez de dejarlo
+  describiendo una línea en la que el checkout ya no está. Se descartó la
+  alternativa de que `--set-code <rama>` creara y checkouteara esa rama en el
+  server: una rama con nombre real ahí crea la expectativa de que se sincroniza
+  con `origin` —y Echo nunca hace pull, empuja objetos y mueve el puntero, así
+  que la divergiría en cada deploy— además de que `--set-code` acepta tags y
+  SHAs, donde no hay rama que crear, y de que volvería a un comando de contenido
+  un escritor de configuración.
 - **La línea de despliegue ahora se puede re-basar: `deploy --set-code <ref>` y
   `promote --reset`.** Cierra el hueco que dejó la Unit 102: `gitAdvance` exige
   fast-forward y, cuando falla, dice *"restore or reset it first"* — un reset que

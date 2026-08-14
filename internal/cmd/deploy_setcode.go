@@ -112,7 +112,7 @@ func runDeploySetCode(ctx context.Context, opts DeployOpts, p deployArgs) (Deplo
 			[2]string{"sha", res.short()}, [2]string{"prev", shortSHA(localPlan.prevSHA)})
 	}
 
-	if err := applyGitSetCode(ctx, opts, rsc, g, plan, res.sha); err != nil {
+	if err := applyGitSetCode(ctx, opts, rsc, g, plan, res.sha, res.ref); err != nil {
 		return DeployResult{}, err
 	}
 
