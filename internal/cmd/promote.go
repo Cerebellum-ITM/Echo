@@ -53,6 +53,17 @@ type promoteArgs struct {
 	createDest string   // --create-dest worktree path
 	dryRun     bool
 	force      bool
+	// reset / base / discard / noFetch drive `promote --reset [<base>]` (Unit
+	// 112): move the accumulation branch back onto its base instead of
+	// funneling anything into it. base is the positional when given; empty
+	// falls back to [promote] base. discard turns the default, non-destructive
+	// `reset --keep` into a `--hard` plus removal of the module-scoped
+	// untracked files.
+	reset   bool
+	base    string
+	discard bool
+	noFetch bool
+	setBase string // --set-base (config-only)
 }
 
 // parsePromoteArgs extracts the flags and interprets the positionals by mode:
@@ -99,6 +110,18 @@ func parsePromoteArgs(args []string) (promoteArgs, error) {
 			}
 		case strings.HasPrefix(a, "--set-branch="):
 			out.setBranch = strings.TrimPrefix(a, "--set-branch=")
+		case a == "--reset":
+			out.reset = true
+		case a == "--discard":
+			out.discard = true
+		case a == "--no-fetch":
+			out.noFetch = true
+		case a == "--set-base":
+			if out.setBase, i, err = value(i, "--set-base"); err != nil {
+				return promoteArgs{}, err
+			}
+		case strings.HasPrefix(a, "--set-base="):
+			out.setBase = strings.TrimPrefix(a, "--set-base=")
 		case a == "--create-dest":
 			if out.createDest, i, err = value(i, "--create-dest"); err != nil {
 				return promoteArgs{}, err
@@ -114,17 +137,44 @@ func parsePromoteArgs(args []string) (promoteArgs, error) {
 
 	if out.showBranch {
 		if out.dirty || out.to != "" || out.createDest != "" || out.setBranch != "" ||
+			out.setBase != "" || out.reset || out.discard ||
 			out.dryRun || out.force || len(out.commits) > 0 || len(positionals) > 0 {
 			return promoteArgs{}, fmt.Errorf("%w: --show-branch takes no other arguments", ErrUsage)
 		}
 		return out, nil
 	}
 	if out.setBranch != "" {
-		if out.dirty || out.to != "" || out.createDest != "" ||
+		if out.dirty || out.to != "" || out.createDest != "" || out.setBase != "" || out.reset ||
 			len(out.commits) > 0 || len(positionals) > 0 {
 			return promoteArgs{}, fmt.Errorf("%w: --set-branch takes no other arguments", ErrUsage)
 		}
 		return out, nil
+	}
+	if out.setBase != "" {
+		if out.dirty || out.to != "" || out.createDest != "" || out.reset ||
+			len(out.commits) > 0 || len(positionals) > 0 {
+			return promoteArgs{}, fmt.Errorf("%w: --set-base takes no other arguments", ErrUsage)
+		}
+		return out, nil
+	}
+	// --reset is the other direction of promote: it moves the destination
+	// branch back onto a base instead of funneling work into it, so it shares
+	// only the destination-resolution flags (--to / --create-dest).
+	if out.reset {
+		if out.dirty || len(out.commits) > 0 {
+			return promoteArgs{}, fmt.Errorf("%w: --reset moves the branch onto a base; it takes no promote selection (--dirty/--commits)", ErrUsage)
+		}
+		switch len(positionals) {
+		case 0:
+		case 1:
+			out.base = positionals[0]
+		default:
+			return promoteArgs{}, fmt.Errorf("%w: --reset takes a single base ref (got %d)", ErrUsage, len(positionals))
+		}
+		return out, nil
+	}
+	if out.discard || out.noFetch {
+		return promoteArgs{}, fmt.Errorf("%w: --discard and --no-fetch only apply to --reset", ErrUsage)
 	}
 	if out.dirty {
 		if len(out.commits) > 0 {
@@ -183,6 +233,18 @@ func RunPromote(ctx context.Context, opts PromoteOpts) error {
 		return nil
 	}
 
+	// --set-base is config-only: persist [promote] base and exit.
+	if p.setBase != "" {
+		if err := config.SavePromoteBase(p.setBase); err != nil {
+			return fmt.Errorf("save promote base: %w", err)
+		}
+		if opts.Cfg != nil {
+			opts.Cfg.PromoteBase = p.setBase
+		}
+		opts.log("INFO", "", "promote base set", "", [2]string{"base", p.setBase})
+		return nil
+	}
+
 	srcRoot, err := gitToplevel(ctx, opts.Root)
 	if err != nil {
 		return err
@@ -196,6 +258,14 @@ func RunPromote(ctx context.Context, opts PromoteOpts) error {
 	if err != nil {
 		return err
 	}
+
+	// --reset runs against the destination worktree itself, so it is dispatched
+	// before the same-worktree guard: re-basing `develop` from inside `develop`
+	// is the normal case, unlike a promote, which needs two worktrees.
+	if p.reset {
+		return runPromoteReset(ctx, opts, p, srcRoot, dest, destBranch, started)
+	}
+
 	if sameWorktree(dest.path, srcRoot) {
 		return fmt.Errorf("%w: source and destination are the same worktree (%s) — run promote from the feature worktree, not from %q",
 			ErrUsage, srcRoot, destBranch)
@@ -253,16 +323,21 @@ func runShowBranch(ctx context.Context, opts PromoteOpts) error {
 	// Best-effort worktree lookup: outside a repo (or any git error) this
 	// degrades to worktree=none without failing the query.
 	worktree := "none"
+	var destPath string
 	if srcRoot, err := gitToplevel(ctx, opts.Root); err == nil {
 		if wts, werr := gitWorktrees(ctx, srcRoot); werr == nil {
 			if w, ok := worktreeForBranch(wts, branch); ok {
 				worktree = w.path
+				destPath = w.path
 			}
 		}
 	}
 
-	opts.log("INFO", "", "promote branch", "",
-		[2]string{"branch", branch}, [2]string{"source", source}, [2]string{"worktree", worktree})
+	fields := [][2]string{
+		{"branch", branch}, {"source", source}, {"worktree", worktree},
+	}
+	fields = append(fields, promoteLineState(ctx, opts, branch, destPath)...)
+	opts.log("INFO", "", "promote branch", "", fields...)
 	if worktree == "none" {
 		opts.log("INFO", "", "branch has no worktree — create one to promote into", "",
 			[2]string{"hint", fmt.Sprintf("git worktree add <path> %s | promote --create-dest <path>", branch)})
@@ -381,8 +456,11 @@ func recordPromoteLog(opts PromoteOpts, srcRoot, destBranch string, sum promoteS
 		return
 	}
 	kind := "modules"
-	if sum.mode == "commits" {
+	switch sum.mode {
+	case "commits":
 		kind = "commits"
+	case "reset":
+		kind = "base"
 	}
 	rec := config.CmdLogRecord{
 		Cmd:        fmt.Sprintf("promote %s → %s", sum.what, destBranch),

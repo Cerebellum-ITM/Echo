@@ -8,6 +8,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **La línea de despliegue ahora se puede re-basar: `deploy --set-code <ref>` y
+  `promote --reset`.** Cierra el hueco que dejó la Unit 102: `gitAdvance` exige
+  fast-forward y, cuando falla, dice *"restore or reset it first"* — un reset que
+  ningún comando hacía. `deploy --set-code` lleva el código de un target
+  git-deploy a **cualquier** ref (rama, tag, SHA, `origin/*`), no solo a hashes
+  que el server ya corrió como `--restore-code`; la **ausencia** del gate de
+  fast-forward *es* la funcionalidad, y es lo que vuelve recuperable un
+  `echo/deploy` divergido. El ref se resuelve **en local** y primero (un typo
+  cuesta cero llamadas remotas), con `git fetch` automático para `<remote>/<rama>`
+  (`--fetch`/`--no-fetch`): una rama que solo existe en tu máquina se despliega
+  igual que una de `origin`, porque los objetos viajan por el mismo SSH de
+  siempre y no por el repo. Por defecto **limpia el overlay sucio** reusando el
+  core de `push --clean`, con scope de **rutas de módulo y nunca la raíz** — el
+  `odoo.conf` del server, su `docker-compose.override.yml` o un `filestore/`
+  suelto no son parte de ninguna línea de despliegue; `--keep-overlay` vuelve a
+  la semántica incremental. Reinicia Odoo y no toca nada más: sin DB, sin
+  checkpoint, sin lint. Además **re-basa el historial de SHAs desplegados**
+  (`ResetDeployedSHAs`), porque dejarlo viejo haría que el siguiente
+  `deploy --auto` se saltara commits que a ese target nunca se le mandaron.
+  `promote --set-base <ref>` declara la base de la rama de acumulación y
+  `promote --reset [<base>]` la manda de vuelta ahí con `git reset --keep`: lo
+  sucio que el movimiento no toca **sobrevive**, y si lo fuera a pisar el reset
+  **se niega** y nombra los archivos — el camino por defecto no puede destruir
+  trabajo. `--discard` es el `--hard` explícito (borra además los untracked de
+  los módulos, y deja en paz lo que esté fuera de un módulo); los commits que la
+  base no contiene salen de la rama y quedan en el reflog, y ese caso sí pide
+  confirmación mientras que un rewind puro no. `promote` sigue siendo puramente
+  local (invariante de la Unit 97): el gesto único es
+  `deploy --set-code <ref> --with-local`, que corre el reset local **primero**
+  para abortar antes de mover el server. `promote --show-branch` gana
+  `base`/`ahead`/`behind`/`dirty` — la señal de cuándo toca re-basar, que hasta
+  ahora solo contestaba un git a mano.
 - **El `lint` cruza el `__manifest__.py` contra el disco, en los dos sentidos.**
   Es la otra mitad de "qué va a rechazar el loader", por otra puerta: sin comando
   ni flag nuevos, corre dentro del `lint` que ya existe y por lo tanto dentro del

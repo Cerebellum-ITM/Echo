@@ -116,6 +116,46 @@ func MarkDeployed(projectKey, targetKey string, shas []string) error {
 	return writeAtomic(path, buf.Bytes())
 }
 
+// ResetDeployedSHAs replaces the deployed set of (projectKey, targetKey) with
+// seed, dropping everything remembered before. It exists for `deploy
+// --set-code` (Unit 112): once a target's code is force-moved to a different
+// line, the recorded set is a claim about history that target no longer has —
+// keeping it would make the next `deploy --auto` skip commits it never
+// shipped. An empty seed clears the target entirely.
+func ResetDeployedSHAs(projectKey, targetKey string, seed []string) error {
+	path, err := deployHistoryPath(projectKey)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+
+	f := loadDeployHistory(projectKey)
+	if f.Targets == nil {
+		f.Targets = map[string]DeployTarget{}
+	}
+	if len(seed) == 0 {
+		delete(f.Targets, targetKey)
+	} else {
+		seen := make(map[string]bool, len(seed))
+		kept := make([]string, 0, len(seed))
+		for _, s := range seed {
+			if s != "" && !seen[s] {
+				seen[s] = true
+				kept = append(kept, s)
+			}
+		}
+		f.Targets[targetKey] = DeployTarget{SHAs: kept, SavedAt: time.Now()}
+	}
+
+	var buf bytes.Buffer
+	if err := toml.NewEncoder(&buf).Encode(f); err != nil {
+		return err
+	}
+	return writeAtomic(path, buf.Bytes())
+}
+
 // UpdateDeployedMarks applies a manual edit to the deployed set of
 // (projectKey, targetKey): it appends each SHA in add (deduped, prior
 // preserved) and strips each SHA in remove, in a single load-merge-write.

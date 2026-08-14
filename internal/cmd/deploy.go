@@ -147,6 +147,19 @@ type deployArgs struct {
 	// explicit hash, or "" for the interactive picker.
 	restoreCode    string
 	restoreCodeSet bool
+	// setCode / setCodeSet drive `deploy --set-code <ref>` (Unit 112): move a
+	// git-deploy target's code to ANY local or fetched ref, not only to a hash
+	// it already ran. fetch / noFetch control the refresh of the ref's remote
+	// before resolving it, keepOverlay preserves the server's dirty overlay
+	// (default: the module-scoped overlay is cleaned, so the checkout matches
+	// the ref), and withLocal resets the local [promote] branch to the same
+	// ref first.
+	setCode     string
+	setCodeSet  bool
+	fetch       bool
+	noFetch     bool
+	keepOverlay bool
+	withLocal   bool
 }
 
 // isTestManage reports whether the args carry a config-only test-management
@@ -321,6 +334,30 @@ func parseDeployArgs(args []string) (deployArgs, error) {
 			if strings.TrimSpace(out.restoreCode) == "" {
 				return out, fmt.Errorf("%w: --restore-code= needs a SHA (use bare --restore-code for the picker)", ErrUsage)
 			}
+		case a == "--set-code":
+			// The ref is required: unlike --restore-code, whose universe is the
+			// handful of hashes the server has run, --set-code can target any
+			// ref in the repo — there is nothing sensible to pick from.
+			if i+1 >= len(args) || strings.HasPrefix(args[i+1], "-") {
+				return out, fmt.Errorf("%w: --set-code needs a ref (branch, tag or SHA)", ErrUsage)
+			}
+			out.setCodeSet = true
+			out.setCode = args[i+1]
+			i++
+		case strings.HasPrefix(a, "--set-code="):
+			out.setCodeSet = true
+			out.setCode = strings.TrimPrefix(a, "--set-code=")
+			if strings.TrimSpace(out.setCode) == "" {
+				return out, fmt.Errorf("%w: --set-code needs a ref (branch, tag or SHA)", ErrUsage)
+			}
+		case a == "--fetch":
+			out.fetch = true
+		case a == "--no-fetch":
+			out.noFetch = true
+		case a == "--keep-overlay":
+			out.keepOverlay = true
+		case a == "--with-local":
+			out.withLocal = true
 		case a == "--no-actions":
 			out.noActions = true
 		case a == "--rollback-on-fail":
@@ -400,6 +437,19 @@ func parseDeployArgs(args []string) (deployArgs, error) {
 	}
 	if out.noGit && out.restoreCodeSet {
 		return out, fmt.Errorf("%w: --no-git and --restore-code are mutually exclusive", ErrUsage)
+	}
+	if out.setCodeSet && (out.rollback || out.auto || out.push || out.restoreCodeSet ||
+		len(out.commits) > 0 || len(out.modules) > 0 || out.isTestManage()) {
+		return out, fmt.Errorf("%w: --set-code runs on its own (no deploy selection/rollback/restore)", ErrUsage)
+	}
+	if out.noGit && out.setCodeSet {
+		return out, fmt.Errorf("%w: --no-git and --set-code are mutually exclusive — --set-code IS the git path", ErrUsage)
+	}
+	if out.fetch && out.noFetch {
+		return out, fmt.Errorf("%w: --fetch and --no-fetch are mutually exclusive", ErrUsage)
+	}
+	if !out.setCodeSet && (out.fetch || out.noFetch || out.keepOverlay || out.withLocal) {
+		return out, fmt.Errorf("%w: --fetch/--no-fetch/--keep-overlay/--with-local only apply to --set-code", ErrUsage)
 	}
 	if out.test && out.noTest {
 		return out, fmt.Errorf("%w: --test and --no-test are mutually exclusive", ErrUsage)
@@ -738,6 +788,12 @@ type DeployResult struct {
 	// CodeSHA is the deploy branch's SHA on the server after a git-deploy run
 	// (Unit 102) — the exact hash now checked out. Empty for non-git targets.
 	CodeSHA string `json:"code_sha,omitempty"`
+	// Ref, PreviousCodeSHA and Cleaned describe a `deploy --set-code` run (Unit
+	// 112): the ref asked for, where the deploy branch stood before the move,
+	// and how many overlay files were removed on the way.
+	Ref             string `json:"ref,omitempty"`
+	PreviousCodeSHA string `json:"previous_sha,omitempty"`
+	Cleaned         int    `json:"cleaned,omitempty"`
 	// JSON echoes whether the caller asked for --json, so the REPL wrapper can
 	// route output without re-parsing the args.
 	JSON bool `json:"-"`
@@ -827,6 +883,12 @@ func RunDeploy(ctx context.Context, opts DeployOpts) (DeployResult, error) {
 	// deploy branch to a hash and restart Odoo, without touching the DB.
 	if p.restoreCodeSet {
 		return runDeployRestoreCode(ctx, opts, p)
+	}
+
+	// deploy --set-code re-baselines the target's code onto any ref — a force
+	// move, not a deploy: no selection, no DB, no checkpoint, no lint.
+	if p.setCodeSet {
+		return runDeploySetCode(ctx, opts, p)
 	}
 
 	// Validate an explicit --modules list against the local repo before any

@@ -6,6 +6,19 @@
 
 ## Current Goal
 
+Unit 112 (deploy-line-rebase) entregada: re-basar la línea de despliegue —
+`deploy --set-code <ref>` mueve un target git-deploy a cualquier ref (sin gate
+de fast-forward, limpiando el overlay con scope de módulo, re-baselineando el
+historial de SHAs) y `promote --set-base` / `--reset` re-basa la rama de
+acumulación local con `reset --keep` (se niega en vez de destruir; `--discard`
+explícito). Cierra el hueco de la Unit 102: `gitAdvance` decía "restore or reset
+it first" y ese reset no existía. `deploy --set-code --with-local` es el gesto
+único (local primero). Skill `odoo-probe` actualizado (SKILL.md + recipes: dos
+clases de permiso, formas headless, cómo leer los resultados), lo que además
+aterrizó §A/§B/§D del `SPEC-promote-redesign.md` pendiente en ese repo.
+**Pendiente de verificación EN VIVO**: la mitad remota solo está probada contra
+los seams de SSH (`gitRunSSH`/`gitPushCommand`), no contra un server git-deploy
+real; el reset local sí se probó end-to-end en repos temporales. Antes:
 Unit 108 (reverb-real-host) entregada: modo Reverb usable contra un host real
 — `[reverb] ssh_host` (alias local, un mecanismo de SSH para los dos modos),
 espera de `not_ready` siguiendo el job, shadow del overlay desde el servidor, y

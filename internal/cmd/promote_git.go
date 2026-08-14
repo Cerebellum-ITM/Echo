@@ -319,6 +319,148 @@ func eligibleCommits(ctx context.Context, root, destBranch, srcBranch string) ([
 	return commits, nil
 }
 
+// resetPlan is everything a branch reset onto a base would do, computed
+// without touching the worktree — so a run can be previewed, confirmed, or
+// refused before anything moves.
+type resetPlan struct {
+	branch  string
+	base    string // the ref as the user named it
+	baseSHA string
+	prevSHA string // where the branch points now
+	// changes is the worktree diff the move applies (HEAD → base).
+	changes []FileChange
+	// collisions are the uncommitted paths the move would clobber. Non-empty
+	// means `reset --keep` refuses: the default path aborts, --discard is the
+	// user's explicit override.
+	collisions []string
+	// untracked are the module-scoped untracked files --discard removes.
+	// Untracked files outside a module (a local .env, a scratch dump) are not
+	// this command's business and are left alone.
+	untracked []string
+	// kept counts the dirty paths that survive a default reset.
+	kept int
+}
+
+// discardCount is how many distinct files a --discard reset removes. The two
+// lists overlap — an untracked file the base also introduces is both a
+// collision and an untracked path — so they are counted as a set, not summed.
+func (p resetPlan) discardCount() int {
+	seen := toStringSet(p.collisions)
+	n := len(seen)
+	for _, u := range p.untracked {
+		if !seen[u] {
+			seen[u] = true
+			n++
+		}
+	}
+	return n
+}
+
+// planBranchReset computes what resetting the worktree at destPath onto baseSHA
+// would do. Collision detection reuses gitCollisions — the same pure function
+// that decides which overlay files a remote advance would clobber — so the
+// local and remote halves of a re-baseline agree by construction rather than by
+// two implementations that happen to match today.
+func planBranchReset(ctx context.Context, destPath, branch, base, baseSHA string) (resetPlan, error) {
+	plan := resetPlan{branch: branch, base: base, baseSHA: baseSHA}
+
+	prev, err := gitOutput(ctx, destPath, "rev-parse", "HEAD")
+	if err != nil {
+		return resetPlan{}, fmt.Errorf("read %s HEAD: %w", branch, err)
+	}
+	plan.prevSHA = strings.TrimSpace(string(prev))
+
+	porcelainOut, err := gitOutput(ctx, destPath, "status", "--porcelain")
+	if err != nil {
+		return resetPlan{}, fmt.Errorf("read %s status: %w", branch, err)
+	}
+	porcelain := nonEmptyLines(string(porcelainOut))
+
+	diffOut, err := gitOutput(ctx, destPath, "diff", "--name-only", "HEAD", baseSHA)
+	if err != nil {
+		return resetPlan{}, fmt.Errorf("diff %s against %s: %w", branch, base, err)
+	}
+	treeOut, err := gitOutput(ctx, destPath, "ls-tree", "-r", "--name-only", baseSHA)
+	if err != nil {
+		return resetPlan{}, fmt.Errorf("read tree of %s: %w", base, err)
+	}
+	plan.collisions = gitCollisions(porcelain, nonEmptyLines(string(diffOut)), nonEmptyLines(string(treeOut)))
+
+	collided := toStringSet(plan.collisions)
+	for _, line := range porcelain {
+		code, p, ok := parsePorcelainStatus(line)
+		if !ok || p == "" {
+			continue
+		}
+		if !collided[p] {
+			plan.kept++
+		}
+		if code == "??" && moduleOfPath(p) != "" {
+			plan.untracked = append(plan.untracked, p)
+		}
+	}
+
+	nsOut, err := gitOutput(ctx, destPath, "diff", "--name-status", "HEAD", baseSHA)
+	if err != nil {
+		return resetPlan{}, fmt.Errorf("diff %s against %s: %w", branch, base, err)
+	}
+	plan.changes = parseNameStatus(string(nsOut))
+	return plan, nil
+}
+
+// parseNameStatus turns `git diff --name-status` output into FileChanges. A
+// rename reports its new path.
+func parseNameStatus(out string) []FileChange {
+	var changes []FileChange
+	for _, line := range strings.Split(out, "\n") {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		cols := strings.Split(line, "\t")
+		if len(cols) < 2 || cols[0] == "" {
+			continue
+		}
+		op := "changed"
+		switch cols[0][0] {
+		case 'A':
+			op = "new"
+		case 'D':
+			op = "deleted"
+		}
+		changes = append(changes, FileChange{Op: op, Path: cols[len(cols)-1]})
+	}
+	return changes
+}
+
+// applyBranchReset moves the branch checked out at destPath onto the plan's
+// base. The default is `reset --keep`: uncommitted work that the move does not
+// touch survives, and git refuses outright when it would be lost — mapped to
+// ErrPromoteConflict with the file list, so the default path can never destroy
+// work. discard is the explicit `--hard`, plus removal of the module-scoped
+// untracked files (git leaves those behind even after a hard reset).
+func applyBranchReset(ctx context.Context, destPath string, plan resetPlan, discard bool) error {
+	if !discard {
+		if len(plan.collisions) > 0 {
+			return fmt.Errorf("%w: %d uncommitted file(s) on %s would be lost by the move: %s — commit or promote them first, or pass --discard",
+				ErrPromoteConflict, len(plan.collisions), plan.branch, strings.Join(plan.collisions, ", "))
+		}
+		if _, err := gitOutput(ctx, destPath, "reset", "--keep", plan.baseSHA); err != nil {
+			return fmt.Errorf("%w: %v", ErrPromoteConflict, err)
+		}
+		return nil
+	}
+	if _, err := gitOutput(ctx, destPath, "reset", "--hard", plan.baseSHA); err != nil {
+		return fmt.Errorf("reset %s to %s: %w", plan.branch, plan.base, err)
+	}
+	if len(plan.untracked) > 0 {
+		args := append([]string{"clean", "-fd", "--"}, plan.untracked...)
+		if _, err := gitOutput(ctx, destPath, args...); err != nil {
+			return fmt.Errorf("remove untracked files on %s: %w", plan.branch, err)
+		}
+	}
+	return nil
+}
+
 // cherryPickInto applies shas (oldest-first) onto the destination worktree. On
 // conflict it aborts the cherry-pick so the destination is left untouched, and
 // maps the failure to ErrPromoteConflict.

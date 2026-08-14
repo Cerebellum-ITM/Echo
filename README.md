@@ -382,6 +382,9 @@ the code there — that's for the tool you use to sync the working tree.
 | `  --test-clear`   | Clear the pinned test modules — back to testing what's deployed (no deploy) |
 | `  --rollback`     | Restore the target's most recent checkpoint (no deploy)  |
 | `  --consume-checkpoint` | With `--rollback`: restore a `db` checkpoint by renaming it over the live DB (cheaper on disk, but destroys the checkpoint — no restore point remains) |
+| `  --restore-code [<sha>]` | Move a git-deploy target's code back to a hash it already ran (bare = picker over the branch's history), then restart (no DB) |
+| `  --set-code <ref>` | Re-baseline a git-deploy target's code onto **any** ref — branch, tag, SHA — then restart (no DB, see below) |
+| `  --keep-overlay` / `--with-local` / `--fetch` / `--no-fetch` | `--set-code` modifiers (overlay, local branch, remote refresh) |
 
 **Push by default.** For an image-built remote where a deploy always ships
 code, make `--push` the default instead of typing it every time: `deploy
@@ -390,6 +393,36 @@ deploy), or declare it in the server profile (server wins, local falls back).
 Then `deploy` pushes on its own; `deploy --no-push` skips it for one run.
 `watch` always pushes from its own git archive, so the default never
 double-pushes there.
+
+#### Re-baseline the deploy line (`--set-code`)
+
+A git-deploy target accumulates on one branch, and a deploy only ever moves it
+**forward** — that gate is what keeps a normal deploy from silently jumping to
+another line. But after you merge a feature into `main` and start the next one,
+the deploy branch *should* jump: it is now history nobody wants to keep
+building on. `deploy --set-code <ref>` is that move, made explicit.
+
+```
+deploy --set-code origin/main --from dev            # the server's code = main
+deploy --set-code origin/feat/x --from dev          # a branch someone else pushed
+deploy --set-code v1.4.0 --from dev --dry-run       # preview: direction + files cleaned
+```
+
+The ref is resolved **locally**, so a branch that exists only on your machine
+ships exactly like one on `origin` — the objects travel over the same SSH host
+Echo already uses, never through a git host. A `<remote>/<branch>` ref refreshes
+that remote first (`--no-fetch` opts out, `--fetch` forces it for any ref).
+
+By default the server's checkout ends up matching the ref: the dirty overlay is
+cleaned **within module paths only**, so the server's own `odoo.conf`,
+`docker-compose.override.yml` or `filestore/` are never touched.
+`--keep-overlay` keeps the non-colliding overlay instead (the incremental-deploy
+behavior). Nothing else moves: no DB, no checkpoint, no module install/upgrade —
+run `update` yourself when the new base changes module code.
+
+Pair it with `promote --reset` (below) to bring the local deploy branch to the
+same place, or do both at once with `--with-local`, which runs the local reset
+**first** so a worktree that can't be re-based aborts before the server moves.
 
 #### Deploy + test in one command
 
@@ -636,6 +669,28 @@ blocks a promote (accumulation is the point). Dirty mode is last-write-wins: it
 overwrites the deploy branch's version of a file and **warns** when that file
 already had uncommitted work there. Only a **cherry-pick** conflict (commit
 mode) aborts, cleanly, leaving the deploy branch untouched.
+
+**Re-basing the line (`--reset`).** The deploy branch accumulates forever
+unless you tell it where it came from. Declare a base once and the branch can
+be sent back to it after each merge:
+
+```
+promote --set-base origin/main           # persist [promote] base
+promote --show-branch                    # branch=… base=origin/main ahead=3 behind=41 dirty=6
+promote --reset --dry-run                # preview the move
+promote --reset                          # develop ← origin/main
+```
+
+`--reset` uses `git reset --keep`: uncommitted work the move doesn't touch
+**survives**, and if it would be clobbered the reset **refuses** and names the
+files — the default path can't destroy work. `--discard` is the explicit hard
+reset (it also removes the modules' untracked files, leaving anything outside a
+module alone). Commits the base doesn't contain leave the branch and stay in the
+reflog; that case asks for confirmation, a plain rewind doesn't.
+
+Like the rest of `promote`, `--reset` is **local only** — the server's code is
+moved by `deploy --set-code <base>` (or `deploy --set-code <base> --with-local`,
+which does both).
 
 ```
 echo_cli promote --dirty stock_extra --to pruebas

@@ -169,6 +169,17 @@ type Config struct {
 	// can report provenance without re-reading the TOML files.
 	PromoteBranchSource string
 
+	// PromoteBase ([promote] base, same precedence as PromoteBranch) — the ref
+	// the accumulation branch is re-based onto by `promote --reset` (Unit 112),
+	// typically "origin/main". Empty means "no base declared": the line is
+	// never re-based automatically, `--show-branch` reports base=none, and
+	// `--reset` asks for a base (TTY) or fails closed (headless).
+	PromoteBase string
+
+	// PromoteBaseSource records where PromoteBase came from — "global",
+	// "project", or "" when unset.
+	PromoteBaseSource string
+
 	// Reverb ([reverb] in global.toml only, Unit 107) — the daemon that
 	// resolves `-E <project>/<env>` targets at call time. ReverbToken is a
 	// SECRET: it grants the environment's DB password through resolve, so it
@@ -260,9 +271,12 @@ type globalFile struct {
 
 // promoteConfig is the [promote] table, valid in global.toml and a project
 // profile. Branch names the single accumulation branch `promote` funnels
-// into; a nil pointer (section absent) leaves the branch unconfigured.
+// into; Base names the ref that branch is re-based onto (Unit 112). A nil
+// pointer (section absent) leaves both unconfigured, and either field may be
+// set without the other.
 type promoteConfig struct {
 	Branch string `toml:"branch"`
+	Base   string `toml:"base"`
 }
 
 // reverbConfig is the [reverb] table, valid in global.toml ONLY (Unit 107).
@@ -516,6 +530,10 @@ func Load(projectPath string) (*Config, error) {
 		cfg.PromoteBranch = g.Promote.Branch
 		cfg.PromoteBranchSource = "global"
 	}
+	if g.Promote != nil && g.Promote.Base != "" {
+		cfg.PromoteBase = g.Promote.Base
+		cfg.PromoteBaseSource = "global"
+	}
 	cfg.ConnectTargets = sortedConnectTargets(g.ConnectTargets)
 	cfg.ProjectAliases = g.ProjectAliases
 	if g.Prompt != nil {
@@ -591,6 +609,12 @@ func Load(projectPath string) (*Config, error) {
 	if p.Promote != nil && p.Promote.Branch != "" {
 		cfg.PromoteBranch = p.Promote.Branch
 		cfg.PromoteBranchSource = "project"
+	}
+	// [promote] base: same precedence, resolved independently of the branch —
+	// a project may re-base onto its own base while inheriting the branch.
+	if p.Promote != nil && p.Promote.Base != "" {
+		cfg.PromoteBase = p.Promote.Base
+		cfg.PromoteBaseSource = "project"
 	}
 	if p.Connect != nil {
 		cfg.ConnectSSHHost = p.Connect.SSHHost
@@ -845,6 +869,21 @@ func SaveGlobal(cfg *Config) error {
 // of a repo resolves the same `promote` destination. An empty branch clears
 // the section.
 func SavePromoteBranch(branch string) error {
+	return savePromote(func(p *promoteConfig) { p.Branch = branch })
+}
+
+// SavePromoteBase persists the [promote] base into global.toml — the ref
+// `promote --reset` re-bases the accumulation branch onto (Unit 112). Same
+// lossless read-modify-write and same repo-wide rationale as
+// SavePromoteBranch; an empty base clears the field.
+func SavePromoteBase(base string) error {
+	return savePromote(func(p *promoteConfig) { p.Base = base })
+}
+
+// savePromote applies mutate to the [promote] table of global.toml and writes
+// it back. It reads the existing table first, so setting one field never drops
+// the other, and drops the whole section only once both are empty.
+func savePromote(mutate func(*promoteConfig)) error {
 	root, err := configRoot()
 	if err != nil {
 		return err
@@ -857,10 +896,15 @@ func SavePromoteBranch(branch string) error {
 	if data, err := os.ReadFile(path); err == nil {
 		_ = toml.Unmarshal(data, &g)
 	}
-	if branch == "" {
+	cur := promoteConfig{}
+	if g.Promote != nil {
+		cur = *g.Promote
+	}
+	mutate(&cur)
+	if cur.Branch == "" && cur.Base == "" {
 		g.Promote = nil
 	} else {
-		g.Promote = &promoteConfig{Branch: branch}
+		g.Promote = &cur
 	}
 	var buf bytes.Buffer
 	if err := toml.NewEncoder(&buf).Encode(g); err != nil {

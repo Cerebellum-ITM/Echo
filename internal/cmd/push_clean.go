@@ -149,6 +149,21 @@ func dirtyModuleCandidates(entries []remoteDirtyEntry) []string {
 	return out
 }
 
+// moduleScopedEntries keeps the overlay entries that belong to a module,
+// dropping everything that maps to no module — a top-level `odoo.conf`, a
+// `docker-compose.override.yml`, an untracked `filestore/` at the checkout
+// root. Those are the server's own state, not part of any deploy line, and a
+// wholesale clean (`deploy --set-code`) must leave them alone.
+func moduleScopedEntries(entries []remoteDirtyEntry) []remoteDirtyEntry {
+	var out []remoteDirtyEntry
+	for _, e := range entries {
+		if moduleOfPath(e.path) != "" {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
 // moduleOfPath maps a repo-relative path to its module: the segment right after
 // the last addons-container directory, or the first segment when the module
 // lives at the repo root. A top-level file (no directory) maps to "".
