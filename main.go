@@ -93,10 +93,11 @@ func main() {
 		// Some one-shot commands (e.g. `i18n-pull`) talk only to a remote
 		// instance and write into the local repo — they never touch a local
 		// docker stack, so they don't need a compose project. Fall back to
-		// cwd as the working directory instead of failing.
+		// the repository root instead of failing, so that working in a
+		// subfolder keeps the same project config.
 		switch {
 		case oneShot && projectlessOneShot(args[0], args[1:]):
-			root = cwd
+			root = repoRoot(cwd)
 		case oneShot:
 			log.Error("not inside a project", "cwd", cwd,
 				"hint", "run echo from a directory containing docker-compose.yml, or pass -C <dir>")
@@ -209,9 +210,32 @@ func isDir(path string) bool {
 // requireDBContainer; the remote-mode group
 // (`shell`/`shell-run`/`update`/`sequence`/…) qualifies only with
 // `--from`/`--remote` — locally they need the compose project as always.
+// repoRoot returns the git top level for cwd, falling back to cwd itself
+// outside a repository. Per-project state (the `link` binding, addons
+// paths, deploy history) is keyed by the root's path, so resolving to the
+// repository is what keeps a `cd` into a subfolder from looking like a
+// different, unconfigured project. State left behind by a binding made in
+// a subfolder is moved once, and only into an empty destination.
+func repoRoot(cwd string) string {
+	git := project.GitRoot(cwd)
+	if git == "" || project.SameDir(git, cwd) {
+		return cwd
+	}
+	if from := config.FindProjectState(cwd, git); from != "" && !project.SameDir(from, git) {
+		moved, err := config.MigrateProjectKey(from, git)
+		switch {
+		case err != nil:
+			log.Warn("could not migrate project config", "from", from, "to", git, "err", err)
+		case moved:
+			log.Info("project config migrated", "from", from, "to", git)
+		}
+	}
+	return git
+}
+
 func projectlessOneShot(name string, args []string) bool {
 	switch name {
-	case "help", "lint", "i18n-pull", "link", "deploy", "push", "watch", "checkpoint", "actions", "promote", "logview", "report", "db-pull":
+	case "help", "lint", "i18n-pull", "link", "deploy", "push", "watch", "checkpoint", "actions", "promote", "logview", "report", "db-pull", "modules":
 		return true
 	case "shell", "shell-run", "up", "down", "stop", "restart", "logs", "sequence", "update", "test", "view", "compare":
 		return hasRemoteFlag(args)

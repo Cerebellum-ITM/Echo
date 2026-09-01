@@ -149,10 +149,12 @@ func RunPush(ctx context.Context, opts PushOpts) error {
 	// that isn't an addon here is a usage error, caught early (the deploy
 	// --modules pattern).
 	modules := append([]string(nil), p.modules...)
-	for _, m := range modules {
-		if _, derr := resolveModuleDir(opts.Cfg, opts.Root, m); derr != nil {
-			return fmt.Errorf("%w: module %q is not an addon in %s (no __manifest__.py)", ErrUsage, m, opts.Root)
+	for i, m := range modules {
+		_, name, derr := resolveAddon(opts.Cfg, opts.Root, m)
+		if derr != nil {
+			return addonError(opts.Root, m, derr)
 		}
+		modules[i] = name
 	}
 	if p.dirty {
 		dirty, derr := gitDirtyModules(ctx, opts.Root)

@@ -6,6 +6,13 @@
 
 ## Current Goal
 
+Unit 115 (addons-path-discovery) entregada y **verificada en vivo** contra
+`morwi/Acumedic` (modules en `oehealth_modules_19/`, target `acumedic`): desde
+la raíz del repo `push` y `deploy --modules` resuelven el módulo y apuntan a
+`addons/oehealth_consultation_extra` con 5 archivos; el argumento con ruta
+normaliza al nombre real en vez de sincronizar al destino sombreado (18
+archivos); y desde la subcarpeta `link --list` marca el binding de la raíz.
+Antes:
 Unit 113 (deploy-branch-provenance) entregada: `deploy --set-git-branch <name>`
 (config-only; `--rename` mueve además la rama que ya está en el server con
 `git branch -m`, sin tocar working tree ni overlay) y procedencia estampada en
@@ -59,6 +66,33 @@ _(siguiente: Unit 14 — meta-commands. Fix deploy-build-muting: el builder de `
 
 
 ## Completed
+
+- [x] Unit 115 — addons-path-discovery. Un repo cuyos módulos viven en una
+  subcarpeta funciona desde la raíz sin configurar nada. El defecto de fondo
+  eran **cuatro** búsquedas de un nivel que discrepaban: `resolveModuleDir`
+  (config-aware, `push`/`i18n`), `isAddonDir` (config-**ciega**, `deploy` — por
+  eso `deploy --modules` fallaba incluso donde `push` funcionaba),
+  `hostAddonsRoots`/`moduleDir` (`lint`) y `listAvailableModules` (picker).
+  Nuevo `internal/cmd/addons.go` las unifica: `addonsRoots` (config + default,
+  con la regla de conf-mode que traía `lint`), `discoverAddonsRoots` (walk
+  acotado a profundidad 3, `skipDirs` + ocultos, sin descender a un addon),
+  `resolveAddon` (devuelve dir **y** nombre) y `listAddons`. El walk corre
+  **solo como fallback**, así que un proyecto configurado no cambia de
+  comportamiento ni lo paga; nombre duplicado bajo dos raíces ⇒ `ErrUsage`
+  nombrando ambas. **Caso C** (fallo silencioso) muerto: un argumento con
+  separador se resuelve a su basename o es `ErrUsage`, y el nombre que llega al
+  log y al destino remoto no lleva separador nunca. **Quinto sitio roto que el
+  reporte no mencionaba**: `modulesFromPaths`/`dirtyModulesFromPaths` mapeaban
+  ruta de git → módulo por el primer segmento, así que `--dirty`/`--auto` veían
+  vacío en layout anidado; ahora `addonFromPath` busca el primer ancestro que es
+  addon, `dirtyModule` gana `dir` y `pathsTouchI18n` se ancla a él en vez de al
+  nombre. `modules --addons-path <a,b,c>` escribe la llave sin el formulario y
+  `modules` entra a `projectlessOneShot`. `project.FindRoot` cae al top-level de
+  git antes que al `cwd` (`GitRoot` + `SameDir` para no confundir `/tmp` con
+  `/private/tmp`), con `config.MigrateProjectKey`/`FindProjectState` moviendo
+  las seis ubicaciones una sola vez y solo hacia un destino vacío — idempotente
+  y acotada a la cadena `cwd → root`. Tests nuevos en `addons_test.go` y
+  `migrate_test.go`; build/vet/test verdes.
 
 - [x] Unit 108 — reverb-real-host. Cierra los defectos que solo aparecieron al
   correr el acceptance check REAL de Reverb (`scripts/echo-contract-check.sh`)

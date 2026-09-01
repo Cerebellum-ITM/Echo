@@ -27,7 +27,7 @@ var commandFlags = map[string][]string{
 	"update":        {"--all", "--last", "--level", "--i18n", "--installed", "--from", "--remote", "-E", "--env"},
 	"uninstall":     {"--level"},
 	"test":          {"--update", "--tags", "--from", "--remote", "-E", "--env"},
-	"modules":       {"--config"},
+	"modules":       {"--config", "--addons-path"},
 	"modinfo":       {"--copy", "--last"},
 	"modstate":      {"--all", "--json"},
 	"lint":          {"--json"},

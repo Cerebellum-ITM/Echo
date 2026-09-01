@@ -370,6 +370,7 @@ func helpSections() []helpSection {
 			{"  --from <t>", "Run the suite on a remote target (or --remote for the link binding)"},
 			{"modules", "List modules from configured addons paths"},
 			{"  --config", "Pick which folders are addons paths (form)"},
+			{"  --addons-path <a,b>", "Set addons paths without the form (empty clears)"},
 			{"modinfo [<mod>]", "Compare DB-installed version vs manifest version"},
 			{"  --copy", "Copy the report to the clipboard"},
 			{"  --last", "Re-show this session's last modinfo (skips the picker)"},

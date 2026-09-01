@@ -153,8 +153,8 @@ func TestDirtyModulesFromPaths(t *testing.T) {
 	}
 	got := dirtyModulesFromPaths(root, paths)
 	want := []dirtyModule{
-		{name: "sale_extra", paths: []string{"sale_extra/models/sale.py", "sale_extra/i18n/es.po"}},
-		{name: "stock_extra", paths: []string{"stock_extra/views/s.xml"}},
+		{name: "sale_extra", dir: "sale_extra", paths: []string{"sale_extra/models/sale.py", "sale_extra/i18n/es.po"}},
+		{name: "stock_extra", dir: "stock_extra", paths: []string{"stock_extra/views/s.xml"}},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("dirtyModulesFromPaths = %+v, want %+v", got, want)
@@ -220,13 +220,23 @@ func TestI18nOverwriteDecision(t *testing.T) {
 	}
 }
 
-func TestIsAddonDirRejectsPathTricks(t *testing.T) {
+func TestResolveAddonRejectsPathTricks(t *testing.T) {
 	root := addonsRepo(t, "sale_extra")
-	if isAddonDir(root, "sale_extra/../sale_extra") {
-		t.Fatal("path separators in a module name must be rejected")
-	}
-	if isAddonDir(root, "") {
+	cfg := &config.Config{}
+	if _, _, err := resolveAddon(cfg, root, ""); !errors.Is(err, ErrUsage) {
 		t.Fatal("empty name must be rejected")
+	}
+	if _, _, err := resolveAddon(cfg, root, "../sale_extra"); !errors.Is(err, ErrUsage) {
+		t.Fatal("a path escaping the root must be rejected")
+	}
+	if _, _, err := resolveAddon(cfg, root, "/abs/sale_extra"); !errors.Is(err, ErrUsage) {
+		t.Fatal("an absolute path must be rejected")
+	}
+	// Traversal that stays inside the root is not a trick, just a noisy
+	// spelling: it normalizes to the module name.
+	_, name, err := resolveAddon(cfg, root, "sale_extra/../sale_extra")
+	if err != nil || name != "sale_extra" {
+		t.Fatalf("got (%q, %v), want (sale_extra, nil)", name, err)
 	}
 }
 

@@ -5,7 +5,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
@@ -626,7 +625,7 @@ func runDeployCheckpointManage(opts DeployOpts, p deployArgs) error {
 // current pinned list pre-checked, so one picker both adds and removes. An
 // empty confirmed selection clears the list (back to auto).
 func pickTestModules(opts DeployOpts, current []string) ([]string, error) {
-	available := mergeTestModules(listAvailableModules(opts.Cfg, opts.Root), current)
+	available := mergeTestModules(listAddons(opts.Cfg, opts.Root), current)
 	if len(available) == 0 {
 		return nil, fmt.Errorf("%w: no modules found to pin — set them headlessly with --test-modules=<list>", ErrUsage)
 	}
@@ -835,6 +834,7 @@ type deployCommit struct {
 // paths (repo-relative), kept for the i18n/ detection.
 type dirtyModule struct {
 	name  string
+	dir   string // repo-relative addon directory; differs from name in a nested layout
 	paths []string
 }
 
@@ -925,10 +925,12 @@ func RunDeploy(ctx context.Context, opts DeployOpts) (DeployResult, error) {
 	// Validate an explicit --modules list against the local repo before any
 	// remote work: a name that isn't an addon here (no __manifest__.py) is a
 	// usage error, caught early so we never touch the server for a typo.
-	for _, m := range p.modules {
-		if !isAddonDir(opts.Root, m) {
-			return DeployResult{}, fmt.Errorf("%w: module %q is not an addon in %s (no __manifest__.py)", ErrUsage, m, opts.Root)
+	for i, m := range p.modules {
+		_, name, rerr := resolveAddon(opts.Cfg, opts.Root, m)
+		if rerr != nil {
+			return DeployResult{}, addonError(opts.Root, m, rerr)
 		}
+		p.modules[i] = name
 	}
 
 	sshHost, remotePath, fromName, err := resolveDeployRemote(opts, p.from)
@@ -1040,7 +1042,7 @@ func RunDeploy(ctx context.Context, opts DeployOpts) (DeployResult, error) {
 				seen[dm.name] = true
 				modules = append(modules, dm.name)
 			}
-			if !i18nTouched[dm.name] && pathsTouchI18n(dm.name, dm.paths) {
+			if !i18nTouched[dm.name] && pathsTouchI18n(dm.dir, dm.paths) {
 				i18nTouched[dm.name] = true
 				opts.log("INFO", "i18n", "i18n changes detected", "",
 					[2]string{"module", dm.name})
@@ -1968,8 +1970,8 @@ func i18nOverwriteDecision(forceI18n, noI18n, detectedUpdate bool) (state string
 // pathsTouchI18n reports whether any changed path lives under the module's
 // i18n/ folder (any file: .po, .pot, or otherwise) — the signal that a
 // deploy of this module should overwrite the database translations.
-func pathsTouchI18n(module string, paths []string) bool {
-	prefix := module + "/i18n/"
+func pathsTouchI18n(moduleDir string, paths []string) bool {
+	prefix := moduleDir + "/i18n/"
 	for _, p := range paths {
 		if strings.HasPrefix(filepath.ToSlash(p), prefix) {
 			return true
@@ -1983,37 +1985,27 @@ func pathsTouchI18n(module string, paths []string) bool {
 // non-addon areas like `[FIX] docs: …` fall through to the diff).
 func moduleFromSubject(root, subject string) string {
 	m := deploySubjectRe.FindStringSubmatch(subject)
-	if m == nil || !isAddonDir(root, m[1]) {
+	if m == nil || !hasAddon(root, m[1]) {
 		return ""
 	}
 	return m[1]
 }
 
-// modulesFromPaths maps changed paths to the distinct top-level addon
-// directories they live in, sorted.
+// modulesFromPaths maps changed paths to the distinct addons they live in,
+// sorted.
 func modulesFromPaths(root string, paths []string) []string {
 	seen := map[string]bool{}
 	var out []string
 	for _, p := range paths {
-		top := strings.SplitN(filepath.ToSlash(p), "/", 2)[0]
-		if top == "" || seen[top] || !isAddonDir(root, top) {
+		mod, _ := addonFromPath(root, p)
+		if mod == "" || seen[mod] {
 			continue
 		}
-		seen[top] = true
-		out = append(out, top)
+		seen[mod] = true
+		out = append(out, mod)
 	}
 	sort.Strings(out)
 	return out
-}
-
-// isAddonDir reports whether <root>/<name> is an Odoo addon (has a
-// __manifest__.py).
-func isAddonDir(root, name string) bool {
-	if name == "" || strings.ContainsAny(name, "/\\") {
-		return false
-	}
-	_, err := os.Stat(filepath.Join(root, name, "__manifest__.py"))
-	return err == nil
 }
 
 // splitInstallUpdate partitions the modules by their remote state: present
@@ -2141,21 +2133,23 @@ func parsePorcelainPaths(out string) []string {
 // module's paths. Pure — the testable core of gitDirtyModules.
 func dirtyModulesFromPaths(root string, paths []string) []dirtyModule {
 	byMod := map[string][]string{}
+	dirs := map[string]string{}
 	var order []string
 	for _, p := range paths {
-		top := strings.SplitN(filepath.ToSlash(p), "/", 2)[0]
-		if top == "" || !isAddonDir(root, top) {
+		mod, dir := addonFromPath(root, p)
+		if mod == "" {
 			continue
 		}
-		if _, ok := byMod[top]; !ok {
-			order = append(order, top)
+		if _, ok := byMod[mod]; !ok {
+			order = append(order, mod)
+			dirs[mod] = dir
 		}
-		byMod[top] = append(byMod[top], p)
+		byMod[mod] = append(byMod[mod], p)
 	}
 	sort.Strings(order)
 	out := make([]dirtyModule, 0, len(order))
 	for _, m := range order {
-		out = append(out, dirtyModule{name: m, paths: byMod[m]})
+		out = append(out, dirtyModule{name: m, dir: dirs[m], paths: byMod[m]})
 	}
 	return out
 }

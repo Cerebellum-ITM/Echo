@@ -83,37 +83,17 @@ func parseLintArgs(args []string) (lintArgs, error) {
 }
 
 // hostAddonsRoots returns the absolute addons directories to scan on the
-// host.
-//
-// Conf mode's AddonsPaths are paths *inside* the container and cannot be
-// walked here, so that mode falls back to the conventional host layout.
-// Linting is about the files you are going to deploy, which live on the
-// host by definition.
+// host: the configured roots, plus the discovered ones so a module in a
+// subfolder lints like any other. Linting is about the files you are going
+// to deploy, which live on the host by definition.
 func hostAddonsRoots(cfg *config.Config, root string) []string {
-	paths := cfg.AddonsPaths
-	if cfg.AddonsMode == addonsModeConf || len(paths) == 0 {
-		paths = []string{".", "addons", "custom"}
-	}
-	var out []string
-	for _, sub := range paths {
-		dir := filepath.Join(root, sub)
-		if info, err := os.Stat(dir); err == nil && info.IsDir() {
-			out = append(out, dir)
+	roots := addonsRoots(cfg, root)
+	if len(modulesUnder(roots)) == 0 {
+		if discovered := discoverAddonsRoots(root); len(discovered) > 0 {
+			return discovered
 		}
 	}
-	return out
-}
-
-// moduleDir resolves a module name to its directory under the addons
-// roots, or "" when no such module exists.
-func moduleDir(roots []string, name string) string {
-	for _, r := range roots {
-		dir := filepath.Join(r, name)
-		if _, err := os.Stat(filepath.Join(dir, "__manifest__.py")); err == nil {
-			return dir
-		}
-	}
-	return ""
+	return roots
 }
 
 // RunLint checks Odoo XML the way the server does and returns the
@@ -134,11 +114,12 @@ func RunLint(opts LintOpts) (LintResult, error) {
 	var modules []string
 	var manifestDirs []string
 	for _, m := range p.modules {
-		dir := moduleDir(roots, m)
-		if dir == "" {
+		r, ok := lookupAddon(roots, m)
+		if !ok {
 			return LintResult{}, fmt.Errorf("%w: module %q is not an addon in %s (no __manifest__.py)",
 				ErrUsage, m, opts.Root)
 		}
+		dir := filepath.Join(r, m)
 		targets = append(targets, dir)
 		modules = append(modules, m)
 		manifestDirs = append(manifestDirs, dir)
@@ -205,11 +186,12 @@ func LintModules(cfg *config.Config, root string, modules []string) (LintResult,
 
 	var targets, found, missing []string
 	for _, m := range modules {
-		dir := moduleDir(roots, m)
-		if dir == "" {
+		r, ok := lookupAddon(roots, m)
+		if !ok {
 			missing = append(missing, m)
 			continue
 		}
+		dir := filepath.Join(r, m)
 		targets = append(targets, dir)
 		found = append(found, m)
 	}

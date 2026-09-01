@@ -7,7 +7,55 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **`push` y `deploy` encuentran el módulo aunque los addons vivan en una
+  subcarpeta del repo — y dejan de sincronizar en silencio al lugar
+  equivocado.** Un repo que guarda sus módulos en `oehealth_modules_19/` —un
+  layout normal, y una de varias entradas del `addons_path` que el server ya
+  carga— fallaba con `module "…" is not an addon` desde la raíz. La causa no era
+  una, eran cuatro búsquedas de un nivel que discrepaban entre sí:
+  `resolveModuleDir` respetaba los `addons_paths` configurados para `push`, pero
+  `isAddonDir` los **ignoraba por completo**, así que `deploy --modules` fallaba
+  incluso donde `push` ya funcionaba; `lint` tenía su propio par de funciones y
+  el picker una cuarta. Ahora hay un solo resolvedor, con **descubrimiento
+  recursivo acotado** (profundidad 3, saltando `.git`, `node_modules`,
+  `__pycache__` y demás) que corre **solo como fallback**: la configuración
+  sigue ganando cuando existe, así que ningún proyecto que hoy funciona cambia
+  de comportamiento ni paga el escaneo. Si el mismo nombre de módulo aparece
+  bajo dos rutas, falla nombrando ambas en vez de elegir una a ciegas.
+- **El fallo silencioso: `push sub/<mod>` reportaba éxito y no surtía efecto.**
+  Pasar la ruta relativa colaba la validación (`Join(root, ".", "a/b", …)`
+  acierta) y la barra se propagaba literal al destino remoto, sincronizando a
+  `addons/oehealth_modules_19/oehealth_consultation_extra` — un directorio que
+  `/mnt/extra-addons` sombrea en el `addons_path`. El push decía `new=18`, el
+  `-u` corría limpio, y el cambio nunca cargaba. Un argumento con separador
+  ahora se resuelve a su nombre real de módulo, o falla explícito si no es un
+  addon; el nombre que llega al log y al destino no lleva separador nunca.
+- **`deploy --dirty` y `--auto` veían vacío en un layout anidado.** El mapeo de
+  rutas de git a módulo tomaba el primer segmento (`oehealth_modules_19`) y lo
+  descartaba por no ser un addon, así que la selección se quedaba sin nada que
+  desplegar. Ahora se busca el primer ancestro que sí es un addon, y la
+  detección de cambios de i18n se ancla al directorio del módulo en vez de a su
+  nombre.
+- **El `link` se perdía al entrar a una subcarpeta.** Toda la config por
+  proyecto se guarda bajo el sha256 de la ruta raíz, y la raíz era el `cwd`
+  cuando no hay `docker-compose.yml`: parado en `oehealth_modules_19/`, Echo
+  leía **otro archivo** y reportaba `not linked`. La raíz ahora cae al top-level
+  de git antes que al `cwd`. El estado que quedó bajo la llave vieja se **migra
+  una sola vez** y solo si el destino está vacío, moviendo las seis ubicaciones
+  (`projects`, `deploy-history`, `last-updates`, `last-sequences`,
+  `checkpoints`, `cmd-logs/`) — no nada más el toml, o se perderían el historial
+  de deploys y los checkpoints.
+
 ### Added
+- **`modules --addons-path <a,b,c>`: declarar las carpetas de addons sin el
+  formulario.** `modules --config` es un multiselect interactivo y además exigía
+  un proyecto con `docker-compose.yml`, así que en un repo que solo está
+  linkeado no había forma de configurar nada — y un agente headless no puede
+  contestar un formulario. La variante no interactiva persiste la lista y fija
+  el modo `host`; con la cadena vacía limpia la llave y devuelve el proyecto a
+  la convención más el descubrimiento. `modules` entra además a la lista de
+  comandos que corren sin proyecto.
 - **La rama de despliegue del server ahora se puede nombrar, y el server dice
   qué está corriendo.** Dos huecos que dejaron las Units 102 y 112. **(1)**
   `deploy --set-git-branch <name>` nombra la rama donde vive el código del

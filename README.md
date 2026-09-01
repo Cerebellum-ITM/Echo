@@ -178,6 +178,7 @@ echo restart --from staging    # ad-hoc: a different named target
 | `  --tags <spec>`        | Override the auto test-tags filter                   |
 | `modules`                | List modules from the configured addons paths        |
 | `  --config`             | Interactive form to pick which folders are addons paths |
+| `  --addons-path <a,b>`  | Set the addons paths without the form (empty string clears) |
 | `modinfo [<mod>]`        | Compare the DB-installed version against the manifest version |
 | `  --copy`               | Copy the report to the clipboard                     |
 | `  --last`               | Re-show this session's last `modinfo` (skips the picker) |
@@ -188,7 +189,12 @@ echo restart --from staging    # ad-hoc: a different named target
 When `install`/`update`/`uninstall`/`test` are called without module names,
 Echo opens an fzf-style fuzzy picker scoped to the project's modules — host
 folders, or the instance's `odoo.conf` `addons_path` when the host scan is
-empty. The `update` picker highlights the previous run's modules; confirming
+empty. A repo that keeps its modules in a subfolder needs no setup: when the
+configured paths (and the conventional `.`/`addons`/`custom`) come up empty,
+Echo walks the repo up to three levels deep for directories holding a
+`__manifest__.py`, the way Odoo takes several `addons_path` entries. Configured
+paths always win, and a module name found under two paths is an error naming
+both rather than a silent pick. The `update` picker highlights the previous run's modules; confirming
 it with nothing selected offers to repeat that last update. The start line
 names the resolved modules (picker / `--last` / `--all`) so you always know
 what's running.
