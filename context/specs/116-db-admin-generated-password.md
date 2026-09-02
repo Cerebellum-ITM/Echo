@@ -210,8 +210,8 @@ con `--from`/`--remote` no hay stack local que manejar, así que exigir un
       DB.
 - [ ] Tab completa `--password`, `--insecure`, `--from` y `--remote` tras
       `db-admin`.
-- [ ] `db-admin --from <target>` resetea la base del target y entra con la
-      contraseña impresa (verificación en vivo).
+- [x] `db-admin --from <target>` resetea la base del target y entra con la
+      contraseña impresa (verificado en vivo contra `morwi/fuentebuena`).
 - [ ] `db-admin --from <target-prod>` pide confirm desde un proyecto local
       `dev` (el stage que se mide es el del target).
 - [ ] `go build ./... && go vet ./... && go test ./...` verdes.

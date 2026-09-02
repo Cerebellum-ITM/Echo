@@ -14,10 +14,10 @@ credencial conocida) en vez de por stage. `--password` fija una explícita,
 `--insecure` conserva `admin`/`admin`. Y deja de ser local-only:
 `--from <target>`/`--remote` corren la misma sentencia contra el Postgres
 remoto (hash calculado en local ⇒ la contraseña nunca sale de la máquina),
-con el guard leyendo el stage del **target**. **Pendiente de verificación EN
-VIVO**:
-no hay Docker instalado en esta máquina, así que falta confirmar el login real
-y que Odoo no re-hashee el valor escrito. Antes:
+con el guard leyendo el stage del **target**. **Verificada EN VIVO** por el
+usuario (`db-admin --remote` desde `morwi/fuentebuena`, un directorio
+linkeado sin compose): el hash passlib que escribe Echo entra al back
+office. Antes:
 Unit 115 (addons-path-discovery) entregada y **verificada en vivo** contra
 `morwi/Acumedic` (modules en `oehealth_modules_19/`, target `acumedic`): desde
 la raíz del repo `push` y `deploy --modules` resuelven el módulo y apuntan a
@@ -116,9 +116,12 @@ _(siguiente: Unit 14 — meta-commands. Fix deploy-build-muting: el builder de `
   ambos caminos. `db-admin` entra al grupo remote-mode de
   `projectlessOneShot` (`main.go`): con `--from`/`--remote` no hay stack
   local, y exigir `docker-compose.yml` en el cwd bloqueaba la operación en
-  un directorio linkeado sin compose. build/vet/test verdes; **verificación EN VIVO pendiente**
-  (no hay Docker en esta máquina). Spec
-  `116-db-admin-generated-password.md`.
+  un directorio linkeado sin compose — hueco que el usuario encontró al
+  primer uso real, el mismo que tuvo `logview --remote` en su día.
+  build/vet/test verdes. **Verificada EN VIVO**: `db-admin --remote` contra
+  `morwi/fuentebuena` resetea y el login entra con la contraseña impresa, o
+  sea que el formato passlib que arma `HashPassword` es el que el crypt
+  context de Odoo acepta. Spec `116-db-admin-generated-password.md`.
 
 - [x] Unit 115 — addons-path-discovery. Un repo cuyos módulos viven en una
   subcarpeta funciona desde la raíz sin configurar nada. El defecto de fondo
