@@ -135,3 +135,53 @@ func TestIsHexPrefix(t *testing.T) {
 		}
 	}
 }
+
+func TestParseDBArgsAdminFlags(t *testing.T) {
+	cases := []struct {
+		name         string
+		args         []string
+		wantPassword string
+		wantInsecure bool
+		wantPos      []string
+	}{
+		{"separate-value", []string{"--password", "s3cr3t"}, "s3cr3t", false, nil},
+		{"equals-value", []string{"--password=s3cr3t"}, "s3cr3t", false, nil},
+		{"value-with-spaces", []string{"--password", "foo bar"}, "foo bar", false, nil},
+		{"insecure", []string{"mydb", "--insecure"}, "", true, []string{"mydb"}},
+		{"conflict", []string{"--password", "x", "--insecure"}, "x", true, nil},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			f, pos := parseDBArgs(c.args)
+			if f.password != c.wantPassword {
+				t.Errorf("password = %q, want %q", f.password, c.wantPassword)
+			}
+			if f.insecure != c.wantInsecure {
+				t.Errorf("insecure = %v, want %v", f.insecure, c.wantInsecure)
+			}
+			if strings.Join(pos, ",") != strings.Join(c.wantPos, ",") {
+				t.Errorf("positional = %v, want %v", pos, c.wantPos)
+			}
+		})
+	}
+}
+
+func TestGenerateAdminPassword(t *testing.T) {
+	first, err := generateAdminPassword()
+	if err != nil {
+		t.Fatalf("generateAdminPassword: %v", err)
+	}
+	if len(first) != adminPasswordLen {
+		t.Errorf("length = %d, want %d", len(first), adminPasswordLen)
+	}
+	if strings.ContainsAny(first, "il1O0") {
+		t.Errorf("password %q contains ambiguous glyphs", first)
+	}
+	second, err := generateAdminPassword()
+	if err != nil {
+		t.Fatalf("generateAdminPassword: %v", err)
+	}
+	if first == second {
+		t.Error("two generated passwords are identical")
+	}
+}

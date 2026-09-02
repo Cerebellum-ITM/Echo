@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **`db-admin` deja de instalar una credencial pública.** El comando existía
+  para recuperar el acceso al back office, y lo lograba dejando la base
+  abierta: escribía `admin`/`admin` —documentada en el README y en el help— y la
+  guardaba en **texto plano**, apoyándose en el esquema `plaintext`
+  deprecado del crypt context de Odoo. Es decir que hasta el siguiente login
+  exitoso la contraseña era legible con un `psql`, y viajaba tal cual en cada
+  `db-backup`, `db-pull` y `pg_dump` que se tomara en esa ventana. Ahora la
+  contraseña se **genera por corrida** (20 caracteres de `crypto/rand`, sin
+  glifos ambiguos porque se copian a mano de la terminal), se imprime **una
+  sola vez** y se escribe como hash **`pbkdf2_sha512` en formato passlib**
+  (`$pbkdf2-sha512$25000$salt$checksum`), que Odoo verifica nativo y no
+  re-hashea. El login sigue siendo `admin`: no es el secreto —quien tiene el
+  back office lo lee— y generarlo solo agregaría una segunda cosa que copiar.
+  Cero dependencias nuevas: `crypto/pbkdf2` es stdlib desde Go 1.24.
+- **La confirmación de `db-admin` mide el riesgo, no el stage.** Antes
+  preguntaba solo si `stage = prod`, que deja fuera el caso peor: instalar
+  credenciales conocidas en un staging accesible. Ahora confirma en `prod`
+  —resetear al admin le quita el acceso a quien tenía la contraseña real,
+  aunque la nueva sea fuerte— **y** siempre que la credencial resultante sea
+  pública (`--insecure`), en cualquier stage. `--force` sigue saltándose
+  ambas.
+
+### Added
+- **`db-admin --password <pw>`** fija una contraseña explícita en vez de la
+  generada; también se guarda hasheada.
+- **`db-admin --insecure`** conserva el `admin`/`admin` de siempre para bases
+  desechables. Con `--password` es `ErrUsage`: las dos escriben el mismo
+  campo.
+
 ### Fixed
 - **`push` y `deploy` encuentran el módulo aunque los addons vivan en una
   subcarpeta del repo — y dejan de sincronizar en silencio al lugar

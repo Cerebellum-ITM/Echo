@@ -401,8 +401,10 @@ func helpSections() []helpSection {
 			{"  --to-worktree[=<branch>]", "Write the .po into another worktree (bare form opens a picker)"},
 		}},
 		{"Database", []helpEntry{
-			{"db-admin [name]", "Reset admin (uid 2) login+password to admin/admin"},
-			{"  --force", "Skip the prod confirmation"},
+			{"db-admin [name]", "Reset admin (uid 2) to a generated password, shown once"},
+			{"  --password <pw>", "Use this password instead of a generated one"},
+			{"  --insecure", "Set the password to admin (known credentials, dev only)"},
+			{"  --force", "Skip the confirmation"},
 			{"db-backup [name]", "Dump DB (default: configured) to ./backups/"},
 			{"  --with-filestore", "Include filestore (.zip instead of .dump)"},
 			{"db-restore [--as N]", "Pick a backup, name the target, and restore"},

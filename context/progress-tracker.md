@@ -6,6 +6,14 @@
 
 ## Current Goal
 
+Unit 116 (db-admin-generated-password) entregada: `db-admin` deja de instalar
+una credencial pública. Contraseña generada por corrida (20 chars de
+`crypto/rand`, impresa una vez) guardada como hash `pbkdf2_sha512` en formato
+passlib, login fijo en `admin`, y confirmación por **riesgo** (prod o
+credencial conocida) en vez de por stage. `--password` fija una explícita,
+`--insecure` conserva `admin`/`admin`. **Pendiente de verificación EN VIVO**:
+no hay Docker instalado en esta máquina, así que falta confirmar el login real
+y que Odoo no re-hashee el valor escrito. Antes:
 Unit 115 (addons-path-discovery) entregada y **verificada en vivo** contra
 `morwi/Acumedic` (modules en `oehealth_modules_19/`, target `acumedic`): desde
 la raíz del repo `push` y `deploy --modules` resuelven el módulo y apuntan a
@@ -66,6 +74,33 @@ _(siguiente: Unit 14 — meta-commands. Fix deploy-build-muting: el builder de `
 
 
 ## Completed
+
+- [x] Unit 116 — db-admin-generated-password. `db-admin` recuperaba el acceso al
+  back office dejando la base abierta: escribía `admin`/`admin` —credencial
+  documentada— en **texto plano**, apoyada en el esquema `plaintext` deprecado
+  del crypt context, así que el secreto era legible con `psql` (y viajaba en
+  cada `db-backup`/`db-pull`) hasta el siguiente login exitoso. Ahora la
+  contraseña se genera por corrida (`generateAdminPassword`, 20 chars de
+  `crypto/rand` con rechazo de módulo, alfabeto sin `il1O0` porque se copia a
+  mano) y se escribe hasheada: nuevo `internal/odoo/passlib.go` con
+  `HashPassword` → `$pbkdf2-sha512$25000$<salt>$<checksum>` en la *adapted
+  base64* de passlib (sin padding, `+`→`.`), que el crypt context de Odoo
+  verifica nativo. `crypto/pbkdf2` es stdlib desde Go 1.24 ⇒ **cero
+  dependencias nuevas**; el hash se validó contra un vector calculado con
+  `hashlib.pbkdf2_hmac` de Python. El **login se queda en `admin`**: no es el
+  secreto y generarlo solo agregaría una segunda cosa que copiar. El guard pasa
+  de medir el stage a medir el riesgo — confirma en `prod` (el reset le quita el
+  acceso a quien tenía la contraseña real) y siempre que la credencial sea
+  conocida (`--insecure`), en cualquier stage; `confirmAdminReset` recibe el
+  motivo para decir cuál de los dos está avisando. `ResetUserCredentials` no
+  cambia de firma (recibe el hash ya formado) pero sí de contrato, y su doc
+  deja de prometer texto plano. Flags nuevas en `commandFlags`, help y README;
+  `--password` + `--insecure` juntas son `ErrUsage`. Tests: `passlib_test.go`
+  (vector fijo, formato, salt distinto por corrida) y `db_test.go`
+  (`parseDBArgs` con ambas formas de `--password`, `--insecure`, y
+  `generateAdminPassword`). build/vet/test verdes; **verificación EN VIVO
+  pendiente** (no hay Docker en esta máquina). Spec
+  `116-db-admin-generated-password.md`.
 
 - [x] Unit 115 — addons-path-discovery. Un repo cuyos módulos viven en una
   subcarpeta funciona desde la raíz sin configurar nada. El defecto de fondo

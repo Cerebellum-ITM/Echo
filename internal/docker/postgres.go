@@ -197,11 +197,10 @@ func TerminateConnections(ctx context.Context, composeCmd, dir, dbContainer, use
 }
 
 // ResetUserCredentials sets the login and password of the res_users row
-// with the given id, returning found=false when no such user exists. The
-// password is stored as plain text: Odoo's default crypt context keeps a
-// deprecated `plaintext` scheme, so it verifies on the next login and is
-// transparently re-hashed to pbkdf2_sha512 then. Intended for dev
-// databases where regaining admin access matters more than the stored hash.
+// with the given id, returning found=false when no such user exists.
+// password is written verbatim, so callers pass an already-formed hash in
+// a scheme Odoo's crypt context accepts (see odoo.HashPassword) and the
+// plaintext never lands in the database.
 func ResetUserCredentials(ctx context.Context, composeCmd, dir, dbContainer, user, db string, uid int, login, password string) (bool, error) {
 	if user == "" {
 		user = "postgres"

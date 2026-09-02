@@ -229,7 +229,9 @@ asks for a red confirmation unless `--force`; `--last` stays local-only. Like
 
 | Command                          | Description                                                       |
 |----------------------------------|-------------------------------------------------------------------|
-| `db-admin [name]`                | Reset the admin user (uid 2) login **and** password to `admin`/`admin`; red confirm only on `prod` (`--force` skips) |
+| `db-admin [name]`                | Reset the admin user (uid 2) to login `admin` and a **generated** password, printed once and stored as a `pbkdf2_sha512` hash |
+| `  --password <pw>`              | Use an explicit password instead of a generated one (also hashed) |
+| `  --insecure`                   | Set it to `admin`/`admin` — known credentials, confirmed on any stage |
 | `db-backup [name]`               | `pg_dump -Fc` into `./backups/<db>_<ts>.dump`                     |
 | `  --with-filestore`             | Package dump + container filestore into a `.zip` (Odoo-compatible) |
 | `db-restore [--as N] [--force] [--neutralize]` | Pick a backup (Echo `.dump` or native Odoo `.zip`), name the target DB, create it, and restore the filestore — narrating each step live |
@@ -258,8 +260,11 @@ streaming `pg_restore`, copying the filestore — instead of sitting silent:
 
 `db-use` switches which database is active (the one `db-list` marks `●` and
 the implicit target of `update`/`shell`/`psql`/`db-admin`/…); `db-admin`
-resets the admin user to `admin`/`admin` to get back into the back office
-when you don't have the password.
+gets you back into the back office when you don't have the password — it
+resets uid 2 to login `admin` with a freshly generated password, printed
+once and stored only as a `pbkdf2_sha512` hash, so the database you just
+recovered isn't left open behind you. `--insecure` brings back the old
+`admin`/`admin` for throwaway databases, and asks first.
 
 <p align="center"><img src="demo/gifs/db-list.gif" alt="echo db-list" width="860"></p>
 
