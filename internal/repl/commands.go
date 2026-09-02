@@ -36,7 +36,7 @@ var commandFlags = map[string][]string{
 	"i18n-export":   {"--out"},
 	"i18n-update":   {"--force"},
 	"i18n-pull":     {"--from", "--lang", "--all", "--installed", "--to-worktree"},
-	"db-admin":      {"--force", "--password", "--insecure"},
+	"db-admin":      {"--force", "--password", "--insecure", "--from", "--remote", "-E", "--env"},
 	"db-backup":     {"--with-filestore"},
 	"db-restore":    {"--as", "--force", "--neutralize"},
 	"db-pull":       {"--from", "--remote", "--as", "--neutralize", "--no-neutralize", "--filestore", "--force", "--restore", "-E", "--env"},

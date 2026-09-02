@@ -232,6 +232,7 @@ asks for a red confirmation unless `--force`; `--last` stays local-only. Like
 | `db-admin [name]`                | Reset the admin user (uid 2) to login `admin` and a **generated** password, printed once and stored as a `pbkdf2_sha512` hash |
 | `  --password <pw>`              | Use an explicit password instead of a generated one (also hashed) |
 | `  --insecure`                   | Set it to `admin`/`admin` — known credentials, confirmed on any stage |
+| `  --from <t>` / `--remote`      | Run it against a remote target's Postgres; the hash is computed locally, so the password never leaves your machine |
 | `db-backup [name]`               | `pg_dump -Fc` into `./backups/<db>_<ts>.dump`                     |
 | `  --with-filestore`             | Package dump + container filestore into a `.zip` (Odoo-compatible) |
 | `db-restore [--as N] [--force] [--neutralize]` | Pick a backup (Echo `.dump` or native Odoo `.zip`), name the target DB, create it, and restore the filestore — narrating each step live |

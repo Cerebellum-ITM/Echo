@@ -404,6 +404,8 @@ func helpSections() []helpSection {
 			{"db-admin [name]", "Reset admin (uid 2) to a generated password, shown once"},
 			{"  --password <pw>", "Use this password instead of a generated one"},
 			{"  --insecure", "Set the password to admin (known credentials, dev only)"},
+			{"  --from <target>", "Reset the admin on a remote instance (named connect target)"},
+			{"  --remote", "Reset the admin on this directory's linked remote"},
 			{"  --force", "Skip the confirmation"},
 			{"db-backup [name]", "Dump DB (default: configured) to ./backups/"},
 			{"  --with-filestore", "Include filestore (.zip instead of .dump)"},

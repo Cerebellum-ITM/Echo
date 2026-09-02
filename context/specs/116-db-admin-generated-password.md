@@ -58,6 +58,8 @@ que deja es una base abierta:
 db-admin [name]                 login admin + contraseña generada (hash), impresa una vez
 db-admin --password <pw>        contraseña explícita (también hasheada)
 db-admin --insecure             admin/admin como hasta hoy; confirm en cualquier stage
+db-admin --from <target>        corre contra el Postgres del target remoto
+db-admin --remote               idem, contra el remoto linkeado del directorio
 db-admin --force                salta el confirm
 ```
 
@@ -104,10 +106,9 @@ $pbkdf2-sha512$<rounds>$<salt>$<checksum>
 dependencias nuevas**.
 
 ```go
-// Hash returns an Odoo-compatible passlib pbkdf2_sha512 hash for the
-// given password. Odoo's crypt context verifies this scheme natively, so
-// the plaintext never reaches the database.
-func Hash(password string) (string, error)
+// HashPassword returns a passlib-format pbkdf2_sha512 hash that Odoo's
+// res_users accepts as-is, so the plaintext never reaches the database.
+func HashPassword(password string) (string, error)
 ```
 
 ### `docker.ResetUserCredentials`
@@ -121,8 +122,27 @@ caracteres problemáticos, y `escapeIdent` sigue cubriendo la comilla.
 
 ### `internal/odoo/passlib.go` (nuevo)
 
-`Hash` según lo anterior; `adaptedB64` privado. Un solo archivo, sin
-estado.
+`HashPassword` según lo anterior, sobre `hashWithSalt` (la costura que el
+vector fijo del test necesita) y `adaptedB64`. Un solo archivo, sin estado.
+
+### Modo remoto (`--from` / `--remote`)
+
+Misma sentencia por otro transporte: `resolveRemoteShell` resuelve host,
+path, contenedor y usuario, y `remotePsqlScalar`
+([`checkpoint_remote.go`](../../internal/cmd/checkpoint_remote.go:70), ya
+usado por `checkpoint`) corre el `UPDATE … RETURNING id`. La DB destino es
+el arg posicional → `rsc.prof.DBName` → picker sobre
+`remoteListDatabases`. El hash **se calcula en local**: por el SSH viaja
+el hash, nunca la contraseña.
+
+El punto fino es el guard: lee `rsc.target.stage`, **no** `opts.Cfg.Stage`.
+Con el stage local, un `db-admin --from prod` desde un checkout `dev` no
+preguntaría nada — justo el caso para el que existe el confirm. Es la
+convención que ya siguen `deploy`, `watch`, `shell` y `db-pull`.
+
+`parseDBArgs` gana el consumo del valor de `--from`/`-E`/`--env` (patrón
+de `parseDBPullArgs`): sin eso el nombre del target se cuela como
+posicional y se lee como nombre de base.
 
 ### `internal/cmd/db.go`
 
@@ -139,13 +159,18 @@ estado.
   que el `Description` diga cuál de los dos riesgos está avisando, en vez
   del texto único de hoy.
 - `generateAdminPassword() (string, error)` junto a `RunDBAdmin`.
+- La resolución de la credencial (elegir contraseña → confirmar → hashear)
+  y la impresión salen a `resolveAdminCredential` / `reportAdminCredential`,
+  compartidas por el camino local y el remoto — que es lo que garantiza que
+  el guard y el hash sean los mismos en ambos.
 
 ### Wiring
 
-- `internal/repl/commands.go`: `"db-admin": {"--force", "--password", "--insecure"}`.
+- `internal/repl/commands.go`: `"db-admin": {"--force", "--password",
+  "--insecure", "--from", "--remote", "-E", "--env"}`.
 - `internal/repl/repl.go` (`helpSections`): la entrada pasa a
-  `"Reset admin (uid 2) to a generated password"`, con las sublíneas de
-  `--password` e `--insecure`.
+  `"Reset admin (uid 2) to a generated password, shown once"`, con las
+  sublíneas de `--password`, `--insecure`, `--from` y `--remote`.
 - `README.md`: fila de `db-admin` en la tabla Database y el párrafo de
   prosa que hoy promete `admin`/`admin`.
 
@@ -155,8 +180,12 @@ estado.
   rounds), salt distinto entre corridas, y un **vector fijo** —
   salt+password conocidos → checksum esperado — para que un cambio de
   encoding rompa el test y no el login.
-- `internal/cmd/db_test.go` (o donde viva `parseDBArgs`): `--password`
-  en sus dos formas, `--insecure`, y el conflicto entre ambas.
+- `internal/cmd/db_test.go`: `--password` en sus dos formas, `--insecure`,
+  el conflicto entre ambas, y que el valor de `--from` **no** sobreviva
+  como posicional. `resolveAdminCredential`: el hash nunca contiene la
+  contraseña, y el guard dispara en `prod` y con `--insecure` pero no con
+  una credencial generada en `dev` (sin TTY, un guard disparado se ve como
+  `ErrNonInteractive`).
 - `registry_test.go` no cambia (el nombre del comando es el mismo).
 
 ## Verify when done
@@ -174,7 +203,12 @@ estado.
 - [ ] `db-admin --insecure --force` no pregunta.
 - [ ] `db-admin --password x --insecure` falla con `ErrUsage` sin tocar la
       DB.
-- [ ] Tab completa `--password` e `--insecure` tras `db-admin`.
+- [ ] Tab completa `--password`, `--insecure`, `--from` y `--remote` tras
+      `db-admin`.
+- [ ] `db-admin --from <target>` resetea la base del target y entra con la
+      contraseña impresa (verificación en vivo).
+- [ ] `db-admin --from <target-prod>` pide confirm desde un proyecto local
+      `dev` (el stage que se mide es el del target).
 - [ ] `go build ./... && go vet ./... && go test ./...` verdes.
 - [ ] `CHANGELOG.md` con la entrada bajo `[Unreleased] → Changed`
       (cambio de default) y `Added` (flags nuevas).

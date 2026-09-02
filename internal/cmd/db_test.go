@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"errors"
 	"strings"
 	"testing"
 
@@ -183,5 +184,80 @@ func TestGenerateAdminPassword(t *testing.T) {
 	}
 	if first == second {
 		t.Error("two generated passwords are identical")
+	}
+}
+
+func TestParseDBArgsRemoteSwitches(t *testing.T) {
+	// The value of --from must not survive as a positional: that would be
+	// read as the database name and reset the admin on the wrong DB.
+	f, pos := parseDBArgs([]string{"--from", "muutrade", "--force"})
+	if f.from != "muutrade" {
+		t.Errorf("from = %q, want %q", f.from, "muutrade")
+	}
+	if len(pos) != 0 {
+		t.Errorf("positional = %v, want none", pos)
+	}
+	f, pos = parseDBArgs([]string{"mydb", "--remote"})
+	if !f.remote {
+		t.Error("remote = false, want true")
+	}
+	if strings.Join(pos, ",") != "mydb" {
+		t.Errorf("positional = %v, want [mydb]", pos)
+	}
+}
+
+func TestResolveAdminCredential(t *testing.T) {
+	forced := dbFlags{force: true}
+
+	password, hash, err := resolveAdminCredential(DBOpts{}, forced, "mydb", "dev")
+	if err != nil {
+		t.Fatalf("resolveAdminCredential: %v", err)
+	}
+	if !strings.HasPrefix(hash, "$pbkdf2-sha512$") {
+		t.Errorf("hash = %q, want a pbkdf2_sha512 hash", hash)
+	}
+	if strings.Contains(hash, password) {
+		t.Error("the hash carries the plaintext password")
+	}
+
+	password, _, err = resolveAdminCredential(DBOpts{}, dbFlags{force: true, password: "s3cr3t"}, "mydb", "dev")
+	if err != nil {
+		t.Fatalf("resolveAdminCredential: %v", err)
+	}
+	if password != "s3cr3t" {
+		t.Errorf("password = %q, want the explicit one", password)
+	}
+
+	password, _, err = resolveAdminCredential(DBOpts{}, dbFlags{force: true, insecure: true}, "mydb", "dev")
+	if err != nil {
+		t.Fatalf("resolveAdminCredential: %v", err)
+	}
+	if password != insecureAdminPassword {
+		t.Errorf("password = %q, want %q", password, insecureAdminPassword)
+	}
+}
+
+// Without --force the guard must fire on prod and on a known credential,
+// and stay quiet otherwise. Tests run without a TTY, so a fired guard
+// surfaces as ErrNonInteractive — which is exactly the signal we want.
+func TestResolveAdminCredentialGuard(t *testing.T) {
+	cases := []struct {
+		name      string
+		flags     dbFlags
+		stage     string
+		wantGuard bool
+	}{
+		{"prod", dbFlags{}, "prod", true},
+		{"insecure-on-dev", dbFlags{insecure: true}, "dev", true},
+		{"generated-on-dev", dbFlags{}, "dev", false},
+		{"forced-prod", dbFlags{force: true}, "prod", false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			_, _, err := resolveAdminCredential(DBOpts{}, c.flags, "mydb", c.stage)
+			if got := errors.Is(err, ErrNonInteractive); got != c.wantGuard {
+				t.Errorf("guard fired = %v, want %v (err = %v)", got, c.wantGuard, err)
+			}
+		})
 	}
 }

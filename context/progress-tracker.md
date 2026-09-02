@@ -11,7 +11,11 @@ una credencial pública. Contraseña generada por corrida (20 chars de
 `crypto/rand`, impresa una vez) guardada como hash `pbkdf2_sha512` en formato
 passlib, login fijo en `admin`, y confirmación por **riesgo** (prod o
 credencial conocida) en vez de por stage. `--password` fija una explícita,
-`--insecure` conserva `admin`/`admin`. **Pendiente de verificación EN VIVO**:
+`--insecure` conserva `admin`/`admin`. Y deja de ser local-only:
+`--from <target>`/`--remote` corren la misma sentencia contra el Postgres
+remoto (hash calculado en local ⇒ la contraseña nunca sale de la máquina),
+con el guard leyendo el stage del **target**. **Pendiente de verificación EN
+VIVO**:
 no hay Docker instalado en esta máquina, así que falta confirmar el login real
 y que Odoo no re-hashee el valor escrito. Antes:
 Unit 115 (addons-path-discovery) entregada y **verificada en vivo** contra
@@ -98,8 +102,19 @@ _(siguiente: Unit 14 — meta-commands. Fix deploy-build-muting: el builder de `
   `--password` + `--insecure` juntas son `ErrUsage`. Tests: `passlib_test.go`
   (vector fijo, formato, salt distinto por corrida) y `db_test.go`
   (`parseDBArgs` con ambas formas de `--password`, `--insecure`, y
-  `generateAdminPassword`). build/vet/test verdes; **verificación EN VIVO
-  pendiente** (no hay Docker en esta máquina). Spec
+  `generateAdminPassword`). **Modo remoto**: `--from`/`--remote` reusan
+  `resolveRemoteShell` + `remotePsqlScalar` (los mismos que `checkpoint`) y
+  `remoteListDatabases` para el picker; el hash se arma en local, así que
+  por el SSH viaja el hash y no la contraseña. El guard lee
+  `rsc.target.stage` y **no** `opts.Cfg.Stage` — con el local, un
+  `db-admin --from prod` desde un checkout `dev` no preguntaría nada, que es
+  justo el caso del confirm; misma convención que `deploy`/`watch`/`shell`/
+  `db-pull`. `parseDBArgs` aprende a consumir el valor de `--from`/`-E`/
+  `--env` (patrón de `parseDBPullArgs`): sin eso el nombre del target se
+  colaba como posicional y se leía como nombre de base. La elección de
+  credencial + guard + hash salen a `resolveAdminCredential`, compartida por
+  ambos caminos. build/vet/test verdes; **verificación EN VIVO pendiente**
+  (no hay Docker en esta máquina). Spec
   `116-db-admin-generated-password.md`.
 
 - [x] Unit 115 — addons-path-discovery. Un repo cuyos módulos viven en una

@@ -75,12 +75,15 @@ type dbFlags struct {
 	withFilestore bool
 	neutralize    bool
 	insecure      bool
+	remote        bool
 	asName        string
 	password      string
+	from          string
 }
 
 func parseDBArgs(args []string) (dbFlags, []string) {
 	var f dbFlags
+	f.from, f.remote = remoteFlagsIn(args)
 	var positional []string
 	for i := 0; i < len(args); i++ {
 		a := args[i]
@@ -107,6 +110,8 @@ func parseDBArgs(args []string) (dbFlags, []string) {
 			}
 		case strings.HasPrefix(a, "--as="):
 			f.asName = strings.TrimPrefix(a, "--as=")
+		case a == "--from", a == "-E", a == "--env":
+			i++ // value consumed by remoteFlagsIn; skip it here
 		case strings.HasPrefix(a, "-"):
 			// unknown flag — ignore
 		default:
@@ -660,16 +665,22 @@ const (
 // leaving the database open behind you. --password sets an explicit one;
 // --insecure restores the old admin/admin for throwaway databases.
 // Target defaults to cfg.DBName; a positional arg overrides it; if
-// neither resolves, a picker is shown. Confirms (red) when the database
-// is prod (the reset locks out whoever knew the real password) or when
-// the resulting credential is a known one, unless --force is passed.
+// neither resolves, a picker is shown. --from/--remote run the same
+// statement against a remote target's Postgres instead (the hash is
+// computed here, so the password never leaves this machine). Confirms
+// (red) when the database is prod (the reset locks out whoever knew the
+// real password) or when the resulting credential is a known one, unless
+// --force is passed.
 func RunDBAdmin(ctx context.Context, opts DBOpts) error {
-	if err := requireDBContainer(opts.Cfg); err != nil {
-		return err
-	}
 	flags, positional := parseDBArgs(opts.Args)
 	if flags.insecure && flags.password != "" {
 		return fmt.Errorf("%w: --password and --insecure both set the admin password", ErrUsage)
+	}
+	if flags.from != "" || flags.remote {
+		return runDBAdminRemote(ctx, opts, flags, positional)
+	}
+	if err := requireDBContainer(opts.Cfg); err != nil {
+		return err
 	}
 
 	target := opts.Cfg.DBName
@@ -694,37 +705,7 @@ func RunDBAdmin(ctx context.Context, opts DBOpts) error {
 		return ErrNoTargetDB
 	}
 
-	password := flags.password
-	switch {
-	case flags.insecure:
-		password = insecureAdminPassword
-	case password == "":
-		generated, err := generateAdminPassword()
-		if err != nil {
-			return err
-		}
-		password = generated
-	}
-
-	// The guard tracks the risk, not the stage: a known credential is as
-	// bad on a reachable staging as on prod, and a reset on prod locks out
-	// whoever held the real password even when the new one is strong.
-	if !flags.force {
-		switch {
-		case strings.EqualFold(opts.Cfg.Stage, "prod"):
-			if err := confirmAdminReset(opts.Palette, target,
-				"Replaces the admin credentials on a production database, locking out whoever knows the current password."); err != nil {
-				return err
-			}
-		case flags.insecure:
-			if err := confirmAdminReset(opts.Palette, target,
-				"Sets the admin login and password to admin/admin — publicly known credentials. Dev databases only."); err != nil {
-				return err
-			}
-		}
-	}
-
-	hash, err := odoo.HashPassword(password)
+	password, hash, err := resolveAdminCredential(opts, flags, target, opts.Cfg.Stage)
 	if err != nil {
 		return err
 	}
@@ -735,17 +716,111 @@ func RunDBAdmin(ctx context.Context, opts DBOpts) error {
 	if !found {
 		return fmt.Errorf("no user with id %d in %q", adminUserID, target)
 	}
-	if opts.StreamOut != nil {
-		opts.StreamOut(fmt.Sprintf("→ %s  %s / %s (uid %d)", target, adminLogin, password, adminUserID))
-		if flags.insecure {
-			opts.StreamOut(lipgloss.NewStyle().Foreground(opts.Palette.Warning).
-				Render("  known credentials — dev databases only"))
-		} else if flags.password == "" {
-			opts.StreamOut(lipgloss.NewStyle().Foreground(opts.Palette.Dim).
-				Render("  shown once — Echo stores only the hash"))
+	reportAdminCredential(opts, flags, target, password)
+	return nil
+}
+
+// runDBAdminRemote is RunDBAdmin against a --from/--remote target: same
+// statement, same guard, executed through the remote Postgres container.
+// The stage read for the guard is the TARGET's, not the local project's —
+// a dev checkout resetting prod must still be asked.
+func runDBAdminRemote(ctx context.Context, opts DBOpts, flags dbFlags, positional []string) error {
+	rsc, err := resolveRemoteShell(ctx, opts.Cfg, opts.Palette, opts.Root, flags.from,
+		func(level, sub, msg, db string, fields ...[2]string) { opts.log(level, sub, msg, db, fields...) })
+	if err != nil {
+		return err
+	}
+
+	target := rsc.prof.DBName
+	if len(positional) > 0 {
+		target = positional[0]
+	}
+	if target == "" {
+		names, err := remoteListDatabases(ctx, rsc)
+		if err != nil {
+			return err
+		}
+		if len(names) == 0 {
+			return errors.New("no databases available")
+		}
+		picked, err := runSingleFuzzyPicker("Pick a database to reset admin on", names, opts.Palette)
+		if err != nil {
+			return err
+		}
+		target = picked
+	}
+	if target == "" {
+		return ErrNoTargetDB
+	}
+
+	password, hash, err := resolveAdminCredential(opts, flags, target, rsc.target.stage)
+	if err != nil {
+		return err
+	}
+	stmt := fmt.Sprintf("UPDATE res_users SET login = '%s', password = '%s' WHERE id = %d RETURNING id;",
+		sqlLit(adminLogin), sqlLit(hash), adminUserID)
+	out, err := remotePsqlScalar(ctx, rsc, target, stmt)
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(out) == "" {
+		return fmt.Errorf("no user with id %d in %q", adminUserID, target)
+	}
+	reportAdminCredential(opts, flags, target, password)
+	return nil
+}
+
+// resolveAdminCredential picks the password to install and returns it with
+// its hash, after confirming when the operation is risky. The guard tracks
+// the risk, not the stage alone: a known credential is as bad on a
+// reachable staging as on prod, and a reset on prod locks out whoever held
+// the real password even when the new one is strong.
+func resolveAdminCredential(opts DBOpts, flags dbFlags, target, stage string) (password, hash string, err error) {
+	password = flags.password
+	switch {
+	case flags.insecure:
+		password = insecureAdminPassword
+	case password == "":
+		if password, err = generateAdminPassword(); err != nil {
+			return "", "", err
 		}
 	}
-	return nil
+
+	if !flags.force {
+		switch {
+		case strings.EqualFold(stage, "prod"):
+			if err := confirmAdminReset(opts.Palette, target,
+				"Replaces the admin credentials on a production database, locking out whoever knows the current password."); err != nil {
+				return "", "", err
+			}
+		case flags.insecure:
+			if err := confirmAdminReset(opts.Palette, target,
+				"Sets the admin login and password to admin/admin — publicly known credentials. Dev databases only."); err != nil {
+				return "", "", err
+			}
+		}
+	}
+
+	hash, err = odoo.HashPassword(password)
+	if err != nil {
+		return "", "", err
+	}
+	return password, hash, nil
+}
+
+func reportAdminCredential(opts DBOpts, flags dbFlags, target, password string) {
+	if opts.StreamOut == nil {
+		return
+	}
+	opts.StreamOut(fmt.Sprintf("→ %s  %s / %s (uid %d)", target, adminLogin, password, adminUserID))
+	switch {
+	case flags.insecure:
+		opts.StreamOut(lipgloss.NewStyle().Foreground(opts.Palette.Warning).
+			Render("  known credentials — dev databases only"))
+	case flags.password == "":
+		opts.StreamOut(lipgloss.NewStyle().Foreground(opts.Palette.Dim).
+			Render("  shown once — Echo stores only the hash"))
+	}
 }
 
 // generateAdminPassword draws from adminPasswordAlphabet with rejection

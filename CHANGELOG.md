@@ -31,6 +31,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ambas.
 
 ### Added
+- **`db-admin --from <target>` / `--remote`.** El comando dejó de ser
+  local-only: corre la misma sentencia contra el Postgres del target
+  remoto reusando `resolveRemoteShell` y `remotePsqlScalar` (los que ya
+  usa `checkpoint`), con la DB resuelta por arg posicional →
+  `db_name` del perfil remoto → picker. **El hash se calcula en local**,
+  así que por el SSH viaja el hash y nunca la contraseña. El guard lee el
+  stage del **target**, no el del proyecto local: sin eso un
+  `db-admin --from prod` desde un checkout `dev` no preguntaría nada, que
+  es exactamente el caso para el que existe el confirm.
 - **`db-admin --password <pw>`** fija una contraseña explícita en vez de la
   generada; también se guarda hasheada.
 - **`db-admin --insecure`** conserva el `admin`/`admin` de siempre para bases
