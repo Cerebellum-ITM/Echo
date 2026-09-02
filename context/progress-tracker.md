@@ -113,7 +113,10 @@ _(siguiente: Unit 14 — meta-commands. Fix deploy-build-muting: el builder de `
   `--env` (patrón de `parseDBPullArgs`): sin eso el nombre del target se
   colaba como posicional y se leía como nombre de base. La elección de
   credencial + guard + hash salen a `resolveAdminCredential`, compartida por
-  ambos caminos. build/vet/test verdes; **verificación EN VIVO pendiente**
+  ambos caminos. `db-admin` entra al grupo remote-mode de
+  `projectlessOneShot` (`main.go`): con `--from`/`--remote` no hay stack
+  local, y exigir `docker-compose.yml` en el cwd bloqueaba la operación en
+  un directorio linkeado sin compose. build/vet/test verdes; **verificación EN VIVO pendiente**
   (no hay Docker en esta máquina). Spec
   `116-db-admin-generated-password.md`.
 

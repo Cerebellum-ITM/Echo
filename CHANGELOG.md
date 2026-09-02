@@ -30,6 +30,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   pública (`--insecure`), en cualquier stage. `--force` sigue saltándose
   ambas.
 
+### Fixed
+- **`db-admin --remote` fallaba con "not inside a project".** El modo remoto
+  se agregó sin sumar el comando a `projectlessOneShot`, así que Echo seguía
+  exigiendo un `docker-compose.yml` en el cwd para una operación que solo
+  habla por SSH — el mismo hueco que en su día tuvo `logview --remote`.
+  Ahora entra al grupo remote-mode: projectless con `--from`/`--remote`, y
+  local exige el proyecto como siempre.
+
 ### Added
 - **`db-admin --from <target>` / `--remote`.** El comando dejó de ser
   local-only: corre la misma sentencia contra el Postgres del target

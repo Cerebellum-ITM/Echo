@@ -208,7 +208,7 @@ func isDir(path string) bool {
 // the local repo's ./backups/ (download-only by default) — a local Docker
 // stack is only needed with `--restore`, and that step self-guards via
 // requireDBContainer; the remote-mode group
-// (`shell`/`shell-run`/`update`/`sequence`/…) qualifies only with
+// (`shell`/`shell-run`/`update`/`sequence`/`db-admin`/…) qualifies only with
 // `--from`/`--remote` — locally they need the compose project as always.
 // repoRoot returns the git top level for cwd, falling back to cwd itself
 // outside a repository. Per-project state (the `link` binding, addons
@@ -237,7 +237,7 @@ func projectlessOneShot(name string, args []string) bool {
 	switch name {
 	case "help", "lint", "i18n-pull", "link", "deploy", "push", "watch", "checkpoint", "actions", "promote", "logview", "report", "db-pull", "modules":
 		return true
-	case "shell", "shell-run", "up", "down", "stop", "restart", "logs", "sequence", "update", "test", "view", "compare":
+	case "shell", "shell-run", "up", "down", "stop", "restart", "logs", "sequence", "update", "test", "view", "compare", "db-admin":
 		return hasRemoteFlag(args)
 	}
 	return false

@@ -25,6 +25,9 @@ func TestProjectlessOneShot(t *testing.T) {
 		{"update local needs a project", "update", []string{"sale"}, false},
 		{"test --remote", "test", []string{"--remote"}, true},
 		{"test local needs a project", "test", []string{"sale"}, false},
+		{"db-admin --remote", "db-admin", []string{"--remote"}, true},
+		{"db-admin --from target", "db-admin", []string{"--from", "prod"}, true},
+		{"db-admin local needs a project", "db-admin", nil, false},
 		// logview/report read the local history store keyed by cwd — always
 		// projectless (remote flag switches the source, not the requirement).
 		{"logview --remote", "logview", []string{"--remote"}, true},

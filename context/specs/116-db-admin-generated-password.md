@@ -144,6 +144,11 @@ convención que ya siguen `deploy`, `watch`, `shell` y `db-pull`.
 de `parseDBPullArgs`): sin eso el nombre del target se cuela como
 posicional y se lee como nombre de base.
 
+`db-admin` entra al grupo remote-mode de `projectlessOneShot` (`main.go`):
+con `--from`/`--remote` no hay stack local que manejar, así que exigir un
+`docker-compose.yml` en el cwd bloquearía la operación justo donde vive
+(un directorio linkeado, sin compose).
+
 ### `internal/cmd/db.go`
 
 - Las constantes `adminPassword` se van; queda `adminUserID` y
