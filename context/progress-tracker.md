@@ -6,6 +6,10 @@
 
 ## Current Goal
 
+Unit 117 (db-admin-1password) entregada y **verificada en vivo**: `db-admin
+--save` crea el ítem Login en 1Password con la URL sacada de `web.base.url`.
+El camino de update (segunda corrida sobre el mismo proyecto) sigue sin
+probarse en vivo. Antes:
 Unit 116 (db-admin-generated-password) entregada: `db-admin` deja de instalar
 una credencial pública. Contraseña generada por corrida (20 chars de
 `crypto/rand`, impresa una vez) guardada como hash `pbkdf2_sha512` en formato
@@ -105,8 +109,16 @@ _(siguiente: Unit 14 — meta-commands. Fix deploy-build-muting: el builder de `
   `--vault` sin `--save` es `ErrUsage`. Tests `onepassword_test.go`
   (preservación de campos ajenos, alta del campo `password` faltante, URL
   primaria, cuerpo sin `urls`, `isLocalBaseURL`) y `db_test.go`. build/vet/test
-  verdes; **verificación EN VIVO pendiente** (necesita una instancia y escribe
-  en la bóveda real). Spec `117-db-admin-1password.md`.
+  verdes. **Verificada EN VIVO** por el usuario: el ítem se creó correctamente.
+  Antes de eso hubo que arreglar la sonda del pre-flight: usaba `op whoami`, que
+  bajo la integración con la app de escritorio contesta `account is not signed
+  in` porque no hay token de sesión clásico, aunque todo comando real funcione —
+  rechazaba una instalación sana. Comprobado con un binario Go local llamando a
+  ambos (`whoami` exit 1, `vault list` exit 0 sin prompt); la sonda pasó a `op
+  vault list`. Queda sin probar en vivo el camino de **update** (segunda corrida:
+  actualizar en vez de duplicar, historial del ítem, preservar una nota a mano) y
+  el ítem sin URL con `web.base.url` vacía o local. Spec
+  `117-db-admin-1password.md`.
 
 - [x] Unit 116 — db-admin-generated-password. `db-admin` recuperaba el acceso al
   back office dejando la base abierta: escribía `admin`/`admin` —credencial

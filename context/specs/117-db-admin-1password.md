@@ -185,8 +185,8 @@ dos líneas nuevas.
 
 ## Verify when done
 
-- [ ] `db-admin --save` crea el ítem con título, usuario, contraseña y
-      URL correctos, y 1Password lo ofrece al abrir el back office.
+- [x] `db-admin --save` crea el ítem con título, usuario, contraseña y
+      URL correctos (verificado en vivo).
 - [ ] Correrlo dos veces actualiza el mismo ítem, y la contraseña previa
       queda en el historial del ítem.
 - [ ] Un ítem con una nota agregada a mano conserva la nota tras el
@@ -196,7 +196,13 @@ dos líneas nuevas.
 - [ ] Un fallo de guardado después del reset imprime la contraseña y un
       WARNING, y sale 0.
 - [ ] `web.base.url` vacía o `localhost` ⇒ ítem sin URL, con aviso.
-- [ ] `--vault` sin `--save` es `ErrUsage`.
+- [x] `--vault` sin `--save` es `ErrUsage` (test).
 - [ ] La contraseña no aparece en `ps` durante la corrida.
-- [ ] `go build ./... && go vet ./... && go test ./...` verdes.
-- [ ] `CHANGELOG.md` bajo `[Unreleased] → Added`.
+- [x] `go build ./... && go vet ./... && go test ./...` verdes.
+- [x] `CHANGELOG.md` bajo `[Unreleased] → Added`.
+
+Lo que queda sin comprobar en vivo, todo del lado del update y de los
+caminos degradados: la segunda corrida sobre el mismo proyecto
+(actualizar en vez de duplicar, y el historial de contraseñas del ítem),
+la preservación de una nota puesta a mano, y el ítem sin URL cuando
+`web.base.url` viene vacía o en `localhost`.
