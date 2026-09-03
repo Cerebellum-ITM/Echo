@@ -15,16 +15,22 @@ import (
 // into a duplicate item.
 var errOPItemMissing = errors.New("item not found in the vault")
 
-// opAvailable reports whether the 1Password CLI is installed and holds an
-// unlocked session. Callers run it BEFORE changing anything: a locked
-// vault discovered after the reset would leave a fresh password installed
-// and nowhere to store it.
+// opAvailable reports whether the 1Password CLI is installed and can
+// actually reach the vaults. Callers run it BEFORE changing anything: a
+// locked vault discovered after the reset would leave a fresh password
+// installed and nowhere to store it.
+//
+// The probe is `vault list`, not `whoami`: under the desktop app
+// integration — the usual setup — there is no classic session token, so
+// whoami answers "account is not signed in" while every real command
+// works. Probing with a command that reads the vaults asks the question
+// that matters, which is whether the next call will go through.
 func opAvailable(ctx context.Context) error {
 	if _, err := exec.LookPath("op"); err != nil {
 		return errors.New("the 1Password CLI (op) is not installed — see https://developer.1password.com/docs/cli/get-started/")
 	}
-	if _, err := opRun(ctx, nil, "whoami"); err != nil {
-		return fmt.Errorf("no 1Password session — run `op signin` first: %w", err)
+	if _, err := opRun(ctx, nil, "vault", "list", "--format", "json"); err != nil {
+		return fmt.Errorf("1Password is not reachable — unlock the app with CLI integration enabled, or run `op signin`: %w", err)
 	}
 	return nil
 }

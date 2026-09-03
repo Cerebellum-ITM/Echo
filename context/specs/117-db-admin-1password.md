@@ -55,8 +55,8 @@ a pasar.
 
 ### El pre-flight es lo que hace la unidad usable
 
-Las verificaciones de `op` (binario en el PATH, sesión abierta) corren
-**antes** del `UPDATE`, no después. El orden importa: si se comprobara al
+Las verificaciones de `op` (binario en el PATH, bóvedas alcanzables)
+corren **antes** del `UPDATE`, no después. El orden importa: si se comprobara al
 final, un `op` sin firmar dejaría la base ya reseteada y el comando
 fallando — la credencial nueva instalada y sin guardar en ningún lado,
 que es el peor estado posible. Es el mismo criterio del lint pre-flight
@@ -66,6 +66,14 @@ Después del reset ya no se aborta: si el guardado falla (red, bóveda,
 permisos), la contraseña **se imprime igual** y el error se reporta como
 WARNING. Perder el ítem es recuperable copiando de pantalla; perder la
 contraseña no.
+
+La sonda es **`op vault list`**, no `op whoami`. Bajo la integración con
+la app de escritorio —el setup normal— no existe un token de sesión
+clásico, así que `whoami` contesta `account is not signed in` mientras
+todo comando real funciona. Verificado con un binario Go local llamando a
+ambos: `whoami` exit 1, `vault list` exit 0 sin siquiera pedir
+autorización. Preguntar con un comando que lee las bóvedas es preguntar
+lo que importa: si la llamada siguiente va a pasar.
 
 ### La URL
 

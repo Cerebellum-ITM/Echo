@@ -39,7 +39,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   local exige el proyecto como siempre.
 
 ### Added
-- **`db-admin --save` guarda la credencial en 1Password.** La Unit 116 sacó
+- **`db-admin --save` guarda la credencial en 1Password.** La sonda del
+  pre-flight es `op vault list`, **no** `op whoami`: bajo la integración
+  con la app de escritorio no hay token de sesión clásico, así que
+  `whoami` contesta `account is not signed in` mientras todo comando real
+  funciona — preguntar con un comando que lee las bóvedas es preguntar lo
+  que de verdad importa. La Unit 116 sacó
   la contraseña de la base, pero la dejó en un solo lugar: el scrollback.
   Ahora `--save` crea un ítem Login con título `Odoo <proyecto> (<db>)`,
   usuario `admin`, la contraseña generada, y la URL real de la instancia
