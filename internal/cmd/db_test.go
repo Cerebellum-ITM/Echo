@@ -1,9 +1,12 @@
 package cmd
 
 import (
+	"context"
+	"errors"
 	"strings"
 	"testing"
 
+	"github.com/pascualchavez/echo/internal/config"
 	"github.com/pascualchavez/echo/internal/odoo"
 )
 
@@ -133,5 +136,158 @@ func TestIsHexPrefix(t *testing.T) {
 		if isHexPrefix(s) {
 			t.Errorf("isHexPrefix(%q) = true, want false", s)
 		}
+	}
+}
+
+func TestParseDBArgsAdminFlags(t *testing.T) {
+	cases := []struct {
+		name         string
+		args         []string
+		wantPassword string
+		wantInsecure bool
+		wantPos      []string
+	}{
+		{"separate-value", []string{"--password", "s3cr3t"}, "s3cr3t", false, nil},
+		{"equals-value", []string{"--password=s3cr3t"}, "s3cr3t", false, nil},
+		{"value-with-spaces", []string{"--password", "foo bar"}, "foo bar", false, nil},
+		{"insecure", []string{"mydb", "--insecure"}, "", true, []string{"mydb"}},
+		{"conflict", []string{"--password", "x", "--insecure"}, "x", true, nil},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			f, pos := parseDBArgs(c.args)
+			if f.password != c.wantPassword {
+				t.Errorf("password = %q, want %q", f.password, c.wantPassword)
+			}
+			if f.insecure != c.wantInsecure {
+				t.Errorf("insecure = %v, want %v", f.insecure, c.wantInsecure)
+			}
+			if strings.Join(pos, ",") != strings.Join(c.wantPos, ",") {
+				t.Errorf("positional = %v, want %v", pos, c.wantPos)
+			}
+		})
+	}
+}
+
+func TestGenerateAdminPassword(t *testing.T) {
+	first, err := generateAdminPassword()
+	if err != nil {
+		t.Fatalf("generateAdminPassword: %v", err)
+	}
+	if len(first) != adminPasswordLen {
+		t.Errorf("length = %d, want %d", len(first), adminPasswordLen)
+	}
+	if strings.ContainsAny(first, "il1O0") {
+		t.Errorf("password %q contains ambiguous glyphs", first)
+	}
+	second, err := generateAdminPassword()
+	if err != nil {
+		t.Fatalf("generateAdminPassword: %v", err)
+	}
+	if first == second {
+		t.Error("two generated passwords are identical")
+	}
+}
+
+func TestParseDBArgsRemoteSwitches(t *testing.T) {
+	// The value of --from must not survive as a positional: that would be
+	// read as the database name and reset the admin on the wrong DB.
+	f, pos := parseDBArgs([]string{"--from", "muutrade", "--force"})
+	if f.from != "muutrade" {
+		t.Errorf("from = %q, want %q", f.from, "muutrade")
+	}
+	if len(pos) != 0 {
+		t.Errorf("positional = %v, want none", pos)
+	}
+	f, pos = parseDBArgs([]string{"mydb", "--remote"})
+	if !f.remote {
+		t.Error("remote = false, want true")
+	}
+	if strings.Join(pos, ",") != "mydb" {
+		t.Errorf("positional = %v, want [mydb]", pos)
+	}
+}
+
+func TestResolveAdminCredential(t *testing.T) {
+	forced := dbFlags{force: true}
+
+	password, hash, err := resolveAdminCredential(DBOpts{}, forced, "mydb", "dev")
+	if err != nil {
+		t.Fatalf("resolveAdminCredential: %v", err)
+	}
+	if !strings.HasPrefix(hash, "$pbkdf2-sha512$") {
+		t.Errorf("hash = %q, want a pbkdf2_sha512 hash", hash)
+	}
+	if strings.Contains(hash, password) {
+		t.Error("the hash carries the plaintext password")
+	}
+
+	password, _, err = resolveAdminCredential(DBOpts{}, dbFlags{force: true, password: "s3cr3t"}, "mydb", "dev")
+	if err != nil {
+		t.Fatalf("resolveAdminCredential: %v", err)
+	}
+	if password != "s3cr3t" {
+		t.Errorf("password = %q, want the explicit one", password)
+	}
+
+	password, _, err = resolveAdminCredential(DBOpts{}, dbFlags{force: true, insecure: true}, "mydb", "dev")
+	if err != nil {
+		t.Fatalf("resolveAdminCredential: %v", err)
+	}
+	if password != insecureAdminPassword {
+		t.Errorf("password = %q, want %q", password, insecureAdminPassword)
+	}
+}
+
+// Without --force the guard must fire on prod and on a known credential,
+// and stay quiet otherwise. Tests run without a TTY, so a fired guard
+// surfaces as ErrNonInteractive — which is exactly the signal we want.
+func TestResolveAdminCredentialGuard(t *testing.T) {
+	cases := []struct {
+		name      string
+		flags     dbFlags
+		stage     string
+		wantGuard bool
+	}{
+		{"prod", dbFlags{}, "prod", true},
+		{"insecure-on-dev", dbFlags{insecure: true}, "dev", true},
+		{"generated-on-dev", dbFlags{}, "dev", false},
+		{"forced-prod", dbFlags{force: true}, "prod", false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			_, _, err := resolveAdminCredential(DBOpts{}, c.flags, "mydb", c.stage)
+			if got := errors.Is(err, ErrNonInteractive); got != c.wantGuard {
+				t.Errorf("guard fired = %v, want %v (err = %v)", got, c.wantGuard, err)
+			}
+		})
+	}
+}
+
+func TestParseDBArgsSaveFlags(t *testing.T) {
+	f, pos := parseDBArgs([]string{"--save", "--vault", "Private"})
+	if !f.save {
+		t.Error("save = false, want true")
+	}
+	if f.vault != "Private" {
+		t.Errorf("vault = %q, want Private", f.vault)
+	}
+	if len(pos) != 0 {
+		t.Errorf("positional = %v, want none", pos)
+	}
+	if f, _ = parseDBArgs([]string{"--vault=Shared"}); f.vault != "Shared" {
+		t.Errorf("vault = %q, want Shared", f.vault)
+	}
+}
+
+// --vault names the destination of a save nobody asked for, and it must
+// fail before the reset rather than after it.
+func TestRunDBAdminRejectsVaultWithoutSave(t *testing.T) {
+	err := RunDBAdmin(context.Background(), DBOpts{
+		Cfg:  &config.Config{DBContainer: "db", DBName: "mydb"},
+		Args: []string{"--vault", "Private", "--force"},
+	})
+	if !errors.Is(err, ErrUsage) {
+		t.Errorf("err = %v, want ErrUsage", err)
 	}
 }

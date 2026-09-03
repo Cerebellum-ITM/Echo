@@ -6,6 +6,60 @@
 
 ## Current Goal
 
+Unit 117 (db-admin-1password) entregada y **verificada en vivo**: `db-admin
+--save` crea el ítem Login en 1Password con la URL sacada de `web.base.url`.
+El camino de update (segunda corrida sobre el mismo proyecto) sigue sin
+probarse en vivo. Antes:
+Unit 116 (db-admin-generated-password) entregada: `db-admin` deja de instalar
+una credencial pública. Contraseña generada por corrida (20 chars de
+`crypto/rand`, impresa una vez) guardada como hash `pbkdf2_sha512` en formato
+passlib, login fijo en `admin`, y confirmación por **riesgo** (prod o
+credencial conocida) en vez de por stage. `--password` fija una explícita,
+`--insecure` conserva `admin`/`admin`. Y deja de ser local-only:
+`--from <target>`/`--remote` corren la misma sentencia contra el Postgres
+remoto (hash calculado en local ⇒ la contraseña nunca sale de la máquina),
+con el guard leyendo el stage del **target**. **Verificada EN VIVO** por el
+usuario (`db-admin --remote` desde `morwi/fuentebuena`, un directorio
+linkeado sin compose): el hash passlib que escribe Echo entra al back
+office. Antes:
+Unit 115 (addons-path-discovery) entregada y **verificada en vivo** contra
+`morwi/Acumedic` (modules en `oehealth_modules_19/`, target `acumedic`): desde
+la raíz del repo `push` y `deploy --modules` resuelven el módulo y apuntan a
+`addons/oehealth_consultation_extra` con 5 archivos; el argumento con ruta
+normaliza al nombre real en vez de sincronizar al destino sombreado (18
+archivos); y desde la subcarpeta `link --list` marca el binding de la raíz.
+Antes:
+Unit 113 (deploy-branch-provenance) entregada: `deploy --set-git-branch <name>`
+(config-only; `--rename` mueve además la rama que ya está en el server con
+`git branch -m`, sin tocar working tree ni overlay) y procedencia estampada en
+el git config del checkout remoto (`echo.deployed-ref`/`-sha`/`-at`, reportada
+por `link --show`, borrada por `--restore-code`). Se descartó que `--set-code`
+creara la rama con el nombre del ref en el server (divergiría de `origin` en
+cada deploy). **Pendiente de verificación EN VIVO** igual que la 112: la mitad
+remota solo está probada contra los seams de SSH. Antes:
+Unit 112 (deploy-line-rebase) entregada: re-basar la línea de despliegue —
+`deploy --set-code <ref>` mueve un target git-deploy a cualquier ref (sin gate
+de fast-forward, limpiando el overlay con scope de módulo, re-baselineando el
+historial de SHAs) y `promote --set-base` / `--reset` re-basa la rama de
+acumulación local con `reset --keep` (se niega en vez de destruir; `--discard`
+explícito). Cierra el hueco de la Unit 102: `gitAdvance` decía "restore or reset
+it first" y ese reset no existía. `deploy --set-code --with-local` es el gesto
+único (local primero). Skill `odoo-probe` actualizado (SKILL.md + recipes: dos
+clases de permiso, formas headless, cómo leer los resultados), lo que además
+aterrizó §A/§B/§D del `SPEC-promote-redesign.md` pendiente en ese repo.
+**Pendiente de verificación EN VIVO**: la mitad remota solo está probada contra
+los seams de SSH (`gitRunSSH`/`gitPushCommand`), no contra un server git-deploy
+real; el reset local sí se probó end-to-end en repos temporales. Antes:
+Unit 108 (reverb-real-host) entregada: modo Reverb usable contra un host real
+— `[reverb] ssh_host` (alias local, un mecanismo de SSH para los dos modos),
+espera de `not_ready` siguiendo el job, shadow del overlay desde el servidor, y
+des-diferidos `checkpoint`→snapshots y los verbos de ciclo de vida por API.
+Falta correr el acceptance check REAL (36/36) contra un Reverb vivo. Antes:
+Unit 107 (reverb-mode-foundation) entregada: `-E <project>/<env>` apunta Echo a
+un entorno de Reverb resolviéndolo por HTTP, sin config por entorno; toda la
+superficie de diagnóstico sale gratis y `push` aterriza en el overlay. Quedan
+como siguientes unidades del doc de Reverb: 108 deploy delegado + jobs, 109
+checkpoint→snapshots, 110 docker vía API, 111 `modpath`. Antes:
 Unit 98 (db-pull-projectless-download) entregada: `db-pull` ahora es projectless
 y **descarga por defecto** (dump remoto → `./backups/`, sin stack local); el
 restore-a-local es opt-in con `--restore`. Antes: Unit 97 (promote-worktree-funnel):
@@ -28,6 +82,231 @@ _(siguiente: Unit 14 — meta-commands. Fix deploy-build-muting: el builder de `
 
 
 ## Completed
+
+- [x] Unit 117 — db-admin-1password. La Unit 116 sacó la contraseña de la
+  base y la dejó en el scrollback: se imprime una vez, y si la ventana se
+  cierra el único camino de vuelta es otro reset. `--save` (opt-in; escribir
+  en una bóveda es un efecto persistente que no debe dispararse solo por
+  tener `op` instalado) crea un ítem Login `Odoo <proyecto> (<db>)` con
+  usuario `admin`, la contraseña, y la URL de la instancia leída de
+  `web.base.url` en `ir_config_parameter` —misma fuente que `connect_mint.py`—
+  porque un ítem sin URL no autocompleta. Si el ítem existe lo **actualiza**
+  (1Password guarda historial; crear siempre daría tres ítems homónimos a los
+  tres resets) parchando el JSON completo del ítem, así que secciones, notas y
+  campos custom hechos a mano sobreviven. Nuevo `internal/cmd/onepassword.go`
+  (`opAvailable`/`opSaveLogin`/`patchOPItem`/`opRun`): la contraseña va **por
+  stdin**, nunca en `argv` —lo advierte el propio `op item create --help`—, y
+  la URL por el flag `--url`, que no es secreto y existe igual en `create` y
+  en `edit`; en un update sin URL usable se re-declara la que el ítem ya
+  traía. Detalle del CLI verificado con `--dry-run`: `op` solo reconoce la
+  plantilla `-` si stdin es un **pipe** (con archivo redirigido pide
+  `--category`), cosa que `os/exec` cumple por construcción. El pre-flight de
+  `op` corre **antes** del `UPDATE` (criterio del lint pre-flight de la Unit
+  110): una bóveda bloqueada detectada al final dejaría la base reseteada y la
+  credencial sin guardar. Tras el reset ya no se aborta: fallo al guardar =
+  WARNING y la contraseña impresa igual. `docker.ConfigParameter` nuevo para
+  la lectura local; la remota va por `remotePsqlScalar`. Local y remoto.
+  `--vault` sin `--save` es `ErrUsage`. Tests `onepassword_test.go`
+  (preservación de campos ajenos, alta del campo `password` faltante, URL
+  primaria, cuerpo sin `urls`, `isLocalBaseURL`) y `db_test.go`. build/vet/test
+  verdes. **Verificada EN VIVO** por el usuario: el ítem se creó correctamente.
+  Antes de eso hubo que arreglar la sonda del pre-flight: usaba `op whoami`, que
+  bajo la integración con la app de escritorio contesta `account is not signed
+  in` porque no hay token de sesión clásico, aunque todo comando real funcione —
+  rechazaba una instalación sana. Comprobado con un binario Go local llamando a
+  ambos (`whoami` exit 1, `vault list` exit 0 sin prompt); la sonda pasó a `op
+  vault list`. Queda sin probar en vivo el camino de **update** (segunda corrida:
+  actualizar en vez de duplicar, historial del ítem, preservar una nota a mano) y
+  el ítem sin URL con `web.base.url` vacía o local. Spec
+  `117-db-admin-1password.md`.
+
+- [x] Unit 116 — db-admin-generated-password. `db-admin` recuperaba el acceso al
+  back office dejando la base abierta: escribía `admin`/`admin` —credencial
+  documentada— en **texto plano**, apoyada en el esquema `plaintext` deprecado
+  del crypt context, así que el secreto era legible con `psql` (y viajaba en
+  cada `db-backup`/`db-pull`) hasta el siguiente login exitoso. Ahora la
+  contraseña se genera por corrida (`generateAdminPassword`, 20 chars de
+  `crypto/rand` con rechazo de módulo, alfabeto sin `il1O0` porque se copia a
+  mano) y se escribe hasheada: nuevo `internal/odoo/passlib.go` con
+  `HashPassword` → `$pbkdf2-sha512$25000$<salt>$<checksum>` en la *adapted
+  base64* de passlib (sin padding, `+`→`.`), que el crypt context de Odoo
+  verifica nativo. `crypto/pbkdf2` es stdlib desde Go 1.24 ⇒ **cero
+  dependencias nuevas**; el hash se validó contra un vector calculado con
+  `hashlib.pbkdf2_hmac` de Python. El **login se queda en `admin`**: no es el
+  secreto y generarlo solo agregaría una segunda cosa que copiar. El guard pasa
+  de medir el stage a medir el riesgo — confirma en `prod` (el reset le quita el
+  acceso a quien tenía la contraseña real) y siempre que la credencial sea
+  conocida (`--insecure`), en cualquier stage; `confirmAdminReset` recibe el
+  motivo para decir cuál de los dos está avisando. `ResetUserCredentials` no
+  cambia de firma (recibe el hash ya formado) pero sí de contrato, y su doc
+  deja de prometer texto plano. Flags nuevas en `commandFlags`, help y README;
+  `--password` + `--insecure` juntas son `ErrUsage`. Tests: `passlib_test.go`
+  (vector fijo, formato, salt distinto por corrida) y `db_test.go`
+  (`parseDBArgs` con ambas formas de `--password`, `--insecure`, y
+  `generateAdminPassword`). **Modo remoto**: `--from`/`--remote` reusan
+  `resolveRemoteShell` + `remotePsqlScalar` (los mismos que `checkpoint`) y
+  `remoteListDatabases` para el picker; el hash se arma en local, así que
+  por el SSH viaja el hash y no la contraseña. El guard lee
+  `rsc.target.stage` y **no** `opts.Cfg.Stage` — con el local, un
+  `db-admin --from prod` desde un checkout `dev` no preguntaría nada, que es
+  justo el caso del confirm; misma convención que `deploy`/`watch`/`shell`/
+  `db-pull`. `parseDBArgs` aprende a consumir el valor de `--from`/`-E`/
+  `--env` (patrón de `parseDBPullArgs`): sin eso el nombre del target se
+  colaba como posicional y se leía como nombre de base. La elección de
+  credencial + guard + hash salen a `resolveAdminCredential`, compartida por
+  ambos caminos. `db-admin` entra al grupo remote-mode de
+  `projectlessOneShot` (`main.go`): con `--from`/`--remote` no hay stack
+  local, y exigir `docker-compose.yml` en el cwd bloqueaba la operación en
+  un directorio linkeado sin compose — hueco que el usuario encontró al
+  primer uso real, el mismo que tuvo `logview --remote` en su día.
+  build/vet/test verdes. **Verificada EN VIVO**: `db-admin --remote` contra
+  `morwi/fuentebuena` resetea y el login entra con la contraseña impresa, o
+  sea que el formato passlib que arma `HashPassword` es el que el crypt
+  context de Odoo acepta. Spec `116-db-admin-generated-password.md`.
+
+- [x] Unit 115 — addons-path-discovery. Un repo cuyos módulos viven en una
+  subcarpeta funciona desde la raíz sin configurar nada. El defecto de fondo
+  eran **cuatro** búsquedas de un nivel que discrepaban: `resolveModuleDir`
+  (config-aware, `push`/`i18n`), `isAddonDir` (config-**ciega**, `deploy` — por
+  eso `deploy --modules` fallaba incluso donde `push` funcionaba),
+  `hostAddonsRoots`/`moduleDir` (`lint`) y `listAvailableModules` (picker).
+  Nuevo `internal/cmd/addons.go` las unifica: `addonsRoots` (config + default,
+  con la regla de conf-mode que traía `lint`), `discoverAddonsRoots` (walk
+  acotado a profundidad 3, `skipDirs` + ocultos, sin descender a un addon),
+  `resolveAddon` (devuelve dir **y** nombre) y `listAddons`. El walk corre
+  **solo como fallback**, así que un proyecto configurado no cambia de
+  comportamiento ni lo paga; nombre duplicado bajo dos raíces ⇒ `ErrUsage`
+  nombrando ambas. **Caso C** (fallo silencioso) muerto: un argumento con
+  separador se resuelve a su basename o es `ErrUsage`, y el nombre que llega al
+  log y al destino remoto no lleva separador nunca. **Quinto sitio roto que el
+  reporte no mencionaba**: `modulesFromPaths`/`dirtyModulesFromPaths` mapeaban
+  ruta de git → módulo por el primer segmento, así que `--dirty`/`--auto` veían
+  vacío en layout anidado; ahora `addonFromPath` busca el primer ancestro que es
+  addon, `dirtyModule` gana `dir` y `pathsTouchI18n` se ancla a él en vez de al
+  nombre. `modules --addons-path <a,b,c>` escribe la llave sin el formulario y
+  `modules` entra a `projectlessOneShot`. `project.FindRoot` cae al top-level de
+  git antes que al `cwd` (`GitRoot` + `SameDir` para no confundir `/tmp` con
+  `/private/tmp`), con `config.MigrateProjectKey`/`FindProjectState` moviendo
+  las seis ubicaciones una sola vez y solo hacia un destino vacío — idempotente
+  y acotada a la cadena `cwd → root`. Tests nuevos en `addons_test.go` y
+  `migrate_test.go`; build/vet/test verdes.
+
+- [x] Unit 108 — reverb-real-host. Cierra los defectos que solo aparecieron al
+  correr el acceptance check REAL de Reverb (`scripts/echo-contract-check.sh`)
+  contra el host de dev — la Unit 107 solo se había verificado contra un
+  simulador, que por construcción responde en el puerto que le marques y
+  autoriza lo que le pidas. **(1) Identidad SSH:** nuevo `[reverb] ssh_host`
+  (alias local) que **gana** sobre el `ssh_host` del payload. Decisión de
+  diseño que se aparta del brief del lado Reverb (pedía plomería de
+  `ssh -p <ssh_port>`) y hay que reportarla: Echo NUNCA ha tenido campo de
+  puerto —pasa el host verbatim y deja que `~/.ssh/config` resuelva puerto,
+  usuario, llave y ProxyJump—, y eso funciona en modo clásico porque el
+  `ssh_host` es un alias que escribió el usuario; el del payload es un literal
+  `user@ip` que no matchea ningún bloque `Host`, así que se pierde TODO, no
+  solo el puerto. Como el payload por contrato jamás trae la identidad
+  ("Reverb ships no keys"), honrar `ssh_port` habría abierto un **segundo canal
+  de configuración** que resuelve un tercio del problema y deja el bloque de
+  ssh_config igual por escribir. `ssh_port` se lee **solo como diagnóstico**:
+  WARNING que nombra el puerto y las dos salidas, para que el "connection
+  refused" deje de leerse como host caído. Costo aceptado: un bloque por HOST
+  de Reverb (no por entorno → la promesa de cero-config-por-entorno intacta).
+  **(2) Ventana de `not_ready`:** eran 3×2s = 6s contra un `env_create` real de
+  60–90s → siempre fallaba. Ahora `resolveWaiting` busca el job en vuelo
+  (`ListJobs` por el `id` que el contrato agregó a `/resolve` y `/envs`),
+  `FollowJob` streamea sus eventos deduplicados por `seq`, y al terminar
+  re-resuelve con `reverbSettleWait` (20s) — bug encontrado EN VIVO: "job
+  terminó" y "resolve dice listo" son dos observaciones distintas y un
+  `Resolve` pelado perdía la carrera. Fallback acotado a 2min si el job no se
+  identifica. **(3) Shadow del overlay del servidor:** `warnOverlayShadow` usa
+  `GET /environments/{id}/overlay` en vez de N `ssh test -d` — la comparación
+  es contra el árbol de git desplegado, que el cliente no tiene; falla → no
+  avisa (advisory, no tumba el push). **(4)** El error de `<env>` ambiguo ya
+  listaba candidatos desde 107 (verificado); `FindEnv` ahora devuelve el
+  `EnvRef` completo porque el `id` es lo que abre las rutas de acción.
+  **(5) Des-diferidos §6 y §7** (solo estaban bloqueados por scope del token,
+  que el contrato ya concedió): `checkpoint list/create` → snapshots
+  (`checkpoint_reverb.go`, **sin** tocar el store local), `checkpoint rm`
+  rechazado por admin-scoped; `up/down/stop/restart` → `POST /projects/{p}/
+  envs/{e}/{start,stop,restart}` siguiendo el job, con `down`→stop **avisando**
+  que Reverb modela estado deseado. `requireNoReverb` pasó de switch con
+  default-refuse a un **mapa `reverbDeferred`** (ausente = soportado); quedan
+  solo `deploy`, `watch` e `i18n-pull`. Archivos: `internal/reverb/ops.go`
+  +test (nuevo: Overlay/Snapshot/Job/EnvAction/Deploy/FollowJob/
+  ProvisioningJob/JobFailure, `post`+`do` compartidos), `client.go` (`ID`,
+  `SSHPort`, `EnvRef.ID`, `FindEnv`→EnvRef), `internal/cmd/reverb.go`
+  (`reverbSSHHost`, `resolveWaiting`, `resolveBounded`, `reverbEventLevel`,
+  `reverbDeferred`), `checkpoint_reverb.go` (nuevo), `push_reverb.go`,
+  `checkpoint.go`, `docker.go`+`docker_remote.go`, `config.go`
+  (`ReverbSSHHost`), `commands.go`, `repl.go` (ayuda), `main.go` (`down`
+  projectless con flag remoto), README + CHANGELOG. build/vet/test verdes.
+  **Verificado EN VIVO** contra un simulador ampliado: alias gana y silencia el
+  aviso, sin alias avisa del puerto 1024, job-following con 3 eventos + settle,
+  snapshots listados/creados, `up`/`down`/`restart` por API, `checkpoint rm` y
+  `deploy` rechazados. **PENDIENTE — el gate real de la unidad**: correr
+  `REVERB_API=… ECHO_CHECK_KEY=… bash scripts/echo-contract-check.sh <p> <e>`
+  (36/36) contra un Reverb vivo y replicar el flujo con los comandos de Echo;
+  no fue posible aquí (el daemon escucha en 127.0.0.1:8484 sin ruta pública →
+  necesita `ssh -L 8484:127.0.0.1:8484 <host>`). Spec:
+  `context/specs/108-reverb-real-host.md`. Siguiente: 109 deploy delegado +
+  push al remoto de Reverb.
+
+- [x] Unit 107 — reverb-mode-foundation. Modo Reverb: `-E <project>/<env>`
+  resuelve un entorno gestionado por Reverb **por HTTP en el momento de la
+  llamada** y construye el target **en memoria** (nada se escribe a
+  `global.toml`). Hallazgo que definió el alcance: todo comando remoto pasa por
+  UN embudo, `resolveRemoteShell()` (22 call sites), que hace exactamente las
+  tres cosas que el `resolve` de Reverb reemplaza en una llamada
+  (`resolveRemoteTarget` → host/path, `fetchRemoteProfile` → SSH `cat` de los
+  TOML de Echo del servidor, `remotePullEnv` → SSH `cat` del `.env`) → un solo
+  branch arriba de esa función habilita la superficie remota entera.
+  `-E <spec>` es **azúcar para `--from env:<spec>`**: `env:` queda como prefijo
+  RESERVADO del namespace de referencias de target, de modo que el flag viaja
+  por el mismo string `from` que los 22 call sites ya hilan (cero cambios de
+  firma). Nuevo paquete `internal/reverb` (cliente HTTP; tipos con los nombres
+  del contrato **congelado** de Reverb —`internal/api/resolve.go` allá—;
+  sentinelas `ErrNotReady`/`ErrUnauthorized`/`ErrForbidden`/`ErrNotFound`/
+  `ErrNotConfigured` mapeadas desde el envelope `{"error":{"code","message"}}`;
+  `ResolveWithRetry` reintenta `409 not_ready` 3× cada 2s con callback de log;
+  `FindEnv` resuelve el `<env>` pelado por `GET /api/v1/envs` y nombra los
+  candidatos si es ambiguo). Config global `[reverb]` (`url`/`token`/
+  `compose_cmd`; `applyReverb` en `Load` y `LoadGlobal`) — **solo global**,
+  nunca la emite `SaveProject`: el token es un SECRETO (da la contraseña de la
+  BD vía resolve) y no se loguea ni aparece en ningún error (test que lo
+  verifica). Sin `ssh_host` en el payload → error que señala `public_host`
+  (`REVERB_PUBLIC_HOST`) del daemon, **sin fallback** a otro host, como manda
+  el doc de contrato. Cambio de comportamiento en `push`: en modo Reverb el
+  destino por defecto es `paths.overlay` (Reverb reemplaza `addons` **entero**
+  en cada deploy y jamás toca el overlay, donde un módulo eclipsa la copia de
+  git); un `--dest`/`[push] path` bajo `paths.addons` se **rechaza**;
+  `warnOverlayShadow` avisa por cada módulo que también existe en addons;
+  `push --clean` vacía el overlay (`rm -rf`, no `git checkout --`) sin exigir
+  `git_deploy`. Diferidos con error explícito (`requireNoReverb`): `deploy`,
+  `watch`, `checkpoint`, `up`/`down`/`stop`/`restart`, `i18n-pull` — cada uno
+  nombra por qué correrlo igual corrompería estado. **Gotcha atrapado en la
+  verificación en vivo**: `remoteFlagsIn` solo LEE el flag; cada parser de
+  comando debe además CONSUMIR el par `-E <valor>` o el valor se lee como
+  positional (`shell-run -E acme/main` intentaba abrir `acme/main` como script)
+  → parcheados los 12 parsers, espejando cómo ya tratan `--from`.
+  Archivos: `internal/reverb/client.go`+test (nuevo paquete),
+  `internal/cmd/reverb.go`+`reverb_test.go` y `push_reverb.go` (nuevos),
+  `shell_remote.go` (`-E` en `remoteFlagsIn` + branch + campo
+  `remoteShellContext.reverb`), `push.go`/`push_dest.go`/`push_clean.go`,
+  guards en `deploy.go`/`watch.go`/`checkpoint.go`/`docker.go`/
+  `docker_remote.go`/`i18n_pull.go`, parsers de `actions`/`compare`/`view`/
+  `db_pull`/`update_remote`/`test_remote`/`repl/shellrun.go`,
+  `config.go` (`[reverb]`), `repl/commands.go` (flags), `repl/build.go`
+  (`buildGlobalAliases` dropea `-E` como alias corto de `--env`),
+  `repl/repl.go`+`helppager.go` (bloque de ayuda "Reverb mode"),
+  `repl/sequence.go` (`bakeRemote` respeta `-E`), `main.go` (`hasRemoteFlag`),
+  README (sección "Reverb mode") + CHANGELOG. build/vet/test verdes.
+  **Verificado EN VIVO** contra un Reverb simulado (servidor HTTP de prueba):
+  resolve OK → target + destino overlay, `<env>` ambiguo nombra los candidatos,
+  falta de `ssh_host` señala `REVERB_PUBLIC_HOST`, 404, token inválido, rechazo
+  de `--dest` bajo addons, `--pick-dest` rechazado, y el token ausente del log.
+  **Pendiente verificación contra un Reverb REAL** (correr antes el `curl` de
+  aceptación del doc). Spec: `context/specs/107-reverb-mode-foundation.md`.
+  Siguientes: 108 deploy delegado + jobs, 109 checkpoint→snapshots, 110 docker
+  vía API, 111 `modpath`.
 
 - [x] Unit 104 — deploy-set-checkpoint. Setter config-only (calcado de
   `--set-push`) que fija la política de checkpoint del **proyecto** desde la CLI
@@ -1057,6 +1336,9 @@ _(siguiente: Unit 14 — meta-commands. Fix deploy-build-muting: el builder de `
 
 ## Session Notes
 
+- 2026-07-29 (Unit 111): cruce del manifiesto contra el disco, spec `111-manifest-cross-check.md` primero (la unidad había nacido como una fila `*(pendiente)*` que yo propuse en el build plan, sin spec — y el CLAUDE.md prohíbe escribir código de feature sin spec). Dos reglas dentro del `lint` existente, sin comando ni flag nuevos, así que el pre-flight de `deploy` las hereda sin cambiarle una línea. **`manifest-missing`** (entrada de `data`/`demo` sin archivo en disco) es **siempre** `err`: es el único punto donde el modelo manifest-aware de la 109 no aplica porque *no puede* — ese modelo pregunta si un manifiesto lista el archivo para decidir si el loader lo leerá, y aquí la respuesta es sí por construcción, la ausencia **es** el defecto. Anclada a la línea del `__manifest__.py` (una ruta inexistente no es navegable) y cubre entradas no-XML. **`manifest-unlisted`** es **siempre** `warn`, nunca más: bloquear por un `.xml` sin listar volvería el pre-flight inusable en un día; el check se gana su lugar explicando inercia, no gateando. Filtros de ruido: solo raíz `<odoo>`/`<openerp>` (excluye los `<templates>` de OWL, que llegan por el assets bundle) y se saltan `static/`/`tests/`/`migrations/`/`i18n/`. Implementación: `ManifestFiles` → `ManifestEntries` con número de línea (vía `FindAllSubmatchIndex`, offsets absolutos), `CheckManifests`, `ModuleDirFor` (para que un archivo explícito de un hook igual cruce su módulo), `Options.ManifestDirs`, y `selfSeverityRules` para que `applySeverity` no reescriba estas dos. `cmd.RelPath` ahora delega en `odoolint.RelTo` en vez de mantener una segunda copia. **Verificado en `all_odoo`**: 0 `manifest-missing` (lo esperado en un repo que despliega; uno ahí sería un bug vivo) y 14 `manifest-unlisted`, todos huérfanos reales — incluido un literal `new_note_view (copy).xml`, tres restos de `odoo scaffold` en `apiccima/`, y `ccima_crm_reassign/views/product_overlay_templates.xml`, que es el **mismo** archivo del hallazgo de markup: ahora el reporte explica por qué ese defecto es inerte. Exit 0, CPU sin cambio (~0.20 s). Borrar un archivo listado → `lint` exit 1 anclado al manifiesto y `deploy` bloquea sin llegar a `reading remote profile`. Dos tests preexistentes se ajustaron: sus fixtures tenían `.xml` sin listar, así que el nuevo check los reportaba con razón — `mod_b` se volvió internamente consistente y el test de severidad ahora filtra por regla para probar lo que dice probar.
+- 2026-07-29 (implementación): Units 109 y 110 implementadas, un commit por unidad. **109** (`f94f5aa`): `internal/odoolint` (librería pura: `Check(paths, Options) (Result, error)`, tres consumidores — comando, hook, pre-flight — ninguno dueño de la lógica) + `internal/cmd/lint.go` + `internal/repl/lint.go`, registrado en Registry/dispatchNames/commandFlags/help y en `projectlessOneShot` (un hook corre donde se guardó el archivo, no donde vive el compose). `xmllint` autoridad de well-formedness + `encoding/xml` piso, dedupe por `(file,line,rule)` con el mensaje de libxml2 ganando; gramática `import_xml.rng` embebida (una copia 17/18/19, test que pinea el sha256 contra copia corrupta); severidad por manifiesto; `--json`; `exitCodeFor` generalizado a `cmd.ErrUsage`. **Hallazgo de la implementación que cambió el spec**: la primera corrida sobre `all_odoo` dio 7 hallazgos en vez de los 2 que predecía el prototipo — 5 eran **falsos positivos míos** en campos `body_html` de mail templates. `body_html` es HTML y Odoo lo parsea con `lxml.html`, que acepta `<p>`/`<br>` sin cerrar y directivas `%` que el parser XML rechaza. Corregido restringiendo el re-parseo de sub-documentos a los campos que Odoo sí parsea como XML (`arch`, `arch_db`), y con eso **se eliminó el segundo eje de severidad** que traía el spec (el `warn` para campos de render-time): la corrección honesta no es suavizar la severidad de contenido que el loader parsea distinto, es no revisarlo como XML. Tras el fix, exactamente los 2 hallazgos predichos (356 archivos, 0.27 s, `errors=0 warnings=2`, ambos archivos muertos → exit 0); un módulo solo en 0.03 s. **110**: `deployLintPreflight` en `internal/cmd/deploy_lint.go`, llamado en `deploy.go:1004` — después de `sort.Strings(modules)` (996) y antes de `fetchRemoteProfile` (1013), que es el primer SSH real; `resolveDeployRemote` (841) corre antes pero solo lee config local, no abre conexión. Bloquea solo con `err`; `--no-lint` per-run con WARNING visible y **sin** llave de config; un lint que no puede correr es WARNING y el deploy sigue (la guardia no tumba el trabajo). Verificado end-to-end contra un host irresoluble a propósito: el run bloqueado **nunca** loguea `reading remote profile` ni produce error de DNS (prueba de que corta antes de tocar la red), `--no-lint` sí llega al remoto y muere ahí, y el archivo sano da `pre-flight clean` y sigue. **Brecha declarada**: el spec pedía asertar sobre fakes de SSH/rsync que un bloqueo hizo cero llamadas remotas; `deploy` no tiene capa remota falsa (`RunDeploy` solo se ejercita en tests por el camino config-only) y construirla es más grande que esta unidad — se sustituyó por los tests unitarios de `deployLintPreflight` con logger capturador más la verificación end-to-end de arriba. Pendiente de host real: confirmar que un bloqueo no deja drift (`push --clean`) ni checkpoint nuevo, y que `watch` hereda el pre-flight.
+- 2026-07-29: Revisión del spec 109 (`lint`) que había redactado un agente, y reescritura con los hechos verificados contra fuente en vez de asumidos; más el spec 110 nuevo. **Verificado:** el RNG que embebemos es exactamente el check del loader (`odoo/tools/convert.py:772-773`, `RelaxNG(...).assert_(doc)` sobre el documento completo de cada archivo del manifiesto), y `odoo/import_xml.rng` es **byte-idéntico en 17, 18 y 19** (11,407 bytes, sha256 `eca95216…`, cero `include`/`externalRef`) → una sola copia embebida cubre las tres versiones. **Corregido del spec original:** (a) decía 14,679 bytes (real 11,407) y un directorio por major, que eran tres copias del mismo archivo disfrazadas de soporte de versiones → una gramática + mapa `major → archivo` como punto de extensión; (b) decía que `<openerp><data>` no se puede validar y sale como warning — falso, la gramática lo define (`odoo_openerp_data`, línea 268) y valida normal; (c) `cfg.Version` no existe, es `cfg.OdooVersion`. **Cambio de diseño principal:** el spec ponía a `encoding/xml` como autoridad y `xmllint` como extra opcional; probado que Go es **más débil** que libxml2 y acepta silenciosamente tres cosas que el servidor rechaza (atributo duplicado, dos raíces, `<?xml?>` a media página) → falsos negativos, o sea "lint limpio, deploy abortado". Invertido: `xmllint` (misma libxml2 que lxml ⇒ mismo veredicto, mensaje y línea que el servidor) es la autoridad, Go es el piso que no se puede saltar en ninguna plataforma del cross-compile; hallazgos dedupeados por `(file,line,rule)` y gana el mensaje de libxml2. cgo sigue rechazado (rompe los binarios de release). **Severidad manifest-aware traída DENTRO de la unidad** (el spec la mandaba a out-of-scope): los 2 hallazgos del prototipo eran archivos que **ningún manifiesto lista**, o sea el lint es más estricto que el loader; sin el split `err` (listado en `data`/`demo`) vs `warn` (no listado, o campo que se parsea en render como `body_qweb`) el pre-flight bloquearía despliegues que el servidor habría aceptado. Eso es la precondición de que el 110 pueda ir default-on. **Otros huecos cerrados:** los sub-documentos son tres formas, no dos (inline ya lo cubre el parse externo; CDATA y arch escapado con entidades necesitan re-parseo), y los hallazgos internos se reportan en la línea del archivo contenedor, no del fragmento. **Unit 110 (nueva):** pre-flight en `deploy`, default-on, `--no-lint` per-run y visible en el transcript (sin opción de config, que se apagaría para siempre en la máquina que más la necesita); scope = los módulos ya seleccionados (`modules`, `deploy.go:989`), no el repo; se inserta después de la selección y **antes del primer SSH** — antes del push, del checkpoint y del `-u` — de modo que un bloqueo cueste cero y no haya nada que rodar atrás; se apoya en la convención que ya existe en `deploy.go:1038` ("before any remote change"). Orden de implementación del 109 en 5 fases, la 1 (pase Go) ya cubre sola la falla que costó los deploys. Alcance honesto anotado en ambos specs: un `lint` limpio significa "no truena por markup", no "carga"; lo semántico (xpath sin ancla, `ref` inexistente, campo que no está en el modelo) sigue fuera y necesita registry. Ninguna de las dos unidades implementada.
 - 2026-06-24: Unit 72 (remote-restart-logs) a pedido del usuario ("¿podemos tener remote restart y logs?"). `restart` y `logs` ahora aceptan `--from <target>`/`--remote` y corren el verbo de compose sobre SSH reutilizando el transporte de deploy/shell (`resolveRemoteShell` → `resolveRemoteTarget`+`fetchRemoteProfile`, `remoteComposeCmd`, `runSSHStream`), sin SSH nuevo. Decisiones cerradas en form: (1) `logs` remoto mantiene follow por defecto (stream largo sobre SSH, sin TTY); (2) `restart` remoto sin servicio reinicia el contenedor Odoo del perfil remoto (servicios explícitos acotan); (3) `restart` remoto confirma cuando el stage REMOTO es prod vía `confirmRemoteProd` (`--force` salta) — más estricto que el restart local, que no confirma. Implementación: `RunRestart`/`RunLogs` branchean por `remoteFlagsIn`; nuevo `internal/cmd/docker_remote.go` (`runRemoteRestart`/`runRemoteLogs`/`runRemoteLogsAndCopy`/`remoteServiceArgs`); `parseLogsArgs` extraído de `RunLogs` (compartido local/remoto, consume `--from`/`--remote`); `DockerOpts` gana `Log` (progress nil-safe). REPL: `runDocker` pasa `Log: sess.cmdOdooLogger(name)` y solo invalida el health local en restart NO-remoto (`remoteRunFlags`). `commandFlags` suma `restart`+extiende `logs` con `--from`/`--remote`; help con subflags; `main.go` `projectlessOneShot` incluye `restart`/`logs` solo con flag remoto. Tests `docker_remote_test.go` (remoteServiceArgs/parseLogsArgs/ensamblado del comando) + ajuste de `build_test.go` (logs gana `--from`/`--remote`). Build/vet/test verdes; verificación EN VIVO contra un host remoto pendiente del usuario (sin SSH en el entorno dev). Spec `72-remote-restart-logs.md` + fila build plan (deps 60, 62). Falta commit (vía commitcraft).
 - 2026-06-09: Pulido de formato a pedido del usuario (cierre de sesión). (1) El recap de `echo run` ahora lleva `step` y `status` como campos (`step=1/4 status=ok cmd=stop took=…`, msg vacío); nuevo `valueStyleFor(key,value)` en `emitOdooLog` colorea el valor de `status` por desenlace (ok verde/failed rojo/cancelled·skipped ámbar) y el de `cmd` por su acción (paleta del logger); `emitOdooLog`/`plainOdooLog` omiten el segmento msg si está vacío (sin doble espacio). (2) `report --copy` pasó de dos líneas (header + confirmación plana) a UNA línea Odoo (`echo.report: copied N lines to clipboard …`); no-match y copy-fail también una línea WARNING/ERROR. Tests de recap migrados a buscar por campo `step`/`status` (`findRecap`). Build/vet/tests verdes + smoke con CLICOLOR_FORCE confirma status verde y cmd coloreado. Commit `[IMP]`. (La línea de progreso `step N/M → cmd` se dejó como está.)
 - 2026-06-09: Unit 41 (recipe-step-silent) a pedido del usuario: poder silenciar ciertos logs en `run` (ej. `update --silent`), en pantalla y en el archivo. Confirmado al usuario que aplica a cualquier comando no-interactivo (stop/up/etc.) porque se intercepta en el runner. Spec `41-recipe-step-silent.md` + fila build plan. Decisiones en form: ambos modos (`--silent` total + `--silent=<lvl>` por umbral, deja pasar lo más grave); capturar igual para `report`. Implementación: gate por nivel en sess.print + emitOdooLog vía var de paquete `suppressLevel`, runner la togglea por paso. Build/vet/tests verdes + smoke. Commit inmediato.
@@ -1115,3 +1397,7 @@ _(siguiente: Unit 14 — meta-commands. Fix deploy-build-muting: el builder de `
 - 2026-07-17: Unit 99 (i18n-pull-to-worktree) implementada a pedido del usuario. Flujo: corre `i18n-pull` desde el worktree de la rama de despliegue (donde vive la instancia/BD) para generar el `.po`, pero necesita ese archivo en su worktree de trabajo; antes aterrizaba en el worktree actual y había que moverlo a mano. Se descartó hacerlo con un flag inverso en `promote` (mueve módulos dirty en la otra dirección; overkill para un solo archivo). Fix: flag `--to-worktree` en `i18n-pull` que redirige el root local donde se escribe el `.po`. `i18nPullArgs` gana `toWorktree`/`pickWorktree`; `--to-worktree` pelado → picker (`pickPullWorktree` sobre `gitWorktrees`, excluye actual+detached, TTY-only), `--to-worktree=<rama>` → directo por rama/path (headless). El bare NO consume el siguiente token (sigue siendo módulo). `resolvePullWorktree` corre antes del SSH (falla rápido). El loop escribe a `pullDest(cfg, destRoot, mod, lang)` en vez de `opts.Root`. Registrado en `commandFlags["i18n-pull"]` + help REPL. Reusa `gitToplevel`/`gitWorktrees`/`worktreeForBranch`/`sameWorktree`/`PickOne` del paquete cmd (unit 97). Spec `99-i18n-pull-to-worktree.md` + README + CHANGELOG + test `TestParseI18nPullToWorktree`. build/vet/test verdes; falta prueba end-to-end en vivo contra el remoto (la deja el usuario).
 - 2026-07-17: Unit 100 (deploy-run-tests) implementada a pedido del usuario: deploy + test en un solo comando. Diseño espejo exacto de `[deploy] push` (Unit 95). Piezas: (1) `odoo.WithTests(cmd, mods)` — hermano de `WithI18nOverwrite`, appendea `--test-enable`/`--test-tags /<mod>`/`--no-http --http-port=8189`/`--log-level=test` al argv de `InstallUpdate`, no-op con lista vacía. (2) config: `deployFile.Test *bool` + `TestModules []string` (`[deploy] test`/`test_modules`), `cfg.DeployTest`/`DeployTestModules`, `RemoteProfile` equivalentes, `mergeDeployTest` (project>global) y `mergeDeployTestModules` (wholesale como actions), writer emite la sección `[deploy]` cuando cualquiera está set. (3) deploy.go: flags `--test`/`--no-test` (por run), `--test-toggle`/`--test-modules[=csv]`/`--test-add`/`--test-rm`/`--test-clear` (config-only, corren solos y salen como `--set-push`, uno a la vez, validado). `resolveDeployTest` (precedencia flag>server>local>false) y `resolveTestModules` (pin server-first, si no el set desplegado). `runDeployTestManage` persiste con `SaveProject` e imprime el valor final (`test=on|off`, `test_modules=…|(auto)`). Picker con preselección nuevo en picker.go: `runFuzzyPickerWithSelected` (marca `pickerItem.selected` de la lista actual; empty confirmado = limpiar). Guard: tests en `prod` exigen `--force`. `deployFailureRe` extendido con `\d+ failed, \d+ error\(s\)|FAILED \((?:failures|errors)=` para cazar suite fallido con exit 0. Registro en `commandFlags["deploy"]` + help REPL. Spec `100-deploy-run-tests.md` + README (tabla + subsección "Deploy + test in one command") + CHANGELOG. Tests: parse (test/no-test/toggle/modules/add/rm + errores de usage), `resolveDeployTest`, `resolveTestModules`, edición de listas (`mergeTestModules`/`dropTestModules`/labels), `odoo.WithTests`, config round-trip + server-override de `test`/`test_modules`. build/vet/test verdes en todo `./internal/...`. Falta prueba end-to-end en vivo contra un remoto (correr un suite real) — la deja el usuario. Decisión de diseño consultada con el usuario: toggle único que devuelve el valor final (no on/off separado); filtro expandido a lista persistente de módulos con add/quitar headless+picker.
 - 2026-07-17: Unit 101 (deploy-rollback-decision) implementada tras el usuario notar que el prompt de rollback-on-fail cuelga a un agente. Diagnóstico: `handleDeployFailure` decidía con `if !p.force && stdinIsTTY()` → el prompt `confirmRollback` (inspeccionar vs restaurar) solo aparece con TTY y sin `--force`; headless siempre revierte. Dos huecos para agentes: (1) si el agente corre Echo en un pty, `stdinIsTTY()` da true y se cuelga; (2) no había forma determinista de "headless, no reviertas, deja la DB rota" (solo `--force`=revertir-sí). Fix: par de flags `--rollback-on-fail`/`--no-rollback-on-fail` (`rollbackOnFail *bool`, nil=default por TTY) que fijan la decisión sin depender de la terminal, mutuamente excluyentes (sentinelas `sawRB`/`sawNoRB` en parse). Nuevo helper puro `rollbackDecision(p, tty) (decided, doRollback bool)`: explícito gana › `--force`→revertir › tty→(defer a confirm) › headless→revertir. `handleDeployFailure` reescrito a `decided, doRollback := rollbackDecision(...)` + confirm si `!decided`, reusando el cuerpo "leave broken" (AddCheckpoint+WARNING) para ambos caminos (decline interactivo y `--no-rollback-on-fail`). El flag explícito gana sobre `--force`. `watch` sin cambios (pasa `--force`, no thread del flag → sigue revirtiendo). Decisiones del usuario en form: par explícito on/off (sin default en config), watch siempre revierte. Registro en `commandFlags["deploy"]` + help REPL. Spec `101-deploy-rollback-decision.md` + README (tabla + prosa checkpoint) + CHANGELOG. Tests: parse (true/false/ambos→ErrUsage/nil) y `rollbackDecision` (tabla de 5 casos). build/vet/test verdes en todo `./internal/...`.
+- 2026-07-23: Fix/mejora reportada por el usuario: `deploy --rollback` con método `db` **destruía el checkpoint** en vez de dejar un punto restaurable. Diagnóstico: `restoreCheckpoint` (método `db`) restauraba con `DROP` viva + `RENAME` checkpoint→viva → el checkpoint se consumía (objeto renombrado + `RemoveCheckpoint` de la metadata), así que tras un rollback no quedaba punto de retorno. Fix: por default ahora **conserva** el checkpoint — la BD rota se dropea y el checkpoint se copia de vuelta con `CREATE DATABASE … TEMPLATE` (fileCopy en PG15+), dejándolo intacto y oculto (`consumed=false` → no se llama `RemoveCheckpoint`); cuesta ~1× de disco más durante la restauración. Nuevo flag `--consume-checkpoint` (solo con `--rollback`, validado) recupera el rename/consumo para disco justo. `restoreCheckpoint` gana parámetro `consume bool`. Alcance acotado al `--rollback` explícito por decisión del usuario: el auto-rollback en fallo (`handleDeployFailure`) sigue consumiendo (pasa `true`) porque su propósito termina al revertir el deploy. Método `dump` sin cambios (ya preservaba su archivo). Log de cierre reporta `disposition=preserved|consumed`. Registro en `commandFlags["deploy"]` + README (tabla + prosa checkpoint) + CHANGELOG. Tests: parse (`--rollback --consume-checkpoint` ok, `--consume-checkpoint` solo → ErrUsage), `TestRestoreCheckpointDBMethodKeep` (CREATE…TEMPLATE, sin RENAME, allow_conns tras copia, consumed=false), firmas actualizadas en los tests db/dump existentes. build/vet/test verdes en `./internal/cmd` + `./internal/repl`. Falta prueba end-to-end en vivo contra muutrade/develop (la deja el usuario).
+- 2026-07-23: Diagnóstico + fix en caliente de las deploy actions de `all_odoo` (ccima), y specs 105/106 escritos. Problema reportado: "las acciones no están separadas" entre `habitta_dev` y `habitta_prod`. Diagnóstico: NO es bug de resolución —`resolveDeployActions` es server-first y los dos targets tienen `remote_path` distinto (`…/tmp_ccima/dev_odoo` vs `…/tmp_ccima/odoo`) ⇒ keys de perfil distintas (`8a7ee160…` / `7add8472…`), o sea per-target SÍ es representable. El daño lo causó la UX de `actions`: gestiona UNA lista local y la sube **wholesale** al server resuelto, así que la carpeta (que tenía ambas actions) contaminó a los dos servers. Estado hallado: server dev con AMBAS actions (`./build.sh dev --no-sync` y `./build.sh --no-sync`), server prod con UNA pero la equivocada (la de dev), local con ambas. Fix aplicado a mano (con backups `.bak` de los 3 archivos): server dev → solo `Create Docker Image` / `./build.sh dev --no-sync`; server prod → solo `Create docker image staging CCIMA` / `./build.sh --no-sync`; lista local vaciada de actions (conservando `[deploy] push = true`) para que un `actions add`+upload accidental no vuelva a empujar ambas. Verificado leyendo los `run` de cada perfil. Pendiente: prueba en vivo (`deploy --from habitta_dev`) — la deja el usuario. De aquí salieron dos specs: **105-actions-per-target** (`--from`/`--remote` como selector de scope en `actions add|edit|rm`, read-modify-write directo del perfil de server, eliminar `offerUploadActions`, WARNING cuando un `rm` vacía la lista del server porque el wholesale hace caer al fallback local) y **106-link-switch** (`link` como switcher con actual marcado/preseleccionado y no-op al elegirlo, `--next` con wrap para toggle dev⇄prod, `--list` sin SSH ni escritura frente a `--show` que sondea). Ambos con fila en `00-build-plan.md`. Sin implementar todavía.
+- 2026-07-23: Unit 105 (actions-per-target) implementada. `--from`/`--remote` se vuelve el **selector de scope** de `actions add|edit|rm`: nuevo `actionsArgs.remoteScoped()`, helper `scopedActions` (devuelve la lista del server + el `*remoteShellContext` cuando hay flag remoto; en scope local NO resuelve remoto ⇒ cero SSH) y `commitActions` (persiste al scope de origen: `uploadActionsToServer` prod-gated vía `confirmRemoteProd`, o `saveActions` local). `pickActionIndex` pasa a recibir la lista scopeada explícita + `actionsArgs` para que sus errores nombren el scope ("locally" vs "on this target's server profile"). Eliminado `offerUploadActions` (el prompt que subía la lista local COMPLETA al server resuelto — el mecanismo exacto que contaminó `habitta_dev`/`habitta_prod`). `runActionsRm` server-scoped emite WARNING cuando la lista del server queda vacía, porque el wholesale hace que ese target caiga al fallback local (no a "sin actions"). Logs de cierre llevan `scope=local|server` + `target=`. Nuevo seam `actionsRunSSH = runSSH` (espejo de `ckptRunSSH`) para poder testear la escritura del perfil sin ssh real. Tests: `TestActionsRemoteScoped`, `TestScopedActionsPicksTheRightList` (incluye que el scope local no resuelve remoto), `TestCommitActionsServerScopeWritesProfile` (perfil compuesto con la action, SIN la lista local, contra la key del `remote_path`, y lista local intacta), `TestPickActionIndexScoped`. Help REPL + README (tabla + prosa nueva del scope y del gotcha wholesale) + CHANGELOG. build/vet/test verdes en `./internal/...`. Nota: `gofmt -l` marca `actions_test.go` por una desalineación de comentarios **preexistente** en `TestResolveActionDir` (ya venía así en HEAD); no se tocó para no meter ruido ajeno en el commit.
+- 2026-07-23: Unit 106 (link-switch) implementada. `link` pasa de *bind* a **switcher**: `linkArgs` gana `next`/`list`/`jsonOut`; `parseLinkArgs` valida que a lo sumo se nombre un modo (`--show`/`--rm`/`--next`/`--list`/positional mutuamente excluyentes, contados con un loop) y que `--json` solo acompañe a `--list`. `pickConnectTarget` gana parámetro `current`: marca con `●`, arranca el cursor en esa fila y sus filas pasan a `nombre · db · host:path` (el caller de `deploy.go` pasa `""` — ahí justamente no hay binding). Para el cursor inicial se extrajo `runSingleFuzzyPickerAt` en picker.go (`runSingleFuzzyPickerStaged` ahora delega con start=0). `runLinkBind` corta en no-op cuando el target resuelto ya es el binding actual (INFO `already linked`, sin `SaveProject` ni probe). Nuevo `runLinkList` (marca el actual, `--json` a stdout con la convención `finishActionsJSON`, `ErrNoConnectTargets` si no hay ninguno) y `runLinkNext` sobre el helper puro `nextTargetIndex` (wrap; arranca en 0 si el binding no casa con ningún target; `ErrUsage` con < 2). Los tres son **offline**: cero SSH y cero escritura (decisión explícita: resolver el `stage` por target costaría un round trip por fila). **Fix colateral que introdujo esta unidad**: `parseLinkArgs` ahora devuelve `ErrUsage`, pero `repl/link.go` no lo mapeaba (caía en `commandFailureLog` → exit 1 + auto-copy del error al portapapeles); se alineó con la convención de `actions` (`finalize` + `exitCode = exitUsage`), y de paso los errores viejos de parseo (`unknown flag`, `single target name`) también se envolvieron en `ErrUsage`. Registro en `commandFlags["link"]` (+`--next`/`--list`/`--json`) + help REPL + README (tabla + prosa "Switching between environments"). Tests: `TestParseLinkArgs` extendido (cada modo nuevo y **cada par** mutuamente excluyente, `--json` suelto), `TestNextTargetIndex` (cicla, wrap, toggle de dos, unlinked, binding no registrado, <2 → ErrUsage), `TestRunLinkListMarksCurrent` (una sola fila marcada, sin SSH) y `TestRunLinkListEmptyErrors`. build/vet/test verdes. **Verificado en vivo** contra la config real: `link --list --json` en `all_odoo` lista los 3 targets con `habitta_dev` marcado `current: true` (coincide con el `[connect]`), la salida no-JSON pinta el `●`, y los usage errors salen con exit 2.

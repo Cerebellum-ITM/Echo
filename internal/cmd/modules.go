@@ -484,7 +484,7 @@ func resolveModules(ctx context.Context, opts ModulesOpts) ([]string, error) {
 		return mods, nil
 	}
 
-	host := listAvailableModules(opts.Cfg, opts.Root)
+	host := listAddons(opts.Cfg, opts.Root)
 	if len(host) > 0 {
 		return host, nil
 	}
@@ -618,40 +618,6 @@ func equalStrings(a, b []string) bool {
 	return true
 }
 
-// listAvailableModules walks the configured addons paths (or defaults)
-// one level deep and returns the names of directories containing
-// __manifest__.py. Sorted and deduplicated.
-func listAvailableModules(cfg *config.Config, root string) []string {
-	paths := cfg.AddonsPaths
-	if len(paths) == 0 {
-		paths = []string{".", "addons", "custom"}
-	}
-	seen := map[string]bool{}
-	var found []string
-	for _, sub := range paths {
-		dir := filepath.Join(root, sub)
-		entries, err := os.ReadDir(dir)
-		if err != nil {
-			continue
-		}
-		for _, e := range entries {
-			if !e.IsDir() {
-				continue
-			}
-			name := e.Name()
-			if seen[name] {
-				continue
-			}
-			if _, err := os.Stat(filepath.Join(dir, name, "__manifest__.py")); err == nil {
-				seen[name] = true
-				found = append(found, name)
-			}
-		}
-	}
-	sort.Strings(found)
-	return found
-}
-
 // ModulesList returns the modules found in the configured addons paths, for
 // the styled `modules` listing rendered by the REPL. The `--config`
 // addons-path picker stays in RunModules.
@@ -663,9 +629,17 @@ func ModulesList(ctx context.Context, opts ModulesOpts) ([]string, error) {
 // --config, opens an interactive picker to choose which folders count as
 // addons paths.
 func RunModules(ctx context.Context, opts ModulesOpts) error {
-	for _, a := range opts.Args {
-		if a == "--config" {
+	for i, a := range opts.Args {
+		switch {
+		case a == "--config":
 			return runModulesConfig(opts)
+		case a == "--addons-path":
+			if i+1 >= len(opts.Args) {
+				return fmt.Errorf("%w: --addons-path needs a comma-separated list", ErrUsage)
+			}
+			return setAddonsPaths(opts, opts.Args[i+1])
+		case strings.HasPrefix(a, "--addons-path="):
+			return setAddonsPaths(opts, strings.TrimPrefix(a, "--addons-path="))
 		}
 	}
 
@@ -684,6 +658,45 @@ func RunModules(ctx context.Context, opts ModulesOpts) error {
 	}
 	if opts.StreamOut != nil {
 		opts.StreamOut(fmt.Sprintf("(%d modules)", len(found)))
+	}
+	return nil
+}
+
+// setAddonsPaths writes the addons paths without the picker, so a headless
+// caller — or a link-only repo where the form is unreachable — can declare
+// them. An empty list clears the key and returns the project to the
+// conventional layout plus discovery.
+func setAddonsPaths(opts ModulesOpts, list string) error {
+	var paths []string
+	for _, p := range strings.Split(list, ",") {
+		p = strings.TrimSpace(p)
+		if p == "" {
+			continue
+		}
+		if filepath.IsAbs(p) {
+			return fmt.Errorf("%w: addons path %q must be relative to %s", ErrUsage, p, opts.Root)
+		}
+		clean := filepath.Clean(p)
+		if clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
+			return fmt.Errorf("%w: addons path %q escapes %s", ErrUsage, p, opts.Root)
+		}
+		paths = append(paths, filepath.ToSlash(clean))
+	}
+	opts.Cfg.AddonsPaths = paths
+	opts.Cfg.AddonsMode = addonsModeHost
+	if err := config.SaveProject(opts.Cfg); err != nil {
+		return err
+	}
+	if opts.StreamOut == nil {
+		return nil
+	}
+	if len(paths) == 0 {
+		opts.StreamOut("✓ cleared addons paths")
+		return nil
+	}
+	opts.StreamOut(fmt.Sprintf("✓ saved %d addons paths", len(paths)))
+	for _, p := range paths {
+		opts.StreamOut("  " + iconFolder + "  " + displayName(p))
 	}
 	return nil
 }

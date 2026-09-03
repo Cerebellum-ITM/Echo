@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/pascualchavez/echo/internal/config"
 )
@@ -346,8 +347,262 @@ func gitDeployCommitted(ctx context.Context, opts DeployOpts, rsc remoteShellCon
 	if err := gitAdvance(ctx, rsc, absDir, g.branch, tip, true, opts.Log); err != nil {
 		return err
 	}
+	recordDeployedRef(ctx, rsc.sshHost, absDir, localBranchName(ctx, opts.Root), tip, opts.Log)
 	opts.log("INFO", "git", "code synced", rsc.prof.DBName,
 		[2]string{"branch", g.branch}, [2]string{"sha", shortSHA(tip)})
+	return nil
+}
+
+// refResolution is a local ref resolved to the commit a `deploy --set-code`
+// will move the server to. fetched names the remote that was refreshed first
+// (empty when no fetch ran).
+type refResolution struct {
+	sha     string
+	ref     string
+	fetched string
+}
+
+// short renders the resolved SHA for a log field.
+func (r refResolution) short() string { return shortSHA(r.sha) }
+
+// resolveLocalRef resolves ref (a branch, tag, remote-tracking ref or SHA) to a
+// commit in the LOCAL repository — the server never resolves anything, so a
+// branch that exists only on this machine deploys exactly like one on origin.
+//
+// A `<remote>/<branch>` ref refreshes that remote first (so "take me back to
+// main" means today's main, not the one cached two weeks ago); --fetch forces
+// the refresh for any ref and --no-fetch suppresses it. A fetch failure is a
+// WARNING, not a failure: an unreachable network still resolves whatever the
+// repo already has.
+func resolveLocalRef(ctx context.Context, log logFn, root, ref string, fetch, noFetch bool) (refResolution, error) {
+	ref = strings.TrimSpace(ref)
+	if ref == "" {
+		return refResolution{}, fmt.Errorf("%w: --set-code needs a ref (branch, tag or SHA)", ErrUsage)
+	}
+	out := refResolution{ref: ref}
+	remote := remoteOfRef(ctx, root, ref)
+	if !noFetch && (fetch || remote != "") {
+		args := []string{"fetch"}
+		if remote != "" {
+			args = append(args, remote)
+		}
+		if _, err := gitOutput(ctx, root, args...); err != nil {
+			ckptLog(log, "WARNING", "git", "fetch failed — resolving with what the repo already has", "",
+				[2]string{"remote", remote}, [2]string{"reason", err.Error()})
+		} else {
+			out.fetched = remote
+			if out.fetched == "" {
+				out.fetched = "default"
+			}
+		}
+	}
+	sha, err := gitOutput(ctx, root, "rev-parse", "--verify", "--quiet", ref+"^{commit}")
+	if resolved := firstLine(string(sha)); err == nil && resolved != "" {
+		out.sha = resolved
+		return out, nil
+	}
+	return refResolution{}, fmt.Errorf("%w: %q does not resolve to a commit in this repository — check the name, or fetch the remote that has it", ErrUsage, ref)
+}
+
+// remoteOfRef returns the git remote a `<remote>/<branch>` ref belongs to, or
+// "" when the ref names no known remote (a local branch, a tag, a SHA).
+func remoteOfRef(ctx context.Context, root, ref string) string {
+	name, _, ok := strings.Cut(ref, "/")
+	if !ok || name == "" {
+		return ""
+	}
+	out, err := gitOutput(ctx, root, "remote")
+	if err != nil {
+		return ""
+	}
+	for _, r := range nonEmptyLines(string(out)) {
+		if r == name {
+			return name
+		}
+	}
+	return ""
+}
+
+// describeMove names the direction from → to for the confirmation prompt:
+// "ahead" (a fast-forward), "behind" (a rewind), "diverged", "same", or
+// "unknown" when `from` is a commit this repo does not have (a server whose
+// deploy branch was last moved from somewhere else).
+func describeMove(ctx context.Context, root, from, to string) string {
+	switch {
+	case from == "" || to == "":
+		return "unknown"
+	case from == to:
+		return "same"
+	}
+	if _, err := gitOutput(ctx, root, "cat-file", "-e", from+"^{commit}"); err != nil {
+		return "unknown"
+	}
+	_, fwd := gitOutput(ctx, root, "merge-base", "--is-ancestor", from, to)
+	_, back := gitOutput(ctx, root, "merge-base", "--is-ancestor", to, from)
+	switch {
+	case fwd == nil:
+		return "ahead"
+	case back == nil:
+		return "behind"
+	default:
+		return "diverged"
+	}
+}
+
+// gitAheadBehind counts how far branch is ahead of and behind base, both refs
+// resolved locally. A git failure yields (0, 0, err) — callers report the
+// counts as unknown rather than as zero.
+func gitAheadBehind(ctx context.Context, root, base, branch string) (ahead, behind int, err error) {
+	out, err := gitOutput(ctx, root, "rev-list", "--left-right", "--count", base+"..."+branch)
+	if err != nil {
+		return 0, 0, err
+	}
+	fields := strings.Fields(firstLine(string(out)))
+	if len(fields) != 2 {
+		return 0, 0, fmt.Errorf("unexpected rev-list output: %q", firstLine(string(out)))
+	}
+	// Left = commits only on base (branch is behind by that many), right =
+	// commits only on branch (ahead).
+	behind, err = strconv.Atoi(fields[0])
+	if err != nil {
+		return 0, 0, err
+	}
+	ahead, err = strconv.Atoi(fields[1])
+	if err != nil {
+		return 0, 0, err
+	}
+	return ahead, behind, nil
+}
+
+// Provenance keys Echo writes into the server checkout's own git config
+// (Unit 113). They live with the checkout, survive every reset because they are
+// not tracked content, and answer "what is this server running, and where did
+// it come from?" with `git config --get echo.deployed-ref` — no Echo needed on
+// the other side.
+const (
+	deployedRefKey = "echo.deployed-ref"
+	deployedSHAKey = "echo.deployed-sha"
+	deployedAtKey  = "echo.deployed-at"
+)
+
+// recordDeployedRef stamps the checkout with the ref, SHA and time of the move
+// that just happened. An empty ref clears the key rather than leaving it
+// describing a line the checkout is no longer on (a rollback has no ref).
+//
+// Metadata, never a gate: a write that fails warns and the deploy stands.
+func recordDeployedRef(ctx context.Context, sshHost, absDir, ref, sha string, log logFn) {
+	if ref == "" {
+		// --unset exits 5 when the key is absent; nothing to report either way.
+		_, _ = gitRunSSH(ctx, sshHost, remoteGitCmd(absDir, "config", "--unset", deployedRefKey), nil)
+	} else if _, err := gitRunSSH(ctx, sshHost, remoteGitCmd(absDir, "config", deployedRefKey, ref), nil); err != nil {
+		ckptLog(log, "WARNING", "git", "could not record the deployed ref on the server", "",
+			[2]string{"reason", err.Error()})
+		return
+	}
+	_, _ = gitRunSSH(ctx, sshHost, remoteGitCmd(absDir, "config", deployedSHAKey, sha), nil)
+	_, _ = gitRunSSH(ctx, sshHost, remoteGitCmd(absDir, "config", deployedAtKey, time.Now().UTC().Format(time.RFC3339)), nil)
+}
+
+// readDeployedCode reads back what recordDeployedRef wrote. Every field is
+// best-effort: a checkout that predates the unit, or one deployed by an older
+// Echo, simply reports fewer fields.
+func readDeployedCode(ctx context.Context, sshHost, absDir string) (ref, sha, at string) {
+	get := func(key string) string {
+		out, err := gitRunSSH(ctx, sshHost, remoteGitCmd(absDir, "config", "--get", key), nil)
+		if err != nil {
+			return ""
+		}
+		return firstLine(string(out))
+	}
+	return get(deployedRefKey), get(deployedSHAKey), get(deployedAtKey)
+}
+
+// gitRenameBranch renames a branch on the server in place. Renaming the current
+// branch touches neither the working tree nor the index, so the dirty overlay
+// survives — that is why the deploy branch can be renamed without a redeploy.
+func gitRenameBranch(ctx context.Context, sshHost, absDir, from, to string) error {
+	if _, err := gitRunSSH(ctx, sshHost, remoteGitCmd(absDir, "branch", "-m", from, to), nil); err != nil {
+		return fmt.Errorf("rename %s to %s on the remote: %w", from, to, err)
+	}
+	return nil
+}
+
+// gitRemoteBranchExists reports whether a branch exists in the server checkout.
+func gitRemoteBranchExists(ctx context.Context, sshHost, absDir, branch string) bool {
+	_, err := gitRunSSH(ctx, sshHost,
+		remoteGitCmd(absDir, "rev-parse", "--verify", "--quiet", "refs/heads/"+branch), nil)
+	return err == nil
+}
+
+// localBranchName is the branch a deploy ran from, used as the provenance ref
+// for a commit deploy. A detached HEAD has no meaningful name and yields "".
+func localBranchName(ctx context.Context, root string) string {
+	out, err := gitOutput(ctx, root, "rev-parse", "--abbrev-ref", "HEAD")
+	if err != nil {
+		return ""
+	}
+	if name := firstLine(string(out)); name != "HEAD" {
+		return name
+	}
+	return ""
+}
+
+// setCodePlan is what a `deploy --set-code` would do to the server, gathered
+// read-only so the move can be previewed and confirmed before anything changes.
+type setCodePlan struct {
+	absDir string
+	// prev is the deploy branch's current SHA (the checkout's HEAD when the
+	// branch does not exist there yet).
+	prev string
+	// cleaned are the module-scoped overlay files the run will remove. Empty
+	// under --keep-overlay.
+	cleaned []remoteDirtyEntry
+}
+
+// planGitSetCode preflights the target and reads where its deploy branch
+// stands, plus the overlay a default (non --keep-overlay) run would remove. It
+// mutates nothing — `--dry-run` stops here.
+func planGitSetCode(ctx context.Context, opts DeployOpts, rsc remoteShellContext, g gitDeployConfig, keepOverlay bool) (setCodePlan, error) {
+	plan := setCodePlan{absDir: absGitDir(rsc.remotePath, g.path)}
+	if err := gitPreflight(ctx, rsc, opts.Root, plan.absDir); err != nil {
+		return setCodePlan{}, err
+	}
+	plan.prev, _ = remoteGitOut(ctx, rsc, plan.absDir, "rev-parse", "--verify", "--quiet", "refs/heads/"+g.branch)
+	if plan.prev == "" {
+		plan.prev, _ = remoteGitOut(ctx, rsc, plan.absDir, "rev-parse", "HEAD")
+	}
+	if !keepOverlay {
+		plan.cleaned = moduleScopedEntries(remoteDirtyEntries(ctx, rsc, plan.absDir))
+	}
+	return plan, nil
+}
+
+// applyGitSetCode force-moves the deploy branch to tip — forward, backward or
+// sideways. It is the deliberate opposite of a deploy: no fast-forward gate,
+// because moving a line onto a different one is exactly what `gitAdvance`'s
+// gate exists to stop a *deploy* from doing by accident.
+//
+// Order is bootstrap → clean → transfer → advance. Cleaning before the advance
+// leaves it no collisions to discard, so the only report of removed files is
+// the plan's — one list, not two.
+func applyGitSetCode(ctx context.Context, opts DeployOpts, rsc remoteShellContext, g gitDeployConfig, plan setCodePlan, tip, ref string) error {
+	if _, err := gitBootstrap(ctx, rsc, plan.absDir, g.branch, opts.Log); err != nil {
+		return err
+	}
+	if len(plan.cleaned) > 0 {
+		if err := runRemoteClean(ctx, rsc, plan.absDir, plan.cleaned); err != nil {
+			return err
+		}
+		opts.log("INFO", "git", "overlay cleaned", rsc.prof.DBName,
+			[2]string{"files", strconv.Itoa(len(plan.cleaned))})
+	}
+	if err := gitPushObjects(ctx, opts.Root, rsc.sshHost, plan.absDir, tip); err != nil {
+		return err
+	}
+	if err := gitAdvance(ctx, rsc, plan.absDir, g.branch, tip, false, opts.Log); err != nil {
+		return err
+	}
+	recordDeployedRef(ctx, rsc.sshHost, plan.absDir, ref, tip, opts.Log)
 	return nil
 }
 
@@ -361,7 +616,13 @@ func gitRestoreCode(ctx context.Context, rsc remoteShellContext, g gitDeployConf
 	absDir := absGitDir(rsc.remotePath, g.path)
 	ckptLog(log, "INFO", "git", "restoring code", rsc.prof.DBName,
 		[2]string{"branch", g.branch}, [2]string{"sha", shortSHA(sha)})
-	return gitAdvance(ctx, rsc, absDir, g.branch, sha, false, log)
+	if err := gitAdvance(ctx, rsc, absDir, g.branch, sha, false, log); err != nil {
+		return err
+	}
+	// A restore lands on a hash, not on a ref: clearing the provenance is the
+	// only honest answer to "where did this come from?".
+	recordDeployedRef(ctx, rsc.sshHost, absDir, "", sha, log)
+	return nil
 }
 
 // resolveGitTip returns the single tip the selected commit SHAs advance the

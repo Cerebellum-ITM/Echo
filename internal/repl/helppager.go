@@ -171,6 +171,7 @@ func (sess *session) helpPages() []helpPage {
 	pages = append(pages,
 		helpPage{title: "Scripting", lines: renderHelpEntries(sess.styles, scriptingHelpEntries)},
 		helpPage{title: "Build", lines: renderHelpEntries(sess.styles, buildHelpEntries)},
+		helpPage{title: "Reverb", lines: renderHelpEntries(sess.styles, reverbHelpEntries)},
 	)
 	return pages
 }

@@ -488,6 +488,13 @@ func runSingleFuzzyPicker(title string, available []string, palette theme.Palett
 // default accent — used by pickers whose stage isn't yet known (e.g. the
 // connect/i18n-pull target picker).
 func runSingleFuzzyPickerStaged(title string, available []string, palette theme.Palette, stage string) (string, error) {
+	return runSingleFuzzyPickerAt(title, available, palette, stage, 0)
+}
+
+// runSingleFuzzyPickerAt is runSingleFuzzyPickerStaged with the cursor opened
+// on start (an index into available, ignored when out of range) instead of the
+// first row — for pickers that have a "current" row worth landing on.
+func runSingleFuzzyPickerAt(title string, available []string, palette theme.Palette, stage string, start int) (string, error) {
 	if err := requireTTY("pass the selection as a command argument"); err != nil {
 		return "", err
 	}
@@ -495,6 +502,10 @@ func runSingleFuzzyPickerStaged(title string, available []string, palette theme.
 	m.single = true
 	if stage != "" {
 		m.setAccent(palette.PromptColor(theme.StageFromString(stage)))
+	}
+	// Unfiltered, visible mirrors available 1:1, so the index carries over.
+	if start > 0 && start < len(m.visible) {
+		m.cursor = start
 	}
 	final, err := tea.NewProgram(m).Run()
 	if err != nil {

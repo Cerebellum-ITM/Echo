@@ -18,9 +18,10 @@ func remoteServiceArgs(args []string) []string {
 	for i := 0; i < len(args); i++ {
 		a := args[i]
 		switch {
-		case a == "--from":
+		case a == "--from", a == "-E", a == "--env":
 			i++ // skip the target name
-		case strings.HasPrefix(a, "--from="):
+		case strings.HasPrefix(a, "--from="), strings.HasPrefix(a, "-E="),
+			strings.HasPrefix(a, "--env="):
 		case a == "--remote", a == "--force":
 		default:
 			out = append(out, a)
@@ -38,6 +39,9 @@ func runRemoteUp(ctx context.Context, opts DockerOpts, from string) error {
 	if err != nil {
 		return err
 	}
+	if rsc.reverb != nil {
+		return runReverbEnvAction(ctx, opts, rsc, "up")
+	}
 	args := append([]string{"up", "-d"}, remoteServiceArgs(opts.Args)...)
 	remoteCmd := remoteComposeCmd(rsc.remotePath, rsc.target.composeCmd, args...)
 	return runSSHStream(ctx, rsc.sshHost, remoteCmd, nil, opts.StreamOut)
@@ -51,6 +55,9 @@ func runRemoteStop(ctx context.Context, opts DockerOpts, from string) error {
 	rsc, err := resolveRemoteShell(ctx, opts.Cfg, opts.Palette, opts.Root, from, opts.Log)
 	if err != nil {
 		return err
+	}
+	if rsc.reverb != nil {
+		return runReverbEnvAction(ctx, opts, rsc, "stop")
 	}
 	if err := confirmRemoteProd(opts.Palette, "stop", rsc, opts.Args); err != nil {
 		return err
@@ -68,6 +75,9 @@ func runRemoteRestart(ctx context.Context, opts DockerOpts, from string) error {
 	rsc, err := resolveRemoteShell(ctx, opts.Cfg, opts.Palette, opts.Root, from, opts.Log)
 	if err != nil {
 		return err
+	}
+	if rsc.reverb != nil {
+		return runReverbEnvAction(ctx, opts, rsc, "restart")
 	}
 	if err := confirmRemoteProd(opts.Palette, "restart", rsc, opts.Args); err != nil {
 		return err

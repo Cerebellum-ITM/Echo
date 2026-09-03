@@ -323,10 +323,14 @@ func createCheckpoint(ctx context.Context, rsc remoteShellContext, method string
 }
 
 // restoreCheckpoint restores the target's database from entry. It reports
-// whether the checkpoint object was consumed (the "db" method renames the
-// copy over the live DB; the "dump" method leaves the file intact). The
-// caller runs it with the containers stopped.
-func restoreCheckpoint(ctx context.Context, rsc remoteShellContext, entry config.CheckpointEntry, stream func(string), log logFn) (consumed bool, err error) {
+// whether the checkpoint object was consumed. The "dump" method always leaves
+// the file intact (consumed=false). For the "db" method, consume selects how
+// the copy is restored: consume=true renames the copy over the live DB (fast,
+// space-free, but destroys the checkpoint — no restore point remains), while
+// consume=false copies it back via CREATE … TEMPLATE, leaving the checkpoint
+// intact so the rollback stays repeatable (needs ~1× more disk during the
+// restore). The caller runs it with the containers stopped.
+func restoreCheckpoint(ctx context.Context, rsc remoteShellContext, entry config.CheckpointEntry, consume bool, stream func(string), log logFn) (consumed bool, err error) {
 	db := entry.DB
 	ckptLog(log, "INFO", "rollback", "restoring checkpoint", db,
 		[2]string{"method", entry.Method}, [2]string{"name", entry.Name})
@@ -350,7 +354,9 @@ func restoreCheckpoint(ctx context.Context, rsc remoteShellContext, entry config
 		return false, nil
 	}
 
-	// "db" — drop the (broken) live DB and rename the checkpoint over it.
+	// "db" — drop the (broken) live DB, then either rename the checkpoint over
+	// it (consume) or copy it back via TEMPLATE (keep). Both need the live DB
+	// and the checkpoint free of connections first.
 	if err := remoteTerminateConns(ctx, rsc, db); err != nil {
 		return false, err
 	}
@@ -360,18 +366,37 @@ func restoreCheckpoint(ctx context.Context, rsc remoteShellContext, entry config
 	if err := remoteDropDB(ctx, rsc, db); err != nil {
 		return false, err
 	}
-	if err := remoteRenameDB(ctx, rsc, entry.Name, db); err != nil {
+	if consume {
+		if err := remoteRenameDB(ctx, rsc, entry.Name, db); err != nil {
+			return false, err
+		}
+		// The checkpoint had connections disabled (to hide it from Odoo); the
+		// restored database inherits that, so re-enable them or Odoo can't connect.
+		if err := remoteSetAllowConns(ctx, rsc, db, true); err != nil {
+			ckptLog(log, "ERROR", "rollback", "database restored but connections still disabled — run: ALTER DATABASE \""+db+"\" WITH ALLOW_CONNECTIONS true", db,
+				[2]string{"err", err.Error()})
+		}
+		ckptLog(log, "INFO", "rollback", "database restored", db,
+			[2]string{"took", strconv.Itoa(int(time.Since(start).Seconds())) + "s"})
+		return true, nil
+	}
+	// Keep the checkpoint: copy it back into a fresh live DB. The just-dropped
+	// broken DB freed the space this copy needs. The checkpoint object is left
+	// untouched (still hidden from Odoo), so the same point stays restorable.
+	fileCopy := remotePGVersionNum(ctx, rsc) >= 150000
+	if err := remoteCreateFromTemplate(ctx, rsc, entry.Name, db, fileCopy); err != nil {
 		return false, err
 	}
-	// The checkpoint had connections disabled (to hide it from Odoo); the
-	// restored database inherits that, so re-enable them or Odoo can't connect.
+	// A fresh CREATE DATABASE defaults to ALLOW_CONNECTIONS true, but assert it
+	// so Odoo can connect regardless of any inherited/default change; the
+	// checkpoint copy stays hidden.
 	if err := remoteSetAllowConns(ctx, rsc, db, true); err != nil {
 		ckptLog(log, "ERROR", "rollback", "database restored but connections still disabled — run: ALTER DATABASE \""+db+"\" WITH ALLOW_CONNECTIONS true", db,
 			[2]string{"err", err.Error()})
 	}
 	ckptLog(log, "INFO", "rollback", "database restored", db,
-		[2]string{"took", strconv.Itoa(int(time.Since(start).Seconds())) + "s"})
-	return true, nil
+		[2]string{"took", strconv.Itoa(int(time.Since(start).Seconds())) + "s"}, [2]string{"checkpoint", "preserved"})
+	return false, nil
 }
 
 // destroyCheckpointObject removes a checkpoint's remote artifact (its copy DB

@@ -571,3 +571,40 @@ func TestNoFilesInProject(t *testing.T) {
 	}
 	_ = os.RemoveAll(tmp)
 }
+
+func TestSavePromoteBranchAndBaseCoexist(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	if err := SavePromoteBranch("develop"); err != nil {
+		t.Fatalf("save branch: %v", err)
+	}
+	// Setting one field must not drop the other — they are written by two
+	// different commands, at different times.
+	if err := SavePromoteBase("origin/main"); err != nil {
+		t.Fatalf("save base: %v", err)
+	}
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if cfg.PromoteBranch != "develop" || cfg.PromoteBranchSource != "global" {
+		t.Errorf("branch = %q (%s)", cfg.PromoteBranch, cfg.PromoteBranchSource)
+	}
+	if cfg.PromoteBase != "origin/main" || cfg.PromoteBaseSource != "global" {
+		t.Errorf("base = %q (%s)", cfg.PromoteBase, cfg.PromoteBaseSource)
+	}
+
+	if err := SavePromoteBase(""); err != nil {
+		t.Fatalf("clear base: %v", err)
+	}
+	cfg, err = Load("")
+	if err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	if cfg.PromoteBase != "" {
+		t.Errorf("base should be cleared, got %q", cfg.PromoteBase)
+	}
+	if cfg.PromoteBranch != "develop" {
+		t.Errorf("clearing the base must not clear the branch, got %q", cfg.PromoteBranch)
+	}
+}

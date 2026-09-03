@@ -50,7 +50,7 @@ func parseDBPullArgs(args []string) dbPullFlags {
 			f.force = true
 		case a == "--restore":
 			f.restore = true
-		case a == "--from":
+		case a == "--from", a == "-E", a == "--env":
 			i++ // value consumed by remoteFlagsIn; skip it here
 		}
 	}

@@ -2,8 +2,10 @@ package cmd
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/pascualchavez/echo/internal/config"
@@ -45,13 +47,17 @@ func (o LinkOpts) log(level, sub, msg, db string, fields ...[2]string) {
 
 // linkArgs is the parsed shape of the link input.
 type linkArgs struct {
-	target string
-	show   bool
-	rm     bool
+	target  string
+	show    bool
+	rm      bool
+	next    bool
+	list    bool
+	jsonOut bool
 }
 
-// parseLinkArgs extracts --show/--rm and the optional target positional.
-// The flags are mutually exclusive with each other and with a target.
+// parseLinkArgs extracts the mode flags and the optional target positional.
+// At most one mode may be named: --show, --rm, --next, --list or a target
+// (bare `link` is the switcher). --json only decorates --list.
 func parseLinkArgs(args []string) (linkArgs, error) {
 	var out linkArgs
 	for _, a := range args {
@@ -60,20 +66,32 @@ func parseLinkArgs(args []string) (linkArgs, error) {
 			out.show = true
 		case a == "--rm":
 			out.rm = true
+		case a == "--next":
+			out.next = true
+		case a == "--list":
+			out.list = true
+		case a == "--json":
+			out.jsonOut = true
 		case strings.HasPrefix(a, "-"):
-			return out, fmt.Errorf("unknown flag: %s", a)
+			return out, fmt.Errorf("%w: unknown flag: %s", ErrUsage, a)
 		default:
 			if out.target != "" {
-				return out, fmt.Errorf("link takes a single target name")
+				return out, fmt.Errorf("%w: link takes a single target name", ErrUsage)
 			}
 			out.target = a
 		}
 	}
-	if out.show && out.rm {
-		return out, fmt.Errorf("--show and --rm are mutually exclusive")
+	modes := 0
+	for _, on := range []bool{out.show, out.rm, out.next, out.list, out.target != ""} {
+		if on {
+			modes++
+		}
 	}
-	if (out.show || out.rm) && out.target != "" {
-		return out, fmt.Errorf("--show/--rm take no target argument")
+	if modes > 1 {
+		return out, fmt.Errorf("%w: --show/--rm/--next/--list and a target name are mutually exclusive", ErrUsage)
+	}
+	if out.jsonOut && !out.list {
+		return out, fmt.Errorf("%w: --json only applies to --list", ErrUsage)
 	}
 	return out, nil
 }
@@ -93,8 +111,85 @@ func RunLink(ctx context.Context, opts LinkOpts) error {
 		return runLinkRm(opts)
 	case p.show:
 		return runLinkShow(ctx, opts)
+	case p.list:
+		return runLinkList(opts, p)
+	case p.next:
+		return runLinkNext(ctx, opts)
 	}
 	return runLinkBind(ctx, opts, p.target)
+}
+
+// linkTargetRow is the machine-readable shape of `link --list --json`.
+type linkTargetRow struct {
+	Name       string `json:"name"`
+	SSHHost    string `json:"ssh_host"`
+	RemotePath string `json:"remote_path"`
+	DBName     string `json:"db_name,omitempty"`
+	Current    bool   `json:"current"`
+}
+
+// runLinkList inventories the registered targets, marking the current
+// binding. Deliberately offline: no SSH and no write, so it stays instant —
+// `--show` is the one that probes.
+func runLinkList(opts LinkOpts, p linkArgs) error {
+	targets := opts.Cfg.ConnectTargets
+	current := linkTargetName(opts.Cfg)
+	rows := make([]linkTargetRow, 0, len(targets))
+	for _, t := range targets {
+		rows = append(rows, linkTargetRow{
+			Name: t.Name, SSHHost: t.SSHHost, RemotePath: t.RemotePath,
+			DBName: t.DBName, Current: t.Name == current && current != "",
+		})
+	}
+	if p.jsonOut {
+		b, err := json.Marshal(rows)
+		if err != nil {
+			return fmt.Errorf("encode targets: %w", err)
+		}
+		os.Stdout.Write(b)
+		os.Stdout.Write([]byte("\n"))
+		return nil
+	}
+	if len(rows) == 0 {
+		return ErrNoConnectTargets
+	}
+	for _, r := range rows {
+		mark := " "
+		if r.Current {
+			mark = "●"
+		}
+		fields := [][2]string{{"host", r.SSHHost}, {"path", r.RemotePath}}
+		if r.DBName != "" {
+			fields = append([][2]string{{"db", r.DBName}}, fields...)
+		}
+		opts.log("INFO", "target", mark+" "+r.Name, "", fields...)
+	}
+	return nil
+}
+
+// nextTargetIndex is the cycle step: the index after current (wrapping), or 0
+// when the binding matches no registered target (unlinked / hand-written).
+// Fewer than two targets is a usage error — there is nothing to cycle to.
+func nextTargetIndex(targets []config.ConnectTarget, current string) (int, error) {
+	if len(targets) < 2 {
+		return 0, fmt.Errorf("%w: --next needs at least two connect targets (have %d)", ErrUsage, len(targets))
+	}
+	for i, t := range targets {
+		if t.Name == current && current != "" {
+			return (i + 1) % len(targets), nil
+		}
+	}
+	return 0, nil
+}
+
+// runLinkNext rebinds to the next target in the registry, wrapping — the
+// no-picker toggle for a two-environment setup.
+func runLinkNext(ctx context.Context, opts LinkOpts) error {
+	idx, err := nextTargetIndex(opts.Cfg.ConnectTargets, linkTargetName(opts.Cfg))
+	if err != nil {
+		return err
+	}
+	return runLinkBind(ctx, opts, opts.Cfg.ConnectTargets[idx].Name)
 }
 
 // runLinkBind resolves the target (explicit name, single auto-pick, or
@@ -105,6 +200,11 @@ func runLinkBind(ctx context.Context, opts LinkOpts, name string) error {
 	t, err := resolveLinkTarget(opts, name)
 	if err != nil {
 		return err
+	}
+	// Switching to where you already are costs nothing: no rewrite, no probe.
+	if t.SSHHost == opts.Cfg.ConnectSSHHost && t.RemotePath == opts.Cfg.ConnectRemotePath {
+		opts.log("INFO", "", "already linked", "", [2]string{"target", t.Name})
+		return nil
 	}
 	opts.Cfg.ConnectSSHHost = t.SSHHost
 	opts.Cfg.ConnectRemotePath = t.RemotePath
@@ -143,6 +243,7 @@ func runLinkShow(ctx context.Context, opts LinkOpts) error {
 	if !ok {
 		return nil
 	}
+	reportDeployedCode(ctx, opts, name, prof.DBName)
 	opts.log("INFO", "remote", "remote containers", prof.DBName)
 	if opts.OnPS != nil {
 		jsonCmd := remoteComposeCmd(opts.Cfg.ConnectRemotePath, prof.ComposeCmd, "ps", "--format", "json")
@@ -159,6 +260,30 @@ func runLinkShow(ctx context.Context, opts LinkOpts) error {
 		return fmt.Errorf("remote ps: %w", err)
 	}
 	return nil
+}
+
+// reportDeployedCode adds the git-deploy line to `link --show`: which branch
+// the server's code lives on, the SHA it is at, and the ref it came from
+// (Unit 113). Non-git targets print nothing, and fields the checkout does not
+// carry are omitted rather than shown empty — an older deploy simply reports
+// less.
+func reportDeployedCode(ctx context.Context, opts LinkOpts, name, db string) {
+	g := resolveGitDeploy(opts.Cfg, name, opts.Cfg.ConnectSSHHost, opts.Cfg.ConnectRemotePath)
+	if !g.enabled {
+		return
+	}
+	absDir := absGitDir(opts.Cfg.ConnectRemotePath, g.path)
+	fields := [][2]string{{"branch", g.branch}}
+	ref, sha, at := readDeployedCode(ctx, opts.Cfg.ConnectSSHHost, absDir)
+	if sha == "" {
+		sha, _ = remoteGitOut(ctx, remoteShellContext{sshHost: opts.Cfg.ConnectSSHHost}, absDir, "rev-parse", "HEAD")
+	}
+	for _, f := range [][2]string{{"sha", shortSHA(sha)}, {"ref", ref}, {"at", at}} {
+		if f[1] != "" {
+			fields = append(fields, f)
+		}
+	}
+	opts.log("INFO", "", "deploy code", db, fields...)
 }
 
 // runLinkRm clears the per-project [connect] binding. Idempotent.
@@ -220,13 +345,16 @@ func resolveLinkTarget(opts LinkOpts, name string) (config.ConnectTarget, error)
 			"unknown connect target: %s (available: %s)",
 			name, strings.Join(connectTargetNames(targets), ", "))
 	}
-	return pickConnectTarget(targets, opts.Palette, "Select connect target to link", opts.Log)
+	return pickConnectTarget(targets, opts.Palette, "Switch connect target", linkTargetName(opts.Cfg), opts.Log)
 }
 
 // pickConnectTarget resolves a target when no name was given: none yields
 // ErrNoConnectTargets, a single one is auto-used (with an info line),
 // several open a TTY-guarded picker. Shared by `link` and `deploy`.
-func pickConnectTarget(targets []config.ConnectTarget, palette theme.Palette, title string, log func(level, sub, msg, db string, fields ...[2]string)) (config.ConnectTarget, error) {
+//
+// current names the target the picker should mark and open on ("" when the
+// caller has no notion of a current one, e.g. deploy's target prompt).
+func pickConnectTarget(targets []config.ConnectTarget, palette theme.Palette, title, current string, log func(level, sub, msg, db string, fields ...[2]string)) (config.ConnectTarget, error) {
 	switch len(targets) {
 	case 0:
 		return config.ConnectTarget{}, ErrNoConnectTargets
@@ -238,10 +366,19 @@ func pickConnectTarget(targets []config.ConnectTarget, palette theme.Palette, ti
 		return validLinkTarget(targets[0])
 	}
 	labels := make([]string, len(targets))
+	start := 0
 	for i, t := range targets {
-		labels[i] = fmt.Sprintf("%-16s  %s:%s", t.Name, t.SSHHost, t.RemotePath)
+		mark := " "
+		if t.Name == current && current != "" {
+			mark, start = "●", i
+		}
+		db := t.DBName
+		if db == "" {
+			db = "-"
+		}
+		labels[i] = fmt.Sprintf("%s %-16s  %-20s  %s:%s", mark, t.Name, db, t.SSHHost, t.RemotePath)
 	}
-	chosen, err := runSingleFuzzyPicker(title, labels, palette)
+	chosen, err := runSingleFuzzyPickerAt(title, labels, palette, "", start)
 	if err != nil {
 		return config.ConnectTarget{}, err
 	}

@@ -93,10 +93,11 @@ func main() {
 		// Some one-shot commands (e.g. `i18n-pull`) talk only to a remote
 		// instance and write into the local repo — they never touch a local
 		// docker stack, so they don't need a compose project. Fall back to
-		// cwd as the working directory instead of failing.
+		// the repository root instead of failing, so that working in a
+		// subfolder keeps the same project config.
 		switch {
 		case oneShot && projectlessOneShot(args[0], args[1:]):
-			root = cwd
+			root = repoRoot(cwd)
 		case oneShot:
 			log.Error("not inside a project", "cwd", cwd,
 				"hint", "run echo from a directory containing docker-compose.yml, or pass -C <dir>")
@@ -196,29 +197,63 @@ func isDir(path string) bool {
 // compose project (using cwd as the working directory). These commands
 // reach a remote instance and only read/write local files — they never
 // drive a local docker stack, so a missing docker-compose.yml is fine.
-// `help` is purely informational and needs nothing; `logview`/`report`
+// `help` is purely informational and needs nothing; `lint` only reads local
+// XML files and shells out to xmllint, so it must work from anywhere — an
+// editor or git hook runs it wherever the file was saved, and requiring a
+// compose project would disable exactly the automatic check the command
+// exists for; `logview`/`report`
 // only read the local command-history / run-report store keyed by cwd
 // (browsing history must not require a live project — the deploy that wrote
 // it already ran projectless); `db-pull` dumps a remote DB over SSH into
 // the local repo's ./backups/ (download-only by default) — a local Docker
 // stack is only needed with `--restore`, and that step self-guards via
 // requireDBContainer; the remote-mode group
-// (`shell`/`shell-run`/`update`/`sequence`/…) qualifies only with
+// (`shell`/`shell-run`/`update`/`sequence`/`db-admin`/…) qualifies only with
 // `--from`/`--remote` — locally they need the compose project as always.
+// repoRoot returns the git top level for cwd, falling back to cwd itself
+// outside a repository. Per-project state (the `link` binding, addons
+// paths, deploy history) is keyed by the root's path, so resolving to the
+// repository is what keeps a `cd` into a subfolder from looking like a
+// different, unconfigured project. State left behind by a binding made in
+// a subfolder is moved once, and only into an empty destination.
+func repoRoot(cwd string) string {
+	git := project.GitRoot(cwd)
+	if git == "" || project.SameDir(git, cwd) {
+		return cwd
+	}
+	if from := config.FindProjectState(cwd, git); from != "" && !project.SameDir(from, git) {
+		moved, err := config.MigrateProjectKey(from, git)
+		switch {
+		case err != nil:
+			log.Warn("could not migrate project config", "from", from, "to", git, "err", err)
+		case moved:
+			log.Info("project config migrated", "from", from, "to", git)
+		}
+	}
+	return git
+}
+
 func projectlessOneShot(name string, args []string) bool {
 	switch name {
-	case "help", "i18n-pull", "link", "deploy", "push", "watch", "checkpoint", "actions", "promote", "logview", "report", "db-pull":
+	case "help", "lint", "i18n-pull", "link", "deploy", "push", "watch", "checkpoint", "actions", "promote", "logview", "report", "db-pull", "modules":
 		return true
-	case "shell", "shell-run", "up", "stop", "restart", "logs", "sequence", "update", "test", "view", "compare":
+	case "shell", "shell-run", "up", "down", "stop", "restart", "logs", "sequence", "update", "test", "view", "compare", "db-admin":
 		return hasRemoteFlag(args)
 	}
 	return false
 }
 
-// hasRemoteFlag reports whether args select the remote mode.
+// hasRemoteFlag reports whether args select the remote mode — a named or
+// linked connect target (`--from`/`--remote`) or a Reverb environment
+// (`-E`/`--env`, Unit 107). All of them reach an instance over SSH, so the
+// command needs no local compose project.
 func hasRemoteFlag(args []string) bool {
 	for _, a := range args {
-		if a == "--remote" || a == "--from" || strings.HasPrefix(a, "--from=") {
+		switch {
+		case a == "--remote", a == "--from", strings.HasPrefix(a, "--from="):
+			return true
+		case a == "-E", a == "--env",
+			strings.HasPrefix(a, "-E="), strings.HasPrefix(a, "--env="):
 			return true
 		}
 	}

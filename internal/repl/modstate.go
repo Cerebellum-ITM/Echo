@@ -55,10 +55,13 @@ func (sess *session) runModstate(ctx context.Context, args []string) {
 	sess.emitModstateTable(res)
 }
 
-// exitCodeFor maps a RunModstate error to the script exit code: a missing
-// DB config or a bad flag is a usage error (2), anything else execution (1).
+// exitCodeFor maps a command error to the script exit code: a missing DB
+// config, an explicit ErrUsage, or a bad flag is a usage error (2),
+// anything else execution (1). Shared by the commands whose --json mode
+// bypasses finalize and therefore has to pick the code itself.
 func exitCodeFor(err error) int {
-	if errors.Is(err, cmd.ErrNoDB) || strings.Contains(err.Error(), "unknown flag") ||
+	if errors.Is(err, cmd.ErrNoDB) || errors.Is(err, cmd.ErrUsage) ||
+		strings.Contains(err.Error(), "unknown flag") ||
 		strings.Contains(err.Error(), "takes no arguments") {
 		return exitUsage
 	}

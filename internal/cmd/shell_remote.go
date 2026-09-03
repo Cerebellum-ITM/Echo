@@ -19,12 +19,20 @@ type remoteShellContext struct {
 	target     connectTarget
 	prof       config.RemoteProfile
 	conn       odoo.Conn
+	// reverb is set only when the target was resolved from a Reverb daemon
+	// (`-E`, Unit 107). Nil on every classic target, so the paths that must
+	// behave differently in Reverb mode branch on it and legacy behavior is
+	// unchanged by construction.
+	reverb *reverbEnv
 }
 
 // remoteFlagsIn extracts the remote-mode switches from an argument list:
 // `--from <target>` / `--from=<target>` names a global connect target
 // (implying remote); bare `--remote` uses the resolution chain without a
-// name (the directory's link binding, with the global-targets fallback).
+// name (the directory's link binding, with the global-targets fallback);
+// `-E <project>/<env>` / `--env <spec>` names a Reverb environment,
+// normalized to the `env:` target reference so it travels through the very
+// same `from` string every command already threads (Unit 107).
 func remoteFlagsIn(args []string) (from string, remote bool) {
 	for i := 0; i < len(args); i++ {
 		a := args[i]
@@ -36,6 +44,15 @@ func remoteFlagsIn(args []string) (from string, remote bool) {
 			}
 		case strings.HasPrefix(a, "--from="):
 			from = strings.TrimPrefix(a, "--from=")
+		case a == "-E" || a == "--env":
+			if i+1 < len(args) {
+				from = reverbRefPrefix + args[i+1]
+				i++
+			}
+		case strings.HasPrefix(a, "-E="):
+			from = reverbRefPrefix + strings.TrimPrefix(a, "-E=")
+		case strings.HasPrefix(a, "--env="):
+			from = reverbRefPrefix + strings.TrimPrefix(a, "--env=")
 		case a == "--remote":
 			remote = true
 		}
@@ -52,6 +69,11 @@ func resolveRemoteShell(ctx context.Context, cfg *config.Config, palette theme.P
 		if log != nil {
 			log(level, sub, msg, db, fields...)
 		}
+	}
+	// Reverb mode: one HTTP resolve replaces the target lookup, the SSH
+	// read of the server's Echo profile and the SSH read of its .env.
+	if spec, ok := reverbRefIn(from); ok {
+		return resolveReverbShell(ctx, cfg, spec, log)
 	}
 	sshHost, remotePath, fromName, err := resolveRemoteTarget(cfg, palette, from, log)
 	if err != nil {

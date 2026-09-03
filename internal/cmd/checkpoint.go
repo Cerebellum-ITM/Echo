@@ -58,9 +58,10 @@ func parseCheckpointArgs(args []string) (checkpointArgs, error) {
 	for i := 0; i < len(args); i++ {
 		a := args[i]
 		switch {
-		case a == "--from":
+		case a == "--from", a == "-E", a == "--env":
 			i++ // value consumed by remoteFlagsIn
-		case strings.HasPrefix(a, "--from="), a == "--remote":
+		case strings.HasPrefix(a, "--from="), strings.HasPrefix(a, "-E="),
+			strings.HasPrefix(a, "--env="), a == "--remote":
 			// consumed by remoteFlagsIn
 		case a == "--json":
 			out.jsonOut = true
@@ -137,6 +138,12 @@ func RunCheckpoint(ctx context.Context, opts CheckpointOpts) (CheckpointResult, 
 	if err != nil {
 		return CheckpointResult{}, err
 	}
+	// A Reverb environment keeps its history server-side as snapshots; the
+	// local checkpoint store is never touched for it.
+	if rsc.reverb != nil {
+		return runCheckpointReverb(ctx, opts, rsc, p)
+	}
+
 	projectKey := config.ProjectKey(opts.Root)
 	targetKey := config.DeployTargetKey(rsc.sshHost, rsc.remotePath)
 
@@ -376,8 +383,8 @@ func confirmRollback(palette theme.Palette, db string, entry config.CheckpointEn
 	confirmed := false
 	form := huh.NewForm(huh.NewGroup(
 		huh.NewConfirm().
-			Title("⚠  Deploy run failed on "+red).
-			Description("Roll back to checkpoint "+entry.Name+"? (declining keeps the broken DB for inspection)").
+			Title("⚠  Deploy run failed on " + red).
+			Description("Roll back to checkpoint " + entry.Name + "? (declining keeps the broken DB for inspection)").
 			Affirmative("Roll back").
 			Negative("Keep broken DB").
 			Value(&confirmed),
@@ -410,7 +417,7 @@ func confirmRollbackAged(palette theme.Palette, db string, entry config.Checkpoi
 	confirmed := false
 	form := huh.NewForm(huh.NewGroup(
 		huh.NewConfirm().
-			Title("⚠  Roll back database "+redDB).
+			Title("⚠  Roll back database " + redDB).
 			Description(desc).
 			Affirmative("Roll back").
 			Negative("Cancel").
@@ -437,8 +444,8 @@ func confirmCheckpointRm(palette theme.Palette, db, what string) error {
 	confirmed := false
 	form := huh.NewForm(huh.NewGroup(
 		huh.NewConfirm().
-			Title("⚠  Remove "+red).
-			Description("This deletes the checkpoint on "+db+" permanently.").
+			Title("⚠  Remove " + red).
+			Description("This deletes the checkpoint on " + db + " permanently.").
 			Affirmative("Remove").
 			Negative("Cancel").
 			Value(&confirmed),

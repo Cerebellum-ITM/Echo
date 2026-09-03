@@ -78,26 +78,12 @@ func parseI18nArgs(args []string, allowOut, allowForce bool) (i18nArgs, error) {
 	return out, nil
 }
 
-// resolveModuleDir walks the configured addons paths one-deep looking
-// for <mod>/__manifest__.py and returns the addons directory (the
-// parent of the module folder). Returns ErrModuleNotFound on miss.
+// resolveModuleDir returns the addons directory holding <mod> (the parent
+// of the module folder). Returns ErrModuleNotFound on miss. Callers that
+// also need the resolved module name use resolveAddon directly.
 func resolveModuleDir(cfg *config.Config, root, mod string) (string, error) {
-	paths := cfg.AddonsPaths
-	if len(paths) == 0 {
-		paths = []string{".", "addons", "custom"}
-	}
-	for _, sub := range paths {
-		dir := filepath.Join(root, sub)
-		manifest := filepath.Join(dir, mod, "__manifest__.py")
-		if _, err := os.Stat(manifest); err == nil {
-			abs, err := filepath.Abs(dir)
-			if err != nil {
-				return dir, nil
-			}
-			return abs, nil
-		}
-	}
-	return "", fmt.Errorf("%w: %s", ErrModuleNotFound, mod)
+	dir, _, err := resolveAddon(cfg, root, mod)
+	return dir, err
 }
 
 // defaultExportDest returns <addonsDir>/<mod>/i18n/<lang>.po. The
@@ -129,7 +115,7 @@ func tmpConfInContainer() string {
 // modules and returns the chosen one. ErrNoModulesAvailable when there
 // are no candidates, ErrCancelled on Esc.
 func pickModuleSingle(cfg *config.Config, root string, palette theme.Palette, title string) (string, error) {
-	available := listAvailableModules(cfg, root)
+	available := listAddons(cfg, root)
 	if len(available) == 0 {
 		return "", ErrNoModulesAvailable
 	}

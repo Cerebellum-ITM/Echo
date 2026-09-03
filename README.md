@@ -101,7 +101,9 @@ and every command is wired to the right containers.
 | `  --list` | List all project aliases                                         |
 | `  --rm <name>` | Remove an alias                                            |
 | `  --migrate` | Backfill aliases from connect targets with local paths       |
-| `link [<target>]` | Bind this directory to a connect target (no args: picker)  |
+| `link [<target>]` | Switch this directory's connect target (no args: picker, current marked) |
+| `  --next` | Switch to the next target, wrapping — the two-target toggle      |
+| `  --list [--json]` | List the targets, marking the current one (no SSH, no write) |
 | `  --show` | Show the binding, probe the remote, stream its `compose ps`     |
 | `  --rm`   | Remove this directory's `[connect]` binding                     |
 | `help`   | Print the in-REPL command list, grouped by area                    |
@@ -176,6 +178,7 @@ echo restart --from staging    # ad-hoc: a different named target
 | `  --tags <spec>`        | Override the auto test-tags filter                   |
 | `modules`                | List modules from the configured addons paths        |
 | `  --config`             | Interactive form to pick which folders are addons paths |
+| `  --addons-path <a,b>`  | Set the addons paths without the form (empty string clears) |
 | `modinfo [<mod>]`        | Compare the DB-installed version against the manifest version |
 | `  --copy`               | Copy the report to the clipboard                     |
 | `  --last`               | Re-show this session's last `modinfo` (skips the picker) |
@@ -186,7 +189,12 @@ echo restart --from staging    # ad-hoc: a different named target
 When `install`/`update`/`uninstall`/`test` are called without module names,
 Echo opens an fzf-style fuzzy picker scoped to the project's modules — host
 folders, or the instance's `odoo.conf` `addons_path` when the host scan is
-empty. The `update` picker highlights the previous run's modules; confirming
+empty. A repo that keeps its modules in a subfolder needs no setup: when the
+configured paths (and the conventional `.`/`addons`/`custom`) come up empty,
+Echo walks the repo up to three levels deep for directories holding a
+`__manifest__.py`, the way Odoo takes several `addons_path` entries. Configured
+paths always win, and a module name found under two paths is an error naming
+both rather than a silent pick. The `update` picker highlights the previous run's modules; confirming
 it with nothing selected offers to repeat that last update. The start line
 names the resolved modules (picker / `--last` / `--all`) so you always know
 what's running.
@@ -221,7 +229,12 @@ asks for a red confirmation unless `--force`; `--last` stays local-only. Like
 
 | Command                          | Description                                                       |
 |----------------------------------|-------------------------------------------------------------------|
-| `db-admin [name]`                | Reset the admin user (uid 2) login **and** password to `admin`/`admin`; red confirm only on `prod` (`--force` skips) |
+| `db-admin [name]`                | Reset the admin user (uid 2) to login `admin` and a **generated** password, printed once and stored as a `pbkdf2_sha512` hash |
+| `  --password <pw>`              | Use an explicit password instead of a generated one (also hashed) |
+| `  --insecure`                   | Set it to `admin`/`admin` — known credentials, confirmed on any stage |
+| `  --from <t>` / `--remote`      | Run it against a remote target's Postgres; the hash is computed locally, so the password never leaves your machine |
+| `  --save`                       | Store the credential in 1Password as `Odoo <project> (<db>)`, with the instance's `web.base.url` attached so it autofills; updates the item if it already exists |
+| `  --vault <name>`               | Vault for `--save` (default: `op`'s own default)                  |
 | `db-backup [name]`               | `pg_dump -Fc` into `./backups/<db>_<ts>.dump`                     |
 | `  --with-filestore`             | Package dump + container filestore into a `.zip` (Odoo-compatible) |
 | `db-restore [--as N] [--force] [--neutralize]` | Pick a backup (Echo `.dump` or native Odoo `.zip`), name the target DB, create it, and restore the filestore — narrating each step live |
@@ -250,8 +263,11 @@ streaming `pg_restore`, copying the filestore — instead of sitting silent:
 
 `db-use` switches which database is active (the one `db-list` marks `●` and
 the implicit target of `update`/`shell`/`psql`/`db-admin`/…); `db-admin`
-resets the admin user to `admin`/`admin` to get back into the back office
-when you don't have the password.
+gets you back into the back office when you don't have the password — it
+resets uid 2 to login `admin` with a freshly generated password, printed
+once and stored only as a `pbkdf2_sha512` hash, so the database you just
+recovered isn't left open behind you. `--insecure` brings back the old
+`admin`/`admin` for throwaway databases, and asks first.
 
 <p align="center"><img src="demo/gifs/db-list.gif" alt="echo db-list" width="860"></p>
 
@@ -379,6 +395,11 @@ the code there — that's for the tool you use to sync the working tree.
 | `  --test-add` / `--test-rm <list>` | Add/remove modules from the pinned test list (no deploy) |
 | `  --test-clear`   | Clear the pinned test modules — back to testing what's deployed (no deploy) |
 | `  --rollback`     | Restore the target's most recent checkpoint (no deploy)  |
+| `  --consume-checkpoint` | With `--rollback`: restore a `db` checkpoint by renaming it over the live DB (cheaper on disk, but destroys the checkpoint — no restore point remains) |
+| `  --restore-code [<sha>]` | Move a git-deploy target's code back to a hash it already ran (bare = picker over the branch's history), then restart (no DB) |
+| `  --set-code <ref>` | Re-baseline a git-deploy target's code onto **any** ref — branch, tag, SHA — then restart (no DB, see below) |
+| `  --keep-overlay` / `--with-local` / `--fetch` / `--no-fetch` | `--set-code` modifiers (overlay, local branch, remote refresh) |
+| `  --set-git-branch <name>` | Name the branch the target's code lives on and exit (no deploy); `--rename` also moves the one already on the server |
 
 **Push by default.** For an image-built remote where a deploy always ships
 code, make `--push` the default instead of typing it every time: `deploy
@@ -387,6 +408,72 @@ deploy), or declare it in the server profile (server wins, local falls back).
 Then `deploy` pushes on its own; `deploy --no-push` skips it for one run.
 `watch` always pushes from its own git archive, so the default never
 double-pushes there.
+
+#### Re-baseline the deploy line (`--set-code`)
+
+A git-deploy target accumulates on one branch, and a deploy only ever moves it
+**forward** — that gate is what keeps a normal deploy from silently jumping to
+another line. But after you merge a feature into `main` and start the next one,
+the deploy branch *should* jump: it is now history nobody wants to keep
+building on. `deploy --set-code <ref>` is that move, made explicit.
+
+```
+deploy --set-code origin/main --from dev            # the server's code = main
+deploy --set-code origin/feat/x --from dev          # a branch someone else pushed
+deploy --set-code v1.4.0 --from dev --dry-run       # preview: direction + files cleaned
+```
+
+The ref is resolved **locally**, so a branch that exists only on your machine
+ships exactly like one on `origin` — the objects travel over the same SSH host
+Echo already uses, never through a git host. A `<remote>/<branch>` ref refreshes
+that remote first (`--no-fetch` opts out, `--fetch` forces it for any ref).
+
+By default the server's checkout ends up matching the ref: the dirty overlay is
+cleaned **within module paths only**, so the server's own `odoo.conf`,
+`docker-compose.override.yml` or `filestore/` are never touched.
+`--keep-overlay` keeps the non-colliding overlay instead (the incremental-deploy
+behavior). Nothing else moves: no DB, no checkpoint, no module install/upgrade —
+run `update` yourself when the new base changes module code.
+
+Pair it with `promote --reset` (below) to bring the local deploy branch to the
+same place, or do both at once with `--with-local`, which runs the local reset
+**first** so a worktree that can't be re-based aborts before the server moves.
+
+**The ref name never travels.** Only the commit objects do: the server's code
+always lives on the target's own `git_branch` (default `echo/deploy`), and
+`--set-code` moves *that* branch. No branch named after the ref is created
+there — which is deliberate, because a server branch carrying a real branch
+name would diverge from `origin` on every deploy (Echo pushes objects and moves
+the pointer; it never pulls).
+
+Two commands cover what that leaves open:
+
+```
+deploy --set-git-branch echo/deploy --from dev            # name the line (config only)
+deploy --set-git-branch echo/deploy --from dev --rename   # …and rename the one already there
+```
+
+`--set-git-branch` persists the target's `git_branch` and exits; the next deploy
+creates that branch at the checkout's current HEAD and switches to it, leaving
+the working tree and the overlay untouched. `--rename` does it now instead
+(`git branch -m` on the server — the ref moves, files don't), so the previous
+branch isn't left behind pointing at the last deployed SHA. Give the line a
+name that can't collide with a real branch: a `git_branch = "staging"` is a
+branch Echo rewrites on every deploy, and anyone who runs `git pull` in that
+checkout will find it diverged.
+
+And to see what a server is running without Echo, every git-mode move stamps
+the checkout's own git config:
+
+```sh
+git config --get echo.deployed-ref     # origin/deploy/dev
+git config --get echo.deployed-sha
+git config --get echo.deployed-at
+```
+
+`link --show` reports the same thing (`deploy code branch=… sha=… ref=… at=…`).
+A `--restore-code` clears the ref, since a rollback lands on a hash and not on a
+line.
 
 #### Deploy + test in one command
 
@@ -437,10 +524,11 @@ later inspection, no prompt). The explicit flag wins over `--force` and over the
 TTY prompt; without either flag, behavior is unchanged. `watch` always restores.
 
 Two methods: `db` (the default — `CREATE DATABASE … TEMPLATE`, a fast
-file-level copy, `STRATEGY FILE_COPY` on PostgreSQL 15+; rollback is a near-
-instant `DROP` + `RENAME`) and `dump` (`pg_dump -Fc` kept under the server's
-`backups/checkpoints/`, slower but with a low disk peak). Checkpointing is
-**on for `staging`/`prod`, off for `dev`** by default.
+file-level copy, `STRATEGY FILE_COPY` on PostgreSQL 15+; rollback copies the
+checkpoint back the same way, leaving it intact so the point stays restorable)
+and `dump` (`pg_dump -Fc` kept under the server's `backups/checkpoints/`, slower
+but with a low disk peak). Checkpointing is **on for `staging`/`prod`, off for
+`dev`** by default.
 
 The policy — `mode = "auto"|"on"|"off"`, `method = "db"|"dump"`, `keep = N` —
 lives in a `[checkpoint]` section and is resolved **server-first**: it is read
@@ -465,7 +553,13 @@ for "it passed, but I found the bug 20 minutes later". It picks the most recent
 checkpoint (a picker when there are several on a TTY), red-confirms with an
 explicit **age warning** when the checkpoint is over an hour old (that's how
 much captured data a restore would discard), restores, and un-marks the
-commits so they can be redeployed.
+commits so they can be redeployed. By default the checkpoint is **preserved**
+(the `db` method copies it back rather than consuming it), so the same point
+stays restorable — repeat the rollback, or redeploy and roll back again. Pass
+`--consume-checkpoint` to use the older near-instant `DROP` + `RENAME` instead:
+it needs no extra disk but destroys the checkpoint, leaving no restore point.
+The on-failure auto-rollback (during a deploy) still consumes its just-made
+checkpoint, since its purpose ends the moment the failed deploy is reverted.
 
 The `checkpoint` command inspects and cleans them:
 
@@ -521,6 +615,22 @@ Then, each deploy (after the server has pulled the new code):
 echo deploy --dry-run             # pick commits, see the plan, touch nothing
 echo deploy                       # the real thing (red confirm if the remote stage is prod)
 ```
+
+**Switching between environments.** One repo usually feeds more than one
+target (a dev instance and the client-facing staging one). The `link` binding
+is what every command falls back to when `--from` is absent, so it *is* the
+"current system" — and `link` is how you move it:
+
+```sh
+echo link --list                  # who's registered, current marked ● (no SSH, no write)
+echo link                         # picker, opens on the current target
+echo link --next                  # switch to the next one — a plain toggle with two targets
+```
+
+Picking the target you are already on is a no-op (no rewrite, no probe). The
+switcher, `--next` and `--list` never open an SSH connection, so they are
+instant; `--show` is the one that probes the current binding. And any single
+command can still cross over without switching at all: `deploy --from staging`.
 
 ```
   ❯ echo deploy
@@ -610,6 +720,28 @@ blocks a promote (accumulation is the point). Dirty mode is last-write-wins: it
 overwrites the deploy branch's version of a file and **warns** when that file
 already had uncommitted work there. Only a **cherry-pick** conflict (commit
 mode) aborts, cleanly, leaving the deploy branch untouched.
+
+**Re-basing the line (`--reset`).** The deploy branch accumulates forever
+unless you tell it where it came from. Declare a base once and the branch can
+be sent back to it after each merge:
+
+```
+promote --set-base origin/main           # persist [promote] base
+promote --show-branch                    # branch=… base=origin/main ahead=3 behind=41 dirty=6
+promote --reset --dry-run                # preview the move
+promote --reset                          # develop ← origin/main
+```
+
+`--reset` uses `git reset --keep`: uncommitted work the move doesn't touch
+**survives**, and if it would be clobbered the reset **refuses** and names the
+files — the default path can't destroy work. `--discard` is the explicit hard
+reset (it also removes the modules' untracked files, leaving anything outside a
+module alone). Commits the base doesn't contain leave the branch and stay in the
+reflog; that case asks for confirmation, a plain rewind doesn't.
+
+Like the rest of `promote`, `--reset` is **local only** — the server's code is
+moved by `deploy --set-code <base>` (or `deploy --set-code <base> --with-local`,
+which does both).
 
 ```
 echo_cli promote --dirty stock_extra --to pruebas
@@ -729,16 +861,26 @@ TOML by hand:
 | `actions add`                 | Wizard: name → phase → where → exec dir → command                 |
 | `actions edit [<name>]`       | Edit an action in place (picker when no name)                     |
 | `actions rm [<name>] [--force]` | Delete an action (picker when no name)                          |
-| `  --from <t>` / `--remote`    | Resolve a remote target for the exec-dir picker and the upload offer |
+| `  --from <t>` / `--remote`    | **Scope**: operate on that target's server profile instead of the local list |
 | `  --json`                    | Emit the list as JSON (with `list`)                               |
+
+**`--from`/`--remote` is the scope selector.** With a remote flag,
+`add`/`edit`/`rm` read and write **that target's** server profile
+(`~/.config/echo/projects/<key>.toml` on the server, keyed by its
+`remote_path`) and never touch the local list; without one they edit the
+**local** list — the fallback that applies to any target whose server declares
+no actions. That is how one addons repo feeding several environments gives each
+one its own actions: put them on each server, scoped by `--from`.
+
+Because resolution is wholesale, emptying a server's list does **not** mean "no
+actions run" — that target falls back to the local list, so an `rm` that
+removes the last server entry warns and names the local set that takes over.
+Server-scoped writes are prod-gated (`--force` skips).
 
 The wizard's exec-dir step offers **Project root**, **Addons directory**
 (resolved from the profile), **Pick a directory…** (the remote SSH browser for
 a `remote` action, a local browser for a `local` one), or **Type a path** — a
-picked path is stored relative when it falls under the root. Edits persist to
-the **local** `[[deploy.actions]]`; after each change Echo can optionally
-upload the set to the server's project profile over SSH (rewriting only the
-`[[deploy.actions]]` section, prod-gated).
+picked path is stored relative when it falls under the root.
 
 `actions` lists the effective set — name · phase · where · exec_path · run —
 so you can see at a glance what runs around each deploy:
@@ -827,6 +969,111 @@ contains its commit (`git merge-base --is-ancestor <sha> <tip>`), and read
 runs on, without re-invoking it.
 
 <p align="center"><img src="demo/gifs/logview.gif" alt="echo logview — run list, per-run log view, live text and level filters" width="860"></p>
+
+## Reverb mode
+
+A remote target normally lives in `global.toml` as a `[connect_targets.<name>]`,
+and Echo reads the rest of the mapping off the server over SSH — its own Echo
+profile plus the project's `.env`. When the instance is managed by
+[Reverb](https://github.com/pascualchavez/reverb), all of that is already
+published on one endpoint, so `-E` resolves the target **at call time** and
+builds it in memory. Nothing is written to `global.toml`: that is the whole
+point — zero per-environment configuration.
+
+Point Echo at the daemon once, globally:
+
+```toml
+[reverb]
+url      = "https://reverb.example.com"
+token    = "rvb_…"        # scope: echo, minted in the Reverb UI
+ssh_host = "reverb-dev"   # optional: your own ~/.ssh/config alias for the host
+```
+
+The token is a **secret** — it grants the environment's DB password through
+resolve. Echo never logs it, never puts it in an error, and never copies it
+into a project profile.
+
+If the daemon has no public URL yet (`reverbd` binds `127.0.0.1:8484`), tunnel
+to it and point `url` at the local end:
+
+```bash
+ssh -L 8484:127.0.0.1:8484 <host>    # then url = "http://127.0.0.1:8484"
+```
+
+**`ssh_host`: name the host yourself.** Echo has never had a port field, in
+any mode — it passes the host verbatim to `ssh`/`rsync` and lets your
+`~/.ssh/config` resolve port, user, identity and ProxyJump. That works for a
+classic target because `ssh_host` is a name *you* wrote, an alias matching one
+of your `Host` blocks. The resolve payload's host is written by the daemon and
+is a literal `user@ip`, which matches no `Host` block — so the port, key and
+jump that block carried are all lost, and ssh tries port 22 and reports a
+connection refused that reads like a dead host.
+
+Setting `ssh_host` puts the transport back where it lives in classic mode:
+
+```
+Host reverb-dev
+  HostName 10.0.0.5
+  User deploy
+  Port 1024
+  IdentityFile ~/.ssh/id_ed25519
+```
+
+That is one block **per Reverb host**, not per environment, so the zero
+per-environment promise is untouched. Without it, Echo still uses the payload's
+host and warns when the daemon reports a non-default `ssh_port`, naming both
+fixes — it never synthesizes an `ssh -p`, because the payload can supply the
+port but, by contract, never the identity ("Reverb ships no keys"), so a second
+configuration channel would only ever solve a third of the problem.
+
+```bash
+echo shell-run report.py -E acme/feature-x   # <project>/<env>
+echo logs -E feature-x                       # bare env when the name is unique
+```
+
+`-E <spec>` is sugar for `--from env:<spec>` — `env:` is a reserved prefix in
+the target-reference namespace, which is why every remote-capable command
+supports it: `shell`, `shell-run`, `logs`, `view`, `compare`, `update`, `test`,
+`push`, `db-pull`, `actions`, `sequence`, plus `checkpoint` and the container
+lifecycle verbs. A bare `<env>` is looked up across projects and, if the name
+exists in more than one, the error names the candidates.
+
+An environment still provisioning (`409 not_ready`) is **waited out**, not
+failed: Echo finds the in-flight `env_create`/`env_fork` job and streams its
+progress events, the same ones Reverb's UI shows, then resolves once it
+finishes (a real create takes 60–90s). A `401`/`403` is reported as a
+configuration problem; a payload with no `ssh_host` points at the daemon's own
+`public_host` (`REVERB_PUBLIC_HOST`) instead of silently falling back to
+another host.
+
+**`push` lands in the overlay.** Reverb owns the addons directory and replaces
+it wholesale on every deploy; the overlay is the one directory it never
+touches, and a module there shadows the git copy (Odoo's `get_module_path`
+resolves it to the overlay). So in Reverb mode the default destination is
+`paths.overlay`, a `--dest` / `[push] path` that resolves under `paths.addons`
+is **refused** (the next deploy would destroy the code), and a pushed module
+that shadows a deployed one emits a warning so you know the running code is
+the overlay's. That shadow report comes from the server
+(`GET /environments/{id}/overlay`): the comparison is against the deployed git
+tree, which your machine has no copy of. `push --clean` empties the overlay — it is a plain directory, not a
+git checkout, so it is removed rather than reverted, with the same dry-run
+preview and destructive confirm.
+
+**`checkpoint` maps to Reverb's snapshots**, and keeps no local checkpoint
+store for these targets — a parallel store would duplicate state and confuse
+rollback. `checkpoint list` shows the environment's snapshots; `checkpoint
+create` takes one and follows the job. `checkpoint rm` is refused: deleting a
+snapshot throws state away, so the contract keeps it admin-scoped.
+
+**`up`/`down`/`stop`/`restart` go through the API** rather than
+`ssh docker compose`, because Reverb reconciles desired vs observed state and a
+compose command run behind its back shows up as drift in its UI. `down` maps to
+stop and says so — Reverb models a desired state, so there is no compose-style
+teardown. `ps` and `logs` stay on SSH; they are read-only.
+
+`deploy` and `watch` still refuse a Reverb target: Reverb runs its own deploy,
+and delegating to it means first pushing the branch to the Reverb remote — a
+design that has not landed yet. Each says so when you try.
 
 ## Build mode
 
@@ -972,7 +1219,7 @@ projects. Stage modifies the prompt accent: `dev` (green), `staging`
 
 ```
 ~/.config/echo/
-├── global.toml          # theme, logo, compose flavor, prompt, log_db_max, connect targets, project aliases
+├── global.toml          # theme, logo, compose flavor, prompt, log_db_max, connect targets, project aliases, [reverb]
 ├── history              # REPL command history
 ├── run-logs/            # `echo run --log` transcripts + last-run.json (for `report`)
 ├── connect-sessions/    # cached `connect` web sessions, per target

@@ -8,6 +8,388 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- **`db-admin` deja de instalar una credencial pública.** El comando existía
+  para recuperar el acceso al back office, y lo lograba dejando la base
+  abierta: escribía `admin`/`admin` —documentada en el README y en el help— y la
+  guardaba en **texto plano**, apoyándose en el esquema `plaintext`
+  deprecado del crypt context de Odoo. Es decir que hasta el siguiente login
+  exitoso la contraseña era legible con un `psql`, y viajaba tal cual en cada
+  `db-backup`, `db-pull` y `pg_dump` que se tomara en esa ventana. Ahora la
+  contraseña se **genera por corrida** (20 caracteres de `crypto/rand`, sin
+  glifos ambiguos porque se copian a mano de la terminal), se imprime **una
+  sola vez** y se escribe como hash **`pbkdf2_sha512` en formato passlib**
+  (`$pbkdf2-sha512$25000$salt$checksum`), que Odoo verifica nativo y no
+  re-hashea. El login sigue siendo `admin`: no es el secreto —quien tiene el
+  back office lo lee— y generarlo solo agregaría una segunda cosa que copiar.
+  Cero dependencias nuevas: `crypto/pbkdf2` es stdlib desde Go 1.24.
+- **La confirmación de `db-admin` mide el riesgo, no el stage.** Antes
+  preguntaba solo si `stage = prod`, que deja fuera el caso peor: instalar
+  credenciales conocidas en un staging accesible. Ahora confirma en `prod`
+  —resetear al admin le quita el acceso a quien tenía la contraseña real,
+  aunque la nueva sea fuerte— **y** siempre que la credencial resultante sea
+  pública (`--insecure`), en cualquier stage. `--force` sigue saltándose
+  ambas.
+
+### Fixed
+- **`db-admin --remote` fallaba con "not inside a project".** El modo remoto
+  se agregó sin sumar el comando a `projectlessOneShot`, así que Echo seguía
+  exigiendo un `docker-compose.yml` en el cwd para una operación que solo
+  habla por SSH — el mismo hueco que en su día tuvo `logview --remote`.
+  Ahora entra al grupo remote-mode: projectless con `--from`/`--remote`, y
+  local exige el proyecto como siempre.
+
+### Added
+- **`db-admin --save` guarda la credencial en 1Password.** La sonda del
+  pre-flight es `op vault list`, **no** `op whoami`: bajo la integración
+  con la app de escritorio no hay token de sesión clásico, así que
+  `whoami` contesta `account is not signed in` mientras todo comando real
+  funciona — preguntar con un comando que lee las bóvedas es preguntar lo
+  que de verdad importa. La Unit 116 sacó
+  la contraseña de la base, pero la dejó en un solo lugar: el scrollback.
+  Ahora `--save` crea un ítem Login con título `Odoo <proyecto> (<db>)`,
+  usuario `admin`, la contraseña generada, y la URL real de la instancia
+  leída de `web.base.url` en `ir_config_parameter` —la misma fuente que usa
+  `connect` para abrir el navegador— para que 1Password la ofrezca sola al
+  entrar al back office. Si el ítem ya existe **lo actualiza** en vez de
+  crear otro: 1Password conserva el historial de contraseñas, y así no se
+  acumula un ítem por reset. El parcheo manda el ítem completo, de modo que
+  las secciones, notas y campos custom agregados a mano sobreviven. La
+  contraseña viaja **por stdin, nunca en `argv`** (el propio `op` advierte
+  que los argumentos quedan en el historial de shell y son visibles a otros
+  procesos). Las verificaciones de `op` corren **antes** del `UPDATE`: si se
+  comprobaran al final, una bóveda bloqueada dejaría la base ya reseteada y
+  la credencial sin guardar en ningún lado. Después del reset ya no se
+  aborta — un fallo al guardar imprime la contraseña igual y reporta
+  WARNING, porque perder el ítem se recupera copiando de pantalla y perder
+  la contraseña no. Funciona en local y en remoto. `--vault <name>` fija la
+  bóveda; sin `--save` es `ErrUsage`.
+- **`db-admin --from <target>` / `--remote`.** El comando dejó de ser
+  local-only: corre la misma sentencia contra el Postgres del target
+  remoto reusando `resolveRemoteShell` y `remotePsqlScalar` (los que ya
+  usa `checkpoint`), con la DB resuelta por arg posicional →
+  `db_name` del perfil remoto → picker. **El hash se calcula en local**,
+  así que por el SSH viaja el hash y nunca la contraseña. El guard lee el
+  stage del **target**, no el del proyecto local: sin eso un
+  `db-admin --from prod` desde un checkout `dev` no preguntaría nada, que
+  es exactamente el caso para el que existe el confirm.
+- **`db-admin --password <pw>`** fija una contraseña explícita en vez de la
+  generada; también se guarda hasheada.
+- **`db-admin --insecure`** conserva el `admin`/`admin` de siempre para bases
+  desechables. Con `--password` es `ErrUsage`: las dos escriben el mismo
+  campo.
+
+### Fixed
+- **`push` y `deploy` encuentran el módulo aunque los addons vivan en una
+  subcarpeta del repo — y dejan de sincronizar en silencio al lugar
+  equivocado.** Un repo que guarda sus módulos en `oehealth_modules_19/` —un
+  layout normal, y una de varias entradas del `addons_path` que el server ya
+  carga— fallaba con `module "…" is not an addon` desde la raíz. La causa no era
+  una, eran cuatro búsquedas de un nivel que discrepaban entre sí:
+  `resolveModuleDir` respetaba los `addons_paths` configurados para `push`, pero
+  `isAddonDir` los **ignoraba por completo**, así que `deploy --modules` fallaba
+  incluso donde `push` ya funcionaba; `lint` tenía su propio par de funciones y
+  el picker una cuarta. Ahora hay un solo resolvedor, con **descubrimiento
+  recursivo acotado** (profundidad 3, saltando `.git`, `node_modules`,
+  `__pycache__` y demás) que corre **solo como fallback**: la configuración
+  sigue ganando cuando existe, así que ningún proyecto que hoy funciona cambia
+  de comportamiento ni paga el escaneo. Si el mismo nombre de módulo aparece
+  bajo dos rutas, falla nombrando ambas en vez de elegir una a ciegas.
+- **El fallo silencioso: `push sub/<mod>` reportaba éxito y no surtía efecto.**
+  Pasar la ruta relativa colaba la validación (`Join(root, ".", "a/b", …)`
+  acierta) y la barra se propagaba literal al destino remoto, sincronizando a
+  `addons/oehealth_modules_19/oehealth_consultation_extra` — un directorio que
+  `/mnt/extra-addons` sombrea en el `addons_path`. El push decía `new=18`, el
+  `-u` corría limpio, y el cambio nunca cargaba. Un argumento con separador
+  ahora se resuelve a su nombre real de módulo, o falla explícito si no es un
+  addon; el nombre que llega al log y al destino no lleva separador nunca.
+- **`deploy --dirty` y `--auto` veían vacío en un layout anidado.** El mapeo de
+  rutas de git a módulo tomaba el primer segmento (`oehealth_modules_19`) y lo
+  descartaba por no ser un addon, así que la selección se quedaba sin nada que
+  desplegar. Ahora se busca el primer ancestro que sí es un addon, y la
+  detección de cambios de i18n se ancla al directorio del módulo en vez de a su
+  nombre.
+- **El `link` se perdía al entrar a una subcarpeta.** Toda la config por
+  proyecto se guarda bajo el sha256 de la ruta raíz, y la raíz era el `cwd`
+  cuando no hay `docker-compose.yml`: parado en `oehealth_modules_19/`, Echo
+  leía **otro archivo** y reportaba `not linked`. La raíz ahora cae al top-level
+  de git antes que al `cwd`. El estado que quedó bajo la llave vieja se **migra
+  una sola vez** y solo si el destino está vacío, moviendo las seis ubicaciones
+  (`projects`, `deploy-history`, `last-updates`, `last-sequences`,
+  `checkpoints`, `cmd-logs/`) — no nada más el toml, o se perderían el historial
+  de deploys y los checkpoints.
+
+### Added
+- **`modules --addons-path <a,b,c>`: declarar las carpetas de addons sin el
+  formulario.** `modules --config` es un multiselect interactivo y además exigía
+  un proyecto con `docker-compose.yml`, así que en un repo que solo está
+  linkeado no había forma de configurar nada — y un agente headless no puede
+  contestar un formulario. La variante no interactiva persiste la lista y fija
+  el modo `host`; con la cadena vacía limpia la llave y devuelve el proyecto a
+  la convención más el descubrimiento. `modules` entra además a la lista de
+  comandos que corren sin proyecto.
+- **La rama de despliegue del server ahora se puede nombrar, y el server dice
+  qué está corriendo.** Dos huecos que dejaron las Units 102 y 112. **(1)**
+  `deploy --set-git-branch <name>` nombra la rama donde vive el código del
+  target — hasta ahora eso solo se podía editando `global.toml` a mano. Es
+  config-only como sus hermanos (`--set-push`, `--set-checkpoint`): persiste y
+  sale, y el siguiente deploy crea esa rama en el HEAD del checkout y se cambia
+  a ella sin tocar el working tree ni el overlay. `--rename` hace la mitad
+  remota ahora (`git branch -m` en el server: se mueve el ref, no los archivos),
+  que es la forma de no dejar la rama vieja colgada apuntando al último SHA
+  desplegado. Se llama como la llave de config que escribe (`git_branch`) y no
+  `--set-branch` porque esa ya existe en `promote` y significa otra cosa —la
+  rama de acumulación local— en otra máquina. **(2)** Cada movimiento en modo
+  git estampa el checkout remoto con `echo.deployed-ref`, `echo.deployed-sha` y
+  `echo.deployed-at` en su **propio git config**: vive con el checkout,
+  sobrevive todos los resets porque no es contenido versionado, y contesta "¿qué
+  trae este server y de dónde salió?" con un comando que cualquiera ya conoce
+  (`git config --get echo.deployed-ref`), sin Echo del otro lado. `link --show`
+  lo reporta también. Un `--restore-code` **borra** el ref en vez de dejarlo
+  describiendo una línea en la que el checkout ya no está. Se descartó la
+  alternativa de que `--set-code <rama>` creara y checkouteara esa rama en el
+  server: una rama con nombre real ahí crea la expectativa de que se sincroniza
+  con `origin` —y Echo nunca hace pull, empuja objetos y mueve el puntero, así
+  que la divergiría en cada deploy— además de que `--set-code` acepta tags y
+  SHAs, donde no hay rama que crear, y de que volvería a un comando de contenido
+  un escritor de configuración. `--dry-run` reporta el plan sin escribir nada
+  —ni la config local ni el server—, como el resto de `deploy`.
+- **La línea de despliegue ahora se puede re-basar: `deploy --set-code <ref>` y
+  `promote --reset`.** Cierra el hueco que dejó la Unit 102: `gitAdvance` exige
+  fast-forward y, cuando falla, dice *"restore or reset it first"* — un reset que
+  ningún comando hacía. `deploy --set-code` lleva el código de un target
+  git-deploy a **cualquier** ref (rama, tag, SHA, `origin/*`), no solo a hashes
+  que el server ya corrió como `--restore-code`; la **ausencia** del gate de
+  fast-forward *es* la funcionalidad, y es lo que vuelve recuperable un
+  `echo/deploy` divergido. El ref se resuelve **en local** y primero (un typo
+  cuesta cero llamadas remotas), con `git fetch` automático para `<remote>/<rama>`
+  (`--fetch`/`--no-fetch`): una rama que solo existe en tu máquina se despliega
+  igual que una de `origin`, porque los objetos viajan por el mismo SSH de
+  siempre y no por el repo. Por defecto **limpia el overlay sucio** reusando el
+  core de `push --clean`, con scope de **rutas de módulo y nunca la raíz** — el
+  `odoo.conf` del server, su `docker-compose.override.yml` o un `filestore/`
+  suelto no son parte de ninguna línea de despliegue; `--keep-overlay` vuelve a
+  la semántica incremental. Reinicia Odoo y no toca nada más: sin DB, sin
+  checkpoint, sin lint. Además **re-basa el historial de SHAs desplegados**
+  (`ResetDeployedSHAs`), porque dejarlo viejo haría que el siguiente
+  `deploy --auto` se saltara commits que a ese target nunca se le mandaron.
+  `promote --set-base <ref>` declara la base de la rama de acumulación y
+  `promote --reset [<base>]` la manda de vuelta ahí con `git reset --keep`: lo
+  sucio que el movimiento no toca **sobrevive**, y si lo fuera a pisar el reset
+  **se niega** y nombra los archivos — el camino por defecto no puede destruir
+  trabajo. `--discard` es el `--hard` explícito (borra además los untracked de
+  los módulos, y deja en paz lo que esté fuera de un módulo); los commits que la
+  base no contiene salen de la rama y quedan en el reflog, y ese caso sí pide
+  confirmación mientras que un rewind puro no. `promote` sigue siendo puramente
+  local (invariante de la Unit 97): el gesto único es
+  `deploy --set-code <ref> --with-local`, que corre el reset local **primero**
+  para abortar antes de mover el server. `promote --show-branch` gana
+  `base`/`ahead`/`behind`/`dirty` — la señal de cuándo toca re-basar, que hasta
+  ahora solo contestaba un git a mano.
+- **El `lint` cruza el `__manifest__.py` contra el disco, en los dos sentidos.**
+  Es la otra mitad de "qué va a rechazar el loader", por otra puerta: sin comando
+  ni flag nuevos, corre dentro del `lint` que ya existe y por lo tanto dentro del
+  pre-flight de `deploy` sin cablear nada. **`manifest-missing`** — una entrada de
+  `data`/`demo` que no existe en disco — es **siempre** `err`, y es el único punto
+  donde el modelo manifest-aware de la Unit 109 no aplica porque *no puede*: ese
+  modelo pregunta si un manifiesto lista el archivo para decidir si el loader lo
+  va a leer, y aquí la respuesta es sí por construcción — la ausencia **es** el
+  defecto, y el loader aborta cada vez. Se ancla a la línea del `__manifest__.py`,
+  no al archivo fantasma, porque esa es la línea que hay que editar (una ruta que
+  no existe no es navegable), y cubre entradas no-XML: un
+  `security/ir.model.access.csv` faltante aborta igual. **`manifest-unlisted`** —
+  un `.xml` con forma de data file que ningún manifiesto menciona — es **siempre**
+  `warn`, nunca más: un `.xml` sin listar es rutina mientras se escribe un módulo,
+  y bloquear un deploy por eso volvería el pre-flight inusable en un día; este
+  check se gana su lugar explicando por qué un hallazgo ahí es inerte, no
+  gateando. Para quedarse lo bastante callado como para dejarlo prendido, solo
+  cuenta con raíz `<odoo>`/`<openerp>` (los `<templates>` de OWL llegan por el
+  assets bundle, no por `data`) y se salta `static/`, `tests/`, `migrations/` e
+  `i18n/`. Verificado en `all_odoo`: cero `manifest-missing` —lo esperado en un
+  repo que despliega hoy— y 14 `manifest-unlisted`, todos huérfanos reales
+  (incluido un literal `new_note_view (copy).xml`); uno de ellos es el mismo
+  archivo que ya cargaba un hallazgo de markup, así que ahora el reporte
+  **explica** por qué ese defecto es inerte.
+- **`deploy` lintea antes de mandar nada, y se niega a desplegar XML que el
+  loader va a rechazar.** El pre-flight corre el lint de la Unit 109 sobre los
+  módulos que la selección ya resolvió — no sobre el repo: un archivo roto en un
+  módulo que este deploy no toca no es problema de este deploy, y bloquear por
+  eso enseña a todos a escribir `--no-lint`. Va **después de la selección**
+  (que es lo que define el alcance) y **antes del primer SSH**: antes del push,
+  del checkpoint y del `-u`, así que un bloqueo cuesta cero — no se copió
+  código, no avanzó ninguna rama, no se tomó checkpoint, no hay nada que rodar
+  atrás. Esa es toda la diferencia contra hoy, donde el mismo defecto aparece
+  cuando el registry ya abortó y el checkpoint ya se escribió. Bloquea **solo**
+  con hallazgos en archivos que un manifiesto lista, que es lo que impide que
+  `deploy` sea más estricto que Odoo. Encendido por defecto con `--no-lint`
+  per-run, que emite un WARNING visible en el transcript — y a propósito **sin**
+  llave de config: un opt-out persistente lo prendería una vez quien pegara con
+  un falso positivo y quedaría apagado para siempre en la máquina que más lo
+  necesita. Un lint que *no puede correr* es WARNING y el deploy sigue: el lint
+  es la guardia, no el trabajo. `--rollback`/`--restore-code`/`--set-*` retornan
+  antes de la selección y nunca lintean. Verificado contra un target
+  irresoluble: el run bloqueado nunca llega a `reading remote profile`.
+- **`lint`: atrapa el XML que el loader va a rechazar, sin salir de tu máquina.**
+  Dos fallas mecánicas abortan la carga completa del registry y ambas costaron
+  deploys en una tarde: un `--` dentro de un comentario XML y un
+  `t-translation="off"` sobre `<template>`. `lint [<mod>...|<archivo>]` las
+  encuentra offline en milisegundos y sale con código ≠ 0, así que sirve como
+  hook de git, hook `PostToolUse` del editor y paso de CI — que es el punto: la
+  única defensa era una nota escrita que decía "no pongas `--` en un comentario",
+  y el agente que la escribió tropezó dos veces el mismo día. Un check que hay
+  que recordar no es un check. Dos pases: **well-formedness**, donde `xmllint`
+  es la autoridad (misma libxml2 que el lxml del servidor ⇒ mismo veredicto,
+  mensaje y línea) y `encoding/xml` es el piso que ninguna plataforma del
+  cross-compile puede saltarse — Go solo no basta porque acepta en silencio
+  atributo duplicado, dos raíces y `<?xml?>` a media página, que el servidor sí
+  rechaza; y **schema**, contra el `odoo/import_xml.rng` embebido, que es
+  literalmente el archivo que valida `odoo/tools/convert.py`. Una sola copia
+  cubre 17, 18 y 19 porque la gramática es byte-idéntica en las tres. La
+  severidad se decide por manifiesto: `err` si el archivo está en `data`/`demo`
+  de un `__manifest__.py` (el loader lo va a leer), `warn` si no lo lista nadie
+  — sin ese corte el linter sería más estricto que Odoo. Los sub-documentos
+  (`CDATA` y arch escapado con entidades) se re-parsean con la línea corregida a
+  la del archivo contenedor, y solo en campos que Odoo parsea como XML (`arch`,
+  `arch_db`): `body_html` es HTML y revisarlo como XML daba cinco falsos
+  positivos contra dos hallazgos reales. Sin `xmllint` el pase de Go sigue
+  corriendo y los pases saltados se **nombran** en un WARNING: una corrida
+  degradada que dice "limpio" es una mentira. `--json` para pipear a `jq`; CLI y
+  REPL; corre sin proyecto compose, porque un hook se ejecuta donde se guardó el
+  archivo.
+- **`[reverb] ssh_host`: nombra tú el host, y el transporte vuelve a
+  configurarse igual en los dos modos.** Echo nunca ha tenido campo de puerto:
+  pasa el host verbatim a `ssh`/`rsync` y deja que tu `~/.ssh/config` resuelva
+  puerto, usuario, llave y ProxyJump. Eso funciona con un target clásico porque
+  `ssh_host` es un nombre que **tú** escribiste — un alias que matchea uno de
+  tus bloques `Host`. El host del payload lo escribe el daemon y es un literal
+  `user@ip`, que no matchea ningún bloque: se pierden puerto, llave y jump, ssh
+  intenta el 22 y reporta un *connection refused* que se lee como host caído.
+  `[reverb] ssh_host` deja que vuelvas a nombrarlo (un bloque por **host** de
+  Reverb, no por entorno, así que la promesa de cero-config-por-entorno queda
+  intacta). Sin él, Echo sigue usando el host del payload y **avisa** cuando el
+  daemon reporta un `ssh_port` distinto de 22, nombrando las dos salidas —
+  nunca sintetiza un `ssh -p`: el payload puede dar el puerto pero por contrato
+  jamás la identidad ("Reverb ships no keys"), así que un segundo canal de
+  configuración solo resolvería un tercio del problema.
+- **`checkpoint` en modo Reverb mapea a los snapshots del servidor.**
+  `checkpoint list` muestra los snapshots del entorno y `checkpoint create`
+  toma uno siguiendo su job; **no** se escribe nada en el store local de
+  checkpoints (un store paralelo duplicaría estado y confundiría el rollback).
+  `checkpoint rm` se rechaza explicando que borrar un snapshot tira estado y
+  el contrato lo deja admin-scoped.
+- **`up`/`down`/`stop`/`restart` pasan por la API de Reverb** en vez de
+  `ssh docker compose`: Reverb reconcilia estado deseado vs observado, y un
+  compose corrido por detrás aparece como drift en su UI. `down` mapea a stop
+  **y lo dice** — Reverb modela un estado deseado, no hay teardown estilo
+  compose. `ps` y `logs` siguen por SSH; son read-only.
+
+### Changed
+- **Un `409 not_ready` ahora se espera siguiendo el job, no reintentando a
+  ciegas.** Antes eran 3 intentos cada 2s = 6 segundos, y un `env_create` real
+  tarda 60–90s, así que apuntar a un entorno recién creado fallaba siempre.
+  Ahora Echo busca el `env_create`/`env_fork` en vuelo (vía el `id` que el
+  contrato agregó a `/resolve` y a `/envs`) y **streamea sus eventos de
+  progreso** —los mismos que muestra la UI de Reverb— hasta que termina, con
+  una ventana de gracia para el hueco entre "el job terminó" y "resolve dice
+  listo", que son dos observaciones distintas. Si el job no se puede
+  identificar, degrada a una espera acotada de 2 minutos en vez de 6 segundos.
+- **El aviso de shadowing del overlay lo calcula el servidor.** Tras un `push`
+  en modo Reverb, Echo pide `GET /environments/{id}/overlay` en vez de probar
+  `paths.addons` por SSH módulo por módulo: la comparación interesante es
+  contra el árbol de git desplegado, del que el cliente no tiene copia local
+  (y de paso deja de ser N round-trips de SSH). Si la llamada falla, degrada a
+  no avisar — el push ya ocurrió y un aviso no debe tumbar el comando.
+
+- **Modo Reverb: `-E <project>/<env>` apunta Echo a un entorno gestionado por
+  [Reverb](https://github.com/pascualchavez/reverb) resolviéndolo por HTTP en
+  el momento de la llamada, sin configurar nada por entorno.** Hasta ahora un
+  target remoto tenía que existir como `[connect_targets.<n>]` en `global.toml`
+  y Echo leía el resto por SSH (el perfil de Echo del servidor + su `.env`).
+  Reverb ya publica todo eso en una sola llamada, así que `-E` construye el
+  target **en memoria** y no escribe nada. Se configura una vez con la sección
+  global `[reverb]` (`url`, `token` de scope `echo`, `compose_cmd` opcional);
+  el token es un **secreto** —da acceso a la contraseña de la BD— y nunca se
+  loguea, ni aparece en un error, ni se copia a un perfil de proyecto.
+  `-E <spec>` es azúcar para `--from env:<spec>`: `env:` queda como **prefijo
+  reservado** del namespace de referencias de target, de modo que todo comando
+  que ya hilaba un `from` llega a modo Reverb sin cambiar de firma. Acepta
+  `<project>/<env>` o un `<env>` pelado, que resuelve el proyecto por
+  `GET /api/v1/envs` (y si el nombre existe en varios proyectos, el error los
+  nombra). Un `409 not_ready` (entorno aprovisionándose) se **reintenta** 3
+  veces cada 2s en vez de fallar; `401`/`403` se reportan como problemas de
+  configuración; un payload sin `ssh_host` señala el `public_host`
+  (`REVERB_PUBLIC_HOST`) del daemon en vez de caer a otro host. Funciona de
+  entrada en `shell`, `shell-run`, `logs`, `view`, `compare`, `update`, `test`,
+  `db-pull`, `actions` y `sequence` — la superficie de diagnóstico entera.
+- **`push` en modo Reverb escribe en el *overlay*, no en `addons`.** Reverb es
+  dueño del directorio de addons y lo reemplaza **por completo** en cada
+  deploy; el overlay es el único que nunca toca, y un módulo ahí **eclipsa**
+  la copia de git (`get_module_path` lo resuelve al overlay). Así que el
+  destino por defecto pasa a ser `paths.overlay`, un `--dest`/`[push] path`
+  que caiga bajo `paths.addons` se **rechaza** explicando que el próximo deploy
+  destruiría el código, y cada módulo empujado que además exista en `addons`
+  emite un WARNING avisando que el código que corre es el del overlay.
+  `push --clean` vacía el overlay (sin exigir un target `git_deploy`: el
+  overlay no es un checkout de git, se borra en vez de revertirse), con el
+  mismo dry-run y el mismo confirm destructivo.
+- **`link` se vuelve un switcher de entornos: `--next`, `--list` y un picker
+  que marca dónde estás.** El binding de `link` es a lo que cae cualquier
+  comando cuando no pasas `--from`, así que *es* el "sistema actual"; pero
+  cambiarlo obligaba a reescribir `link <nombre>` de memoria y el picker no
+  mostraba cuál era el actual ni con qué lo estabas comparando. Ahora: el
+  `link` pelado abre el picker con el target actual **marcado (`●`) y
+  preseleccionado** (el cursor arranca en esa fila, vía el nuevo
+  `runSingleFuzzyPickerAt`), y sus filas llevan `nombre · db · host:path`;
+  elegir el actual es **no-op** (INFO `already linked`, sin `SaveProject` ni
+  probe). `--next` cicla al siguiente target del registro con wrap —con dos
+  targets es un toggle directo dev ⇄ prod, sin picker— y es `ErrUsage` con
+  menos de dos; si el directorio no está linkeado (o el binding fue escrito a
+  mano y no casa con ningún target) arranca en el primero. `--list` inventaría
+  los targets marcando el actual, con `--json` para scripting, y **sin SSH ni
+  escritura**, a diferencia de `--show`, que sondea el binding actual.
+  Decisión explícita: ninguno de los tres hace SSH —resolver el `stage` de cada
+  target costaría un round trip por fila y convertiría el toggle en un stall—.
+  `--next`/`--list`/`--show`/`--rm`/positional son mutuamente excluyentes y
+  `--json` solo acompaña a `--list`. El rebind real conserva el invariante de
+  siempre: guarda antes de sondear, y un remoto inalcanzable es WARNING, no
+  fallo.
+
+### Changed
+- **`actions add|edit|rm` ahora se scopean con `--from`/`--remote`: cada target
+  puede tener sus propias actions desde una sola carpeta.** Antes los tres
+  subcomandos mutaban siempre la **única lista local** y luego ofrecían subir
+  esa lista **completa** al server resuelto; desde un repo de addons que
+  alimenta N entornos eso no puede expresar "action A en dev, action B en
+  prod": cada upload empujaba la unión al server que estuviera linkeado en ese
+  momento, contaminando las listas entre sí. La resolución nunca fue el
+  problema (`resolveDeployActions` ya es server-first y cada target tiene su
+  propio perfil por `remote_path`); faltaba poder decir "edita las actions **de
+  este target**". Ahora `--from <target>`/`--remote` es el **selector de
+  scope**: con él la operación es un read-modify-write directo del
+  `[[deploy.actions]]` del perfil de server de ese target, sin leer ni escribir
+  la lista local; sin él edita solo la lista local (el fallback). Se elimina el
+  prompt "Upload these actions to the server profile?" —el mecanismo que
+  causaba la contaminación cruzada—, porque el scope ya es explícito. Además,
+  como la resolución es wholesale, vaciar la lista de un server **no** significa
+  "sin actions" sino que ese target cae al fallback local: un `rm` que borra la
+  última entrada del server ahora emite un WARNING nombrando la lista local que
+  toma el relevo. Las escrituras server-scoped siguen prod-gated. La resolución
+  en tiempo de deploy queda intacta.
+- **`deploy --rollback` ya no destruye el checkpoint: por default lo conserva
+  y el punto queda restaurable de nuevo.** Antes, el rollback del método `db`
+  restauraba renombrando el checkpoint encima de la BD viva (`DROP` viva +
+  `RENAME` checkpoint→viva): rápido y sin disco extra, pero **consumía** el
+  checkpoint —su objeto y su entrada de metadata desaparecían—, así que tras un
+  rollback ya no había punto de retorno. Ahora `restoreCheckpoint` copia el
+  checkpoint de vuelta con `CREATE DATABASE … TEMPLATE` (la BD rota se dropea
+  primero, liberando el espacio que la copia necesita) y lo deja intacto
+  (sigue oculto para Odoo), de modo que puedes repetir el rollback o
+  redeployar y volver a rollback. Cuesta ~1× de disco más durante la restauración
+  que el rename. Se agrega `--consume-checkpoint` (solo con `--rollback`) para
+  recuperar el comportamiento antiguo cuando el disco esté justo: renombra y
+  destruye el checkpoint. El método `dump` no cambia (su archivo ya se
+  preservaba). El auto-rollback en fallo de deploy sigue consumiendo su
+  checkpoint recién creado, porque su propósito termina al revertir el deploy
+  fallido.
 - **Pickers: la columna secundaria deja de perderse contra el fondo.** La cola
   de cada fila (metadata a la derecha del nombre, p. ej. `(wt: proj-develop)`)
   se pintaba con `Dim`, que sobre el fondo daba un contraste ~3:1 y "se perdía".

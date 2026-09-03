@@ -212,7 +212,7 @@ var dispatchNames = []string{
 	"help", "clear", "copy-last", "report", "logview", "sequence",
 	"init", "reset", "alias", "link",
 	"up", "down", "stop", "restart", "ps", "logs", "push", "deploy", "watch", "checkpoint", "actions", "promote",
-	"install", "update", "uninstall", "test", "modules", "modinfo", "modstate", "view", "compare",
+	"install", "update", "uninstall", "test", "modules", "modinfo", "modstate", "view", "compare", "lint",
 	"i18n-export", "i18n-update", "i18n-pull",
 	"db-admin", "db-backup", "db-restore", "db-pull", "db-drop", "db-neutralize", "db-list", "db-use",
 	"shell", "shell-run", "bash", "psql", "connect",
@@ -297,6 +297,8 @@ func (sess *session) dispatchParsed(ctx context.Context, cmd string, args []stri
 		sess.runView(ctx, args)
 	case "compare":
 		sess.runCompare(ctx, args)
+	case "lint":
+		sess.runLint(args)
 	case "i18n-export", "i18n-update":
 		sess.runI18n(ctx, cmd, args)
 	case "i18n-pull":
@@ -342,7 +344,9 @@ func helpSections() []helpSection {
 			{"  --list", "List all project aliases"},
 			{"  --rm <name>", "Remove an alias"},
 			{"  --migrate", "Backfill aliases from connect targets (local paths)"},
-			{"link [<target>]", "Bind this directory to a connect target (no args: picker)"},
+			{"link [<target>]", "Switch this directory's connect target (no args: picker, current marked)"},
+			{"  --next", "Switch to the next target, wrapping (the two-target toggle)"},
+			{"  --list [--json]", "List the targets, marking the current one (no SSH, no write)"},
 			{"  --show", "Show the binding, probe the remote, stream its `ps`"},
 			{"  --rm", "Remove this directory's [connect] binding"},
 		}},
@@ -366,6 +370,7 @@ func helpSections() []helpSection {
 			{"  --from <t>", "Run the suite on a remote target (or --remote for the link binding)"},
 			{"modules", "List modules from configured addons paths"},
 			{"  --config", "Pick which folders are addons paths (form)"},
+			{"  --addons-path <a,b>", "Set addons paths without the form (empty clears)"},
 			{"modinfo [<mod>]", "Compare DB-installed version vs manifest version"},
 			{"  --copy", "Copy the report to the clipboard"},
 			{"  --last", "Re-show this session's last modinfo (skips the picker)"},
@@ -376,6 +381,8 @@ func helpSections() []helpSection {
 			{"  --copy", "Copy the file to the clipboard instead"},
 			{"  --last", "Re-display this session's last viewed file (skips pickers)"},
 			{"  --from <t>", "View the file from a remote target (or --remote for the link binding)"},
+			{"lint [<mod>...]", "Check Odoo XML the way the data loader does (also a file path)"},
+			{"  --json", "Emit findings + summary as JSON to stdout (logs to stderr)"},
 			{"compare [<mod>]", "Diff a local module file against its Docker copy"},
 			{"  --all", "Compare the whole module: changed/added/missing table"},
 			{"  --from <t>", "Compare against a remote target (or --remote for the link binding)"},
@@ -394,8 +401,14 @@ func helpSections() []helpSection {
 			{"  --to-worktree[=<branch>]", "Write the .po into another worktree (bare form opens a picker)"},
 		}},
 		{"Database", []helpEntry{
-			{"db-admin [name]", "Reset admin (uid 2) login+password to admin/admin"},
-			{"  --force", "Skip the prod confirmation"},
+			{"db-admin [name]", "Reset admin (uid 2) to a generated password, shown once"},
+			{"  --password <pw>", "Use this password instead of a generated one"},
+			{"  --insecure", "Set the password to admin (known credentials, dev only)"},
+			{"  --save", "Store the credential in 1Password (needs the `op` CLI)"},
+			{"  --vault <name>", "Vault for --save (default: op's own default)"},
+			{"  --from <target>", "Reset the admin on a remote instance (named connect target)"},
+			{"  --remote", "Reset the admin on this directory's linked remote"},
+			{"  --force", "Skip the confirmation"},
 			{"db-backup [name]", "Dump DB (default: configured) to ./backups/"},
 			{"  --with-filestore", "Include filestore (.zip instead of .dump)"},
 			{"db-restore [--as N]", "Pick a backup, name the target, and restore"},
@@ -493,7 +506,13 @@ func helpSections() []helpSection {
 			{"  --test-clear", "Clear the pinned test modules — back to testing what's deployed (no deploy)"},
 			{"  --rollback", "Restore the target's most recent checkpoint (no deploy)"},
 			{"  --restore-code [<sha>]", "Move a git-deploy target's code to a hash (bare = picker over branch history) and restart Odoo (no DB)"},
+			{"  --set-code <ref>", "Re-baseline a git-deploy target's code onto ANY ref (branch/tag/SHA) and restart Odoo (no DB)"},
+			{"  --set-git-branch <name>", "Name the branch the target's code lives on and exit (no deploy); --rename moves the one already there"},
+			{"  --keep-overlay", "With --set-code: keep the server's dirty overlay (default: clean the module paths)"},
+			{"  --with-local", "With --set-code: reset the local [promote] branch onto the same ref first"},
+			{"  --fetch/--no-fetch", "With --set-code: force / suppress the fetch of the ref's remote before resolving"},
 			{"  --no-git", "Force the legacy rsync push on a git-deploy target for this run"},
+			{"  --no-lint", "Skip the pre-flight lint of the selected modules (see lint)"},
 			{"watch [<branch>]", "Auto push+deploy when new commits land on a branch; no branch → picker (Ctrl+C to stop)"},
 			{"  --from <target>", "Use a named connect target (default: this dir's link)"},
 			{"  --remote", "Target this directory's linked remote"},
@@ -514,15 +533,19 @@ func helpSections() []helpSection {
 			{"  add", "Wizard: name → phase → where → exec dir (picker) → command"},
 			{"  edit [<name>]", "Edit an action in place (picker when no name)"},
 			{"  rm [<name>] [--force]", "Delete an action (picker when no name)"},
-			{"  --from <target>/--remote", "Show the server list / target for the remote picker & upload"},
+			{"  --from <target>/--remote", "Scope add/edit/rm to THAT target's server profile (else the local list)"},
 			{"  --json", "Emit the action list as JSON to stdout (with list)"},
 			{"promote [<branch>]", "Funnel this worktree's changes onto the deploy branch (no args: picker)"},
 			{"  --dirty [<folder>...]", "Move the current worktree's dirty patch (by folder); stays uncommitted"},
 			{"  --commits <shas>", "Cherry-pick these commits from the source branch"},
 			{"  --to <branch>", "Destination branch (else saved [promote] branch; prompts to pick if unset)"},
 			{"  --set-branch <name>", "Persist the default promote branch and exit"},
-			{"  --show-branch", "Report the configured promote branch + provenance/worktree and exit"},
+			{"  --show-branch", "Report the promote branch + provenance/worktree and how far it drifted from its base"},
 			{"  --create-dest <path>", "Create the destination branch's worktree if none exists"},
+			{"  --reset [<base>]", "Move the promote branch back onto its base (else saved [promote] base); keeps non-colliding work"},
+			{"  --discard", "With --reset: hard reset, dropping uncommitted work and the modules' untracked files"},
+			{"  --set-base <ref>", "Persist the default base the promote branch is reset onto and exit"},
+			{"  --no-fetch", "With --reset: don't refresh the base's remote first"},
 			{"  --dry-run", "Preview the change tree / commit list; move nothing"},
 		}},
 		{"Session", []helpEntry{
@@ -568,6 +591,22 @@ var scriptingHelpEntries = []helpEntry{
 // helpSections(), keeping the Registry cross-check clean.
 var buildHelpEntries = []helpEntry{
 	{"<cmd> --build", "Interactively compose the command (pickers + flags), then run/copy it"},
+}
+
+// reverbHelpEntries document Reverb mode (Unit 107) as one block rather
+// than repeating the same flag row under every command that accepts it.
+// Outside helpSections() for the same reason as the two above.
+var reverbHelpEntries = []helpEntry{
+	{"-E <project>/<env>", "Target a Reverb environment, resolved over HTTP (no local config)"},
+	{"-E <env>", "Same, with the project inferred when the name is unambiguous"},
+	{"  works with", "shell, shell-run, logs, view, compare, update, test, push, db-pull, actions, sequence"},
+	{"  push lands in", "the environment's overlay — Reverb replaces addons on every deploy"},
+	{"  push --clean", "Empties the overlay (--all = every module in it)"},
+	{"  checkpoint", "list/create map to Reverb snapshots (rm is admin-scoped)"},
+	{"  up/down/stop/restart", "Go through the Reverb API so the state doesn't read as drift"},
+	{"  config", "[reverb] url + token (scope: echo) in global.toml; the token is a secret"},
+	{"  ssh_host", "Optional [reverb] ssh_host = your own ~/.ssh/config alias for the host"},
+	{"  not yet", "deploy, watch — delegating those needs the push-to-Reverb remote"},
 }
 
 // runHelp shows the command reference. It opens the paginated viewer (one
@@ -618,6 +657,8 @@ func (sess *session) printHelpFlat() {
 	printSection("Scripting (one-shot, outside the REPL)", scriptingHelpEntries)
 	sess.print(Line{Kind: "out", Text: ""})
 	printSection("Build mode (compose interactively)", buildHelpEntries)
+	sess.print(Line{Kind: "out", Text: ""})
+	printSection("Reverb mode (resolve a target by name)", reverbHelpEntries)
 }
 
 // helpCommandNames extracts the flat set of top-level command names

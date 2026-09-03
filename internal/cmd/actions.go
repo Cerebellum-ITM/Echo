@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/charmbracelet/huh"
@@ -64,9 +65,10 @@ func parseActionsArgs(args []string) (actionsArgs, error) {
 	for i := 0; i < len(args); i++ {
 		a := args[i]
 		switch {
-		case a == "--from":
+		case a == "--from", a == "-E", a == "--env":
 			i++ // value consumed by remoteFlagsIn
-		case strings.HasPrefix(a, "--from="), a == "--remote":
+		case strings.HasPrefix(a, "--from="), strings.HasPrefix(a, "-E="),
+			strings.HasPrefix(a, "--env="), a == "--remote":
 			// consumed by remoteFlagsIn
 		case a == "--json":
 			out.jsonOut = true
@@ -120,7 +122,7 @@ func RunActions(ctx context.Context, opts ActionsOpts) (ActionsResult, error) {
 
 	switch p.sub {
 	case "add":
-		return ActionsResult{Sub: "add"}, runActionsAdd(ctx, opts, resolveRemote)
+		return ActionsResult{Sub: "add"}, runActionsAdd(ctx, opts, p, resolveRemote)
 	case "edit":
 		return ActionsResult{Sub: "edit"}, runActionsEdit(ctx, opts, p, resolveRemote)
 	case "rm":
@@ -130,13 +132,69 @@ func RunActions(ctx context.Context, opts ActionsOpts) (ActionsResult, error) {
 	}
 }
 
+// remoteScoped reports whether this invocation names a remote target. It is
+// the scope selector for the mutating subcommands (Unit 105): with a remote
+// flag, add/edit/rm operate on that target's server profile; without one they
+// operate on the local project list (the fallback).
+func (p actionsArgs) remoteScoped() bool { return p.from != "" || p.remote }
+
+// scopedActions returns the list the mutating subcommands read and mutate,
+// plus the resolved remote when the scope is a server. The local scope never
+// resolves a remote (no SSH).
+func scopedActions(opts ActionsOpts, p actionsArgs, resolveRemote func() (remoteShellContext, error)) ([]config.DeployAction, *remoteShellContext, error) {
+	if !p.remoteScoped() {
+		return opts.Cfg.DeployActions, nil, nil
+	}
+	rsc, err := resolveRemote()
+	if err != nil {
+		return nil, nil, err
+	}
+	return rsc.prof.DeployActions, &rsc, nil
+}
+
+// commitActions persists the mutated list back to the scope it came from: the
+// target's server profile (prod-guarded) or the local project profile.
+func commitActions(ctx context.Context, opts ActionsOpts, rsc *remoteShellContext, next []config.DeployAction) error {
+	if err := config.ValidateDeployActions(next); err != nil {
+		return err
+	}
+	if rsc == nil {
+		return saveActions(opts, next)
+	}
+	if err := confirmRemoteProd(opts.Palette, "edit actions", *rsc, opts.Args); err != nil {
+		return err
+	}
+	return uploadActionsToServer(ctx, *rsc, next, opts)
+}
+
+// scopeFields renders the scope of a mutation for the closing log line, so it
+// is never ambiguous which side was written.
+func scopeFields(p actionsArgs, rsc *remoteShellContext) [][2]string {
+	if rsc == nil {
+		return [][2]string{{"scope", "local"}}
+	}
+	name := p.from
+	if name == "" {
+		name = rsc.fromName
+	}
+	return [][2]string{{"scope", "server"}, {"target", name}}
+}
+
+// scopeDB is the db field for the scope's log lines.
+func scopeDB(opts ActionsOpts, rsc *remoteShellContext) string {
+	if rsc == nil {
+		return opts.Cfg.DBName
+	}
+	return rsc.prof.DBName
+}
+
 // runActionsList shows the effective action list. Without --from/--remote it
 // stays local (no SSH); with an explicit remote it resolves the server
 // profile and reports which side wins (the Unit 92 wholesale rule).
 func runActionsList(ctx context.Context, opts ActionsOpts, p actionsArgs, resolveRemote func() (remoteShellContext, error)) (ActionsResult, error) {
 	source := "local"
 	actions := opts.Cfg.DeployActions
-	if p.from != "" || p.remote {
+	if p.remoteScoped() {
 		rsc, err := resolveRemote()
 		if err != nil {
 			return ActionsResult{}, err
@@ -159,49 +217,66 @@ func runActionsList(ctx context.Context, opts ActionsOpts, p actionsArgs, resolv
 	return res, nil
 }
 
-// runActionsAdd runs the create wizard and appends the action to the local
-// list, then offers to upload the set to the server.
-func runActionsAdd(ctx context.Context, opts ActionsOpts, resolveRemote func() (remoteShellContext, error)) error {
+// runActionsAdd runs the create wizard and appends the action to the scoped
+// list — that target's server profile with --from/--remote, the local list
+// otherwise.
+func runActionsAdd(ctx context.Context, opts ActionsOpts, p actionsArgs, resolveRemote func() (remoteShellContext, error)) error {
+	base, rsc, err := scopedActions(opts, p, resolveRemote)
+	if err != nil {
+		return err
+	}
 	a, err := actionWizard(ctx, opts, nil, resolveRemote)
 	if err != nil {
 		return err
 	}
-	next := append(append([]config.DeployAction(nil), opts.Cfg.DeployActions...), a)
-	if err := saveActions(opts, next); err != nil {
+	next := append(append([]config.DeployAction(nil), base...), a)
+	if err := commitActions(ctx, opts, rsc, next); err != nil {
 		return err
 	}
-	opts.log("INFO", "", "action added", opts.Cfg.DBName,
-		[2]string{"name", a.Name}, [2]string{"phase", a.Phase}, [2]string{"where", a.Where})
-	return offerUploadActions(ctx, opts, resolveRemote, next)
+	opts.log("INFO", "", "action added", scopeDB(opts, rsc),
+		append([][2]string{{"name", a.Name}, {"phase", a.Phase}, {"where", a.Where}},
+			scopeFields(p, rsc)...)...)
+	return nil
 }
 
-// runActionsEdit edits an existing action in place (order preserved).
+// runActionsEdit edits an existing action in place (order preserved) within
+// the scoped list.
 func runActionsEdit(ctx context.Context, opts ActionsOpts, p actionsArgs, resolveRemote func() (remoteShellContext, error)) error {
-	idx, err := pickActionIndex(opts, p.name, "Edit which action?")
+	base, rsc, err := scopedActions(opts, p, resolveRemote)
 	if err != nil {
 		return err
 	}
-	existing := opts.Cfg.DeployActions[idx]
+	idx, err := pickActionIndex(opts, base, p, p.name, "Edit which action?")
+	if err != nil {
+		return err
+	}
+	existing := base[idx]
 	a, err := actionWizard(ctx, opts, &existing, resolveRemote)
 	if err != nil {
 		return err
 	}
-	next := append([]config.DeployAction(nil), opts.Cfg.DeployActions...)
+	next := append([]config.DeployAction(nil), base...)
 	next[idx] = a
-	if err := saveActions(opts, next); err != nil {
+	if err := commitActions(ctx, opts, rsc, next); err != nil {
 		return err
 	}
-	opts.log("INFO", "", "action updated", opts.Cfg.DBName, [2]string{"name", a.Name})
-	return offerUploadActions(ctx, opts, resolveRemote, next)
+	opts.log("INFO", "", "action updated", scopeDB(opts, rsc),
+		append([][2]string{{"name", a.Name}}, scopeFields(p, rsc)...)...)
+	return nil
 }
 
-// runActionsRm deletes an action after a red confirm (--force skips it).
+// runActionsRm deletes an action from the scoped list after a red confirm
+// (--force skips it).
 func runActionsRm(ctx context.Context, opts ActionsOpts, p actionsArgs, resolveRemote func() (remoteShellContext, error)) error {
-	idx, err := pickActionIndex(opts, p.name, "Remove which action?")
+	base, rsc, err := scopedActions(opts, p, resolveRemote)
 	if err != nil {
 		return err
 	}
-	target := opts.Cfg.DeployActions[idx]
+	idx, err := pickActionIndex(opts, base, p, p.name, "Remove which action?")
+	if err != nil {
+		return err
+	}
+	target := base[idx]
 	if !p.force {
 		if err := requireTTY("pass --force to remove non-interactively"); err != nil {
 			return err
@@ -220,20 +295,31 @@ func runActionsRm(ctx context.Context, opts ActionsOpts, p actionsArgs, resolveR
 			return ErrCancelled
 		}
 	}
-	next := append(append([]config.DeployAction(nil), opts.Cfg.DeployActions[:idx]...), opts.Cfg.DeployActions[idx+1:]...)
-	if err := saveActions(opts, next); err != nil {
+	next := append(append([]config.DeployAction(nil), base[:idx]...), base[idx+1:]...)
+	if err := commitActions(ctx, opts, rsc, next); err != nil {
 		return err
 	}
-	opts.log("INFO", "", "action removed", opts.Cfg.DBName, [2]string{"name", target.Name})
-	return offerUploadActions(ctx, opts, resolveRemote, next)
+	opts.log("INFO", "", "action removed", scopeDB(opts, rsc),
+		append([][2]string{{"name", target.Name}}, scopeFields(p, rsc)...)...)
+	// Resolution is wholesale: an empty server list does not mean "no actions
+	// run", it means this target now falls back to the local list. Say so
+	// rather than let the switch happen silently.
+	if rsc != nil && len(next) == 0 {
+		opts.log("WARNING", "", "server action list is now empty — this target falls back to the local list",
+			rsc.prof.DBName, [2]string{"local", strconv.Itoa(len(opts.Cfg.DeployActions))})
+	}
+	return nil
 }
 
 // pickActionIndex resolves the target action index from a name positional or,
-// when absent, a single-select picker over the local action names.
-func pickActionIndex(opts ActionsOpts, name, title string) (int, error) {
-	list := opts.Cfg.DeployActions
+// when absent, a single-select picker over the scoped action names.
+func pickActionIndex(opts ActionsOpts, list []config.DeployAction, p actionsArgs, name, title string) (int, error) {
+	where := "locally"
+	if p.remoteScoped() {
+		where = "on this target's server profile"
+	}
 	if len(list) == 0 {
-		return 0, fmt.Errorf("%w: no deploy actions declared locally", ErrUsage)
+		return 0, fmt.Errorf("%w: no deploy actions declared %s", ErrUsage, where)
 	}
 	if name != "" {
 		for i, a := range list {
@@ -241,7 +327,7 @@ func pickActionIndex(opts ActionsOpts, name, title string) (int, error) {
 				return i, nil
 			}
 		}
-		return 0, fmt.Errorf("%w: no local action named %q", ErrUsage, name)
+		return 0, fmt.Errorf("%w: no action named %q %s", ErrUsage, name, where)
 	}
 	names := make([]string, len(list))
 	for i, a := range list {

@@ -36,6 +36,17 @@ func RunUp(ctx context.Context, opts DockerOpts) error {
 }
 
 func RunDown(ctx context.Context, opts DockerOpts) error {
+	// A Reverb environment stops through the API; classic remotes have no
+	// `down` and keep their existing local-only behavior.
+	if spec, _ := remoteFlagsIn(opts.Args); spec != "" {
+		if _, isReverb := reverbRefIn(spec); isReverb {
+			rsc, err := resolveRemoteShell(ctx, opts.Cfg, opts.Palette, opts.Root, spec, opts.Log)
+			if err != nil {
+				return err
+			}
+			return runReverbEnvAction(ctx, opts, rsc, "down")
+		}
+	}
 	if err := maybeConfirmDockerProd(opts, "down"); err != nil {
 		return err
 	}
@@ -163,9 +174,10 @@ func parseLogsArgs(args []string) (follow, copyMode, all bool, tail string, serv
 			}
 		case a == "--remote":
 			// remote-mode switch, not a service
-		case a == "--from":
+		case a == "--from", a == "-E", a == "--env":
 			i++ // skip the target name
-		case strings.HasPrefix(a, "--from="):
+		case strings.HasPrefix(a, "--from="), strings.HasPrefix(a, "-E="),
+			strings.HasPrefix(a, "--env="):
 			// remote-mode switch, not a service
 		default:
 			services = append(services, a)

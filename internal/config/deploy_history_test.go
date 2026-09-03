@@ -121,3 +121,39 @@ func TestUpdateDeployedMarksEmptyNoop(t *testing.T) {
 		t.Errorf("empty add+remove should be a no-op, got %v", err)
 	}
 }
+
+func TestResetDeployedSHAsReBaselines(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	pk := "deadbeef"
+	tk := DeployTargetKey("dev", "/srv/odoo")
+	other := DeployTargetKey("prod", "/srv/odoo")
+
+	if err := MarkDeployed(pk, tk, []string{"old1", "old2"}); err != nil {
+		t.Fatalf("mark: %v", err)
+	}
+	if err := MarkDeployed(pk, other, []string{"keep"}); err != nil {
+		t.Fatalf("mark other: %v", err)
+	}
+
+	// A re-baseline replaces the target's set with the new tip — the old line's
+	// SHAs must not survive, or `deploy --auto` would skip commits this target
+	// has never actually run.
+	if err := ResetDeployedSHAs(pk, tk, []string{"newtip"}); err != nil {
+		t.Fatalf("reset: %v", err)
+	}
+	got := LoadDeployedSHAs(pk, tk)
+	if len(got) != 1 || !got["newtip"] {
+		t.Errorf("got %v, want only newtip", got)
+	}
+	if !LoadDeployedSHAs(pk, other)["keep"] {
+		t.Error("other targets must be untouched")
+	}
+
+	// An empty seed clears the target entirely.
+	if err := ResetDeployedSHAs(pk, tk, nil); err != nil {
+		t.Fatalf("clear: %v", err)
+	}
+	if got := LoadDeployedSHAs(pk, tk); len(got) != 0 {
+		t.Errorf("expected an empty set, got %v", got)
+	}
+}

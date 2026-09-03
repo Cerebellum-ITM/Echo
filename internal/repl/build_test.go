@@ -40,13 +40,37 @@ func TestBuildFlagsDropsAliases(t *testing.T) {
 			t.Errorf("buildFlags(logs) must drop -c (alias of --copy); got %#v", got)
 		}
 	}
-	// Order is preserved and --copy survives.
-	if !reflect.DeepEqual(got, []string{"-t", "--no-follow", "--copy", "--all", "--from", "--remote"}) {
+	// Order is preserved and --copy survives; -E is dropped everywhere as
+	// the short alias of --env.
+	if !reflect.DeepEqual(got, []string{"-t", "--no-follow", "--copy", "--all", "--from", "--remote", "--env"}) {
 		t.Errorf("buildFlags(logs) = %#v", got)
 	}
-	// A command without aliases is returned verbatim.
-	if got := buildFlags("update"); !reflect.DeepEqual(got, commandFlags["update"]) {
-		t.Errorf("buildFlags(update) = %#v, want %#v", got, commandFlags["update"])
+	// A command with no per-command alias keeps every other flag, in order.
+	if got := buildFlags("update"); reflect.DeepEqual(got, commandFlags["update"]) {
+		t.Errorf("buildFlags(update) = %#v, want -E dropped", got)
+	} else if len(got) != len(commandFlags["update"])-1 {
+		t.Errorf("buildFlags(update) = %#v, want exactly -E dropped", got)
+	}
+}
+
+// -E is an alias of --env: build mode must never offer both, on any
+// command that supports Reverb mode.
+func TestBuildFlagsDropsReverbShortAlias(t *testing.T) {
+	for name, flags := range commandFlags {
+		hasShort := false
+		for _, f := range flags {
+			if f == "-E" {
+				hasShort = true
+			}
+		}
+		if !hasShort {
+			continue
+		}
+		for _, f := range buildFlags(name) {
+			if f == "-E" {
+				t.Errorf("buildFlags(%s) offers -E alongside --env", name)
+			}
+		}
 	}
 }
 

@@ -38,6 +38,11 @@ func runPushClean(ctx context.Context, opts PushOpts, p pushArgs) error {
 	if err != nil {
 		return err
 	}
+	// A Reverb environment's overlay is a plain directory, not a git
+	// checkout, so it is emptied rather than reverted.
+	if rsc.reverb != nil {
+		return runPushCleanReverb(ctx, opts, p, rsc)
+	}
 	g := resolveGitDeploy(opts.Cfg, rsc.fromName, rsc.sshHost, rsc.remotePath)
 	if !g.enabled {
 		return fmt.Errorf("%w: push --clean needs a git-deploy target (set git_deploy on it)", ErrUsage)
@@ -141,6 +146,21 @@ func dirtyModuleCandidates(entries []remoteDirtyEntry) []string {
 		}
 	}
 	sort.Strings(out)
+	return out
+}
+
+// moduleScopedEntries keeps the overlay entries that belong to a module,
+// dropping everything that maps to no module — a top-level `odoo.conf`, a
+// `docker-compose.override.yml`, an untracked `filestore/` at the checkout
+// root. Those are the server's own state, not part of any deploy line, and a
+// wholesale clean (`deploy --set-code`) must leave them alone.
+func moduleScopedEntries(entries []remoteDirtyEntry) []remoteDirtyEntry {
+	var out []remoteDirtyEntry
+	for _, e := range entries {
+		if moduleOfPath(e.path) != "" {
+			out = append(out, e)
+		}
+	}
 	return out
 }
 

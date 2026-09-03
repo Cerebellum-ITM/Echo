@@ -168,6 +168,35 @@ type Config struct {
 	// "project", or "" when unset (Unit 103). Kept so `promote --show-branch`
 	// can report provenance without re-reading the TOML files.
 	PromoteBranchSource string
+
+	// PromoteBase ([promote] base, same precedence as PromoteBranch) — the ref
+	// the accumulation branch is re-based onto by `promote --reset` (Unit 112),
+	// typically "origin/main". Empty means "no base declared": the line is
+	// never re-based automatically, `--show-branch` reports base=none, and
+	// `--reset` asks for a base (TTY) or fails closed (headless).
+	PromoteBase string
+
+	// PromoteBaseSource records where PromoteBase came from — "global",
+	// "project", or "" when unset.
+	PromoteBaseSource string
+
+	// Reverb ([reverb] in global.toml only, Unit 107) — the daemon that
+	// resolves `-E <project>/<env>` targets at call time. ReverbToken is a
+	// SECRET: it grants the environment's DB password through resolve, so it
+	// is never logged, never surfaced in an error, and never written to a
+	// project profile. ReverbComposeCmd overrides the compose binary used on
+	// a Reverb host (default "docker compose") — unlike a classic remote,
+	// a Reverb host has no Echo profile of its own to read it from.
+	ReverbURL        string
+	ReverbToken      string
+	ReverbComposeCmd string
+	// ReverbSSHHost overrides the ssh_host the daemon reports. The payload's
+	// host is a literal `user@ip` (Reverb's public_host), which matches no
+	// `Host` block in the user's ~/.ssh/config — so the port, identity and
+	// ProxyJump that block carries are all lost. Naming a local alias here
+	// puts the transport back where it lives in classic mode: ssh_config
+	// resolves it, and Echo passes the alias verbatim as it always has.
+	ReverbSSHHost string
 }
 
 // DeployAction is one declared step in the deploy lifecycle. Phase is
@@ -235,15 +264,31 @@ type globalFile struct {
 	Push           *pushConfig                   `toml:"push"`
 	Deploy         *deployFile                   `toml:"deploy"`
 	Promote        *promoteConfig                `toml:"promote"`
+	Reverb         *reverbConfig                 `toml:"reverb"`
 	ConnectTargets map[string]*connectTargetFile `toml:"connect_targets"`
 	ProjectAliases map[string]string             `toml:"project_aliases"`
 }
 
 // promoteConfig is the [promote] table, valid in global.toml and a project
 // profile. Branch names the single accumulation branch `promote` funnels
-// into; a nil pointer (section absent) leaves the branch unconfigured.
+// into; Base names the ref that branch is re-based onto (Unit 112). A nil
+// pointer (section absent) leaves both unconfigured, and either field may be
+// set without the other.
 type promoteConfig struct {
 	Branch string `toml:"branch"`
+	Base   string `toml:"base"`
+}
+
+// reverbConfig is the [reverb] table, valid in global.toml ONLY (Unit 107).
+// It points Echo at a Reverb daemon so `-E <project>/<env>` can resolve a
+// target over HTTP instead of reading it from [connect_targets]. It is
+// machine-wide by design: Token is a credential, not project state, and is
+// never copied into a project profile by SaveProject.
+type reverbConfig struct {
+	URL        string `toml:"url"`
+	Token      string `toml:"token"`
+	ComposeCmd string `toml:"compose_cmd"`
+	SSHHost    string `toml:"ssh_host"`
 }
 
 // pushConfig is the [push] table, valid in both global.toml and a project
@@ -480,9 +525,14 @@ func Load(projectPath string) (*Config, error) {
 	applyCmdLogs(cfg, g.CmdLogs)
 	applyCheckpoint(cfg, g.Checkpoint)
 	applyPush(cfg, g.Push)
+	applyReverb(cfg, g.Reverb)
 	if g.Promote != nil && g.Promote.Branch != "" {
 		cfg.PromoteBranch = g.Promote.Branch
 		cfg.PromoteBranchSource = "global"
+	}
+	if g.Promote != nil && g.Promote.Base != "" {
+		cfg.PromoteBase = g.Promote.Base
+		cfg.PromoteBaseSource = "global"
 	}
 	cfg.ConnectTargets = sortedConnectTargets(g.ConnectTargets)
 	cfg.ProjectAliases = g.ProjectAliases
@@ -560,6 +610,12 @@ func Load(projectPath string) (*Config, error) {
 		cfg.PromoteBranch = p.Promote.Branch
 		cfg.PromoteBranchSource = "project"
 	}
+	// [promote] base: same precedence, resolved independently of the branch —
+	// a project may re-base onto its own base while inheriting the branch.
+	if p.Promote != nil && p.Promote.Base != "" {
+		cfg.PromoteBase = p.Promote.Base
+		cfg.PromoteBaseSource = "project"
+	}
 	if p.Connect != nil {
 		cfg.ConnectSSHHost = p.Connect.SSHHost
 		cfg.ConnectRemotePath = p.Connect.RemotePath
@@ -583,6 +639,19 @@ func applyPush(cfg *Config, f *pushConfig) {
 	}
 	cfg.PushPath = f.Path
 	cfg.PushMkdir = f.Mkdir
+}
+
+// applyReverb copies the [reverb] table onto the config. Global-only and
+// nil-safe: an absent section leaves Reverb mode unconfigured, which is
+// what `-E` reports when used without it.
+func applyReverb(cfg *Config, f *reverbConfig) {
+	if f == nil {
+		return
+	}
+	cfg.ReverbURL = f.URL
+	cfg.ReverbToken = f.Token
+	cfg.ReverbComposeCmd = f.ComposeCmd
+	cfg.ReverbSSHHost = f.SSHHost
 }
 
 // RemoteProfile is the subset of a server-side Echo configuration the
@@ -800,6 +869,21 @@ func SaveGlobal(cfg *Config) error {
 // of a repo resolves the same `promote` destination. An empty branch clears
 // the section.
 func SavePromoteBranch(branch string) error {
+	return savePromote(func(p *promoteConfig) { p.Branch = branch })
+}
+
+// SavePromoteBase persists the [promote] base into global.toml — the ref
+// `promote --reset` re-bases the accumulation branch onto (Unit 112). Same
+// lossless read-modify-write and same repo-wide rationale as
+// SavePromoteBranch; an empty base clears the field.
+func SavePromoteBase(base string) error {
+	return savePromote(func(p *promoteConfig) { p.Base = base })
+}
+
+// savePromote applies mutate to the [promote] table of global.toml and writes
+// it back. It reads the existing table first, so setting one field never drops
+// the other, and drops the whole section only once both are empty.
+func savePromote(mutate func(*promoteConfig)) error {
 	root, err := configRoot()
 	if err != nil {
 		return err
@@ -812,10 +896,15 @@ func SavePromoteBranch(branch string) error {
 	if data, err := os.ReadFile(path); err == nil {
 		_ = toml.Unmarshal(data, &g)
 	}
-	if branch == "" {
+	cur := promoteConfig{}
+	if g.Promote != nil {
+		cur = *g.Promote
+	}
+	mutate(&cur)
+	if cur.Branch == "" && cur.Base == "" {
 		g.Promote = nil
 	} else {
-		g.Promote = &promoteConfig{Branch: branch}
+		g.Promote = &cur
 	}
 	var buf bytes.Buffer
 	if err := toml.NewEncoder(&buf).Encode(g); err != nil {
@@ -965,6 +1054,7 @@ func LoadGlobal() (*Config, error) {
 	cfg.LogDBMax = g.LogDBMax
 	applyCmdLogs(cfg, g.CmdLogs)
 	applyCheckpoint(cfg, g.Checkpoint)
+	applyReverb(cfg, g.Reverb)
 	cfg.ConnectTargets = sortedConnectTargets(g.ConnectTargets)
 	cfg.ProjectAliases = g.ProjectAliases
 	applyDefaults(cfg)

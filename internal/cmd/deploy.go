@@ -5,7 +5,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
@@ -88,6 +87,12 @@ type deployArgs struct {
 	// rollback restores the target's most recent checkpoint instead of
 	// deploying (deploy --rollback). Mutually exclusive with any selection.
 	rollback bool
+	// consumeCheckpoint restores a "db"-method checkpoint by renaming it over
+	// the live DB (the pre-Unit behavior) instead of copying it back — cheaper
+	// on disk but it destroys the checkpoint, leaving no restore point. Applies
+	// only to `deploy --rollback`; ignored for the "dump" method, which always
+	// preserves its file.
+	consumeCheckpoint bool
 	// noActions skips all declared deploy actions (Unit 92) for this run —
 	// the escape hatch when a server-declared action is broken.
 	noActions bool
@@ -130,12 +135,35 @@ type deployArgs struct {
 	// noGit forces the legacy rsync push for one run on a git-deploy target
 	// (Unit 102), the escape hatch when the git advance can't or shouldn't run.
 	noGit bool
+	// noLint skips the pre-flight lint for one run (Unit 110). Per-run and
+	// logged, deliberately not a config key: a persisted opt-out would be
+	// set once by whoever hit a false positive and then stay off forever on
+	// the machine that needed the check most.
+	noLint bool
 	// restoreCode / restoreCodeSet drive the standalone code-only restore of a
 	// git-deploy target (deploy --restore-code [<sha>]) — no DB, no checkpoint.
 	// restoreCodeSet is true whenever the flag is present; restoreCode holds the
 	// explicit hash, or "" for the interactive picker.
 	restoreCode    string
 	restoreCodeSet bool
+	// setCode / setCodeSet drive `deploy --set-code <ref>` (Unit 112): move a
+	// git-deploy target's code to ANY local or fetched ref, not only to a hash
+	// it already ran. fetch / noFetch control the refresh of the ref's remote
+	// before resolving it, keepOverlay preserves the server's dirty overlay
+	// (default: the module-scoped overlay is cleaned, so the checkout matches
+	// the ref), and withLocal resets the local [promote] branch to the same
+	// ref first.
+	setCode     string
+	setCodeSet  bool
+	fetch       bool
+	noFetch     bool
+	keepOverlay bool
+	withLocal   bool
+	// setGitBranch names the branch a git-deploy target's code lives on (Unit
+	// 113). Config-only unless rename is set, which also moves the branch that
+	// is already on the server.
+	setGitBranch string
+	rename       bool
 }
 
 // isTestManage reports whether the args carry a config-only test-management
@@ -197,6 +225,19 @@ func parseDeployArgs(args []string) (deployArgs, error) {
 			i++
 		case strings.HasPrefix(a, "--from="):
 			out.from = strings.TrimPrefix(a, "--from=")
+		// -E is recognized only so the Reverb guard can explain why deploy
+		// does not support a Reverb target yet, instead of the opaque
+		// "unknown flag" the catch-all would produce.
+		case a == "-E", a == "--env":
+			if i+1 >= len(args) {
+				return out, fmt.Errorf("%w: -E requires <project>/<env>", ErrUsage)
+			}
+			out.from = ReverbRef(args[i+1])
+			i++
+		case strings.HasPrefix(a, "-E="):
+			out.from = ReverbRef(strings.TrimPrefix(a, "-E="))
+		case strings.HasPrefix(a, "--env="):
+			out.from = ReverbRef(strings.TrimPrefix(a, "--env="))
 		case a == "--limit":
 			if i+1 >= len(args) {
 				return out, fmt.Errorf("--limit requires a number")
@@ -277,8 +318,12 @@ func parseDeployArgs(args []string) (deployArgs, error) {
 			out.setCheckpoint.keep = &n
 		case a == "--rollback":
 			out.rollback = true
+		case a == "--consume-checkpoint":
+			out.consumeCheckpoint = true
 		case a == "--no-git":
 			out.noGit = true
+		case a == "--no-lint":
+			out.noLint = true
 		case a == "--restore-code":
 			// The SHA is optional: a following non-flag token is the target
 			// hash; a bare --restore-code opens the interactive picker.
@@ -293,6 +338,43 @@ func parseDeployArgs(args []string) (deployArgs, error) {
 			if strings.TrimSpace(out.restoreCode) == "" {
 				return out, fmt.Errorf("%w: --restore-code= needs a SHA (use bare --restore-code for the picker)", ErrUsage)
 			}
+		case a == "--set-code":
+			// The ref is required: unlike --restore-code, whose universe is the
+			// handful of hashes the server has run, --set-code can target any
+			// ref in the repo — there is nothing sensible to pick from.
+			if i+1 >= len(args) || strings.HasPrefix(args[i+1], "-") {
+				return out, fmt.Errorf("%w: --set-code needs a ref (branch, tag or SHA)", ErrUsage)
+			}
+			out.setCodeSet = true
+			out.setCode = args[i+1]
+			i++
+		case strings.HasPrefix(a, "--set-code="):
+			out.setCodeSet = true
+			out.setCode = strings.TrimPrefix(a, "--set-code=")
+			if strings.TrimSpace(out.setCode) == "" {
+				return out, fmt.Errorf("%w: --set-code needs a ref (branch, tag or SHA)", ErrUsage)
+			}
+		case a == "--set-git-branch":
+			if i+1 >= len(args) || strings.HasPrefix(args[i+1], "-") {
+				return out, fmt.Errorf("%w: --set-git-branch needs a branch name", ErrUsage)
+			}
+			out.setGitBranch = args[i+1]
+			i++
+		case strings.HasPrefix(a, "--set-git-branch="):
+			out.setGitBranch = strings.TrimPrefix(a, "--set-git-branch=")
+			if strings.TrimSpace(out.setGitBranch) == "" {
+				return out, fmt.Errorf("%w: --set-git-branch needs a branch name", ErrUsage)
+			}
+		case a == "--rename":
+			out.rename = true
+		case a == "--fetch":
+			out.fetch = true
+		case a == "--no-fetch":
+			out.noFetch = true
+		case a == "--keep-overlay":
+			out.keepOverlay = true
+		case a == "--with-local":
+			out.withLocal = true
 		case a == "--no-actions":
 			out.noActions = true
 		case a == "--rollback-on-fail":
@@ -363,12 +445,35 @@ func parseDeployArgs(args []string) (deployArgs, error) {
 	if out.rollback && (out.auto || len(out.commits) > 0 || len(out.modules) > 0 || out.push) {
 		return out, fmt.Errorf("%w: --rollback cannot be combined with --commits/--modules/--auto/--push", ErrUsage)
 	}
+	if out.consumeCheckpoint && !out.rollback {
+		return out, fmt.Errorf("%w: --consume-checkpoint only applies to --rollback", ErrUsage)
+	}
 	if out.restoreCodeSet && (out.rollback || out.auto || out.push ||
 		len(out.commits) > 0 || len(out.modules) > 0 || out.isTestManage()) {
 		return out, fmt.Errorf("%w: --restore-code runs on its own (no deploy selection/rollback)", ErrUsage)
 	}
 	if out.noGit && out.restoreCodeSet {
 		return out, fmt.Errorf("%w: --no-git and --restore-code are mutually exclusive", ErrUsage)
+	}
+	if out.setCodeSet && (out.rollback || out.auto || out.push || out.restoreCodeSet ||
+		len(out.commits) > 0 || len(out.modules) > 0 || out.isTestManage()) {
+		return out, fmt.Errorf("%w: --set-code runs on its own (no deploy selection/rollback/restore)", ErrUsage)
+	}
+	if out.noGit && out.setCodeSet {
+		return out, fmt.Errorf("%w: --no-git and --set-code are mutually exclusive — --set-code IS the git path", ErrUsage)
+	}
+	if out.fetch && out.noFetch {
+		return out, fmt.Errorf("%w: --fetch and --no-fetch are mutually exclusive", ErrUsage)
+	}
+	if !out.setCodeSet && (out.fetch || out.noFetch || out.keepOverlay || out.withLocal) {
+		return out, fmt.Errorf("%w: --fetch/--no-fetch/--keep-overlay/--with-local only apply to --set-code", ErrUsage)
+	}
+	if out.setGitBranch != "" && (out.setCodeSet || out.restoreCodeSet || out.rollback || out.auto || out.push ||
+		len(out.commits) > 0 || len(out.modules) > 0 || out.isTestManage() || out.isCheckpointManage()) {
+		return out, fmt.Errorf("%w: --set-git-branch names the deploy branch and exits (no deploy selection)", ErrUsage)
+	}
+	if out.rename && out.setGitBranch == "" {
+		return out, fmt.Errorf("%w: --rename only applies to --set-git-branch", ErrUsage)
 	}
 	if out.test && out.noTest {
 		return out, fmt.Errorf("%w: --test and --no-test are mutually exclusive", ErrUsage)
@@ -520,7 +625,7 @@ func runDeployCheckpointManage(opts DeployOpts, p deployArgs) error {
 // current pinned list pre-checked, so one picker both adds and removes. An
 // empty confirmed selection clears the list (back to auto).
 func pickTestModules(opts DeployOpts, current []string) ([]string, error) {
-	available := mergeTestModules(listAvailableModules(opts.Cfg, opts.Root), current)
+	available := mergeTestModules(listAddons(opts.Cfg, opts.Root), current)
 	if len(available) == 0 {
 		return nil, fmt.Errorf("%w: no modules found to pin — set them headlessly with --test-modules=<list>", ErrUsage)
 	}
@@ -707,6 +812,12 @@ type DeployResult struct {
 	// CodeSHA is the deploy branch's SHA on the server after a git-deploy run
 	// (Unit 102) — the exact hash now checked out. Empty for non-git targets.
 	CodeSHA string `json:"code_sha,omitempty"`
+	// Ref, PreviousCodeSHA and Cleaned describe a `deploy --set-code` run (Unit
+	// 112): the ref asked for, where the deploy branch stood before the move,
+	// and how many overlay files were removed on the way.
+	Ref             string `json:"ref,omitempty"`
+	PreviousCodeSHA string `json:"previous_sha,omitempty"`
+	Cleaned         int    `json:"cleaned,omitempty"`
 	// JSON echoes whether the caller asked for --json, so the REPL wrapper can
 	// route output without re-parsing the args.
 	JSON bool `json:"-"`
@@ -723,6 +834,7 @@ type deployCommit struct {
 // paths (repo-relative), kept for the i18n/ detection.
 type dirtyModule struct {
 	name  string
+	dir   string // repo-relative addon directory; differs from name in a nested layout
 	paths []string
 }
 
@@ -747,6 +859,9 @@ var deploySubjectRe = regexp.MustCompile(`^\[[^\]]+\]\s*([A-Za-z0-9_]+)\s*:`)
 func RunDeploy(ctx context.Context, opts DeployOpts) (DeployResult, error) {
 	p, err := parseDeployArgs(opts.Args)
 	if err != nil {
+		return DeployResult{}, err
+	}
+	if err := requireNoReverb("deploy", p.from); err != nil {
 		return DeployResult{}, err
 	}
 
@@ -795,13 +910,27 @@ func RunDeploy(ctx context.Context, opts DeployOpts) (DeployResult, error) {
 		return runDeployRestoreCode(ctx, opts, p)
 	}
 
+	// deploy --set-git-branch names the target's deploy branch: config-only
+	// unless --rename also moves the branch already on the server.
+	if p.setGitBranch != "" {
+		return runDeploySetGitBranch(ctx, opts, p)
+	}
+
+	// deploy --set-code re-baselines the target's code onto any ref — a force
+	// move, not a deploy: no selection, no DB, no checkpoint, no lint.
+	if p.setCodeSet {
+		return runDeploySetCode(ctx, opts, p)
+	}
+
 	// Validate an explicit --modules list against the local repo before any
 	// remote work: a name that isn't an addon here (no __manifest__.py) is a
 	// usage error, caught early so we never touch the server for a typo.
-	for _, m := range p.modules {
-		if !isAddonDir(opts.Root, m) {
-			return DeployResult{}, fmt.Errorf("%w: module %q is not an addon in %s (no __manifest__.py)", ErrUsage, m, opts.Root)
+	for i, m := range p.modules {
+		_, name, rerr := resolveAddon(opts.Cfg, opts.Root, m)
+		if rerr != nil {
+			return DeployResult{}, addonError(opts.Root, m, rerr)
 		}
+		p.modules[i] = name
 	}
 
 	sshHost, remotePath, fromName, err := resolveDeployRemote(opts, p.from)
@@ -913,7 +1042,7 @@ func RunDeploy(ctx context.Context, opts DeployOpts) (DeployResult, error) {
 				seen[dm.name] = true
 				modules = append(modules, dm.name)
 			}
-			if !i18nTouched[dm.name] && pathsTouchI18n(dm.name, dm.paths) {
+			if !i18nTouched[dm.name] && pathsTouchI18n(dm.dir, dm.paths) {
 				i18nTouched[dm.name] = true
 				opts.log("INFO", "i18n", "i18n changes detected", "",
 					[2]string{"module", dm.name})
@@ -960,6 +1089,16 @@ func RunDeploy(ctx context.Context, opts DeployOpts) (DeployResult, error) {
 		return DeployResult{}, fmt.Errorf("no deployable modules: every selected commit was skipped")
 	}
 	sort.Strings(modules)
+
+	// Pre-flight lint (Unit 110): the selected modules are checked against
+	// the data loader's own rules here — after the selection, which is what
+	// defines the scope, and before the first remote contact. A block at
+	// this point costs nothing: no push, no checkpoint, no `-u`, nothing to
+	// roll back. It blocks on manifest-listed defects only, so it can never
+	// be stricter than the server (see deployLintPreflight).
+	if lerr := deployLintPreflight(opts, p, modules); lerr != nil {
+		return DeployResult{}, lerr
+	}
 
 	// Remote profile + DB credentials, same as i18n-pull.
 	cfgRemote := *opts.Cfg
@@ -1403,7 +1542,10 @@ func handleDeployFailure(ctx context.Context, opts DeployOpts, rsc remoteShellCo
 	opts.log("INFO", "rollback", "stopping app before restore", rsc.prof.DBName)
 	_ = runSSHStream(ctx, rsc.sshHost, remoteStopApp(rsc), nil, opts.StreamOut)
 
-	consumed, rerr := restoreCheckpoint(ctx, rsc, entry, opts.StreamOut, opts.Log)
+	// On-failure auto-rollback keeps consuming the just-made checkpoint (its
+	// purpose is served the moment the failed deploy is reverted). The
+	// keep-a-restore-point behavior is opt-in via `deploy --rollback`.
+	consumed, rerr := restoreCheckpoint(ctx, rsc, entry, true, opts.StreamOut, opts.Log)
 	if rerr != nil {
 		// The rollback itself failed: keep the checkpoint recorded for a manual
 		// retry and surface both failures.
@@ -1487,7 +1629,10 @@ func runDeployRollback(ctx context.Context, opts DeployOpts, p deployArgs) (Depl
 	if err := runSSHStream(ctx, rsc.sshHost, remoteStopApp(rsc), nil, opts.StreamOut); err != nil {
 		return DeployResult{}, fmt.Errorf("stop failed: %w", err)
 	}
-	consumed, rerr := restoreCheckpoint(ctx, rsc, chosen, opts.StreamOut, opts.Log)
+	// Keep the checkpoint by default (restore leaves it intact, so the point
+	// stays restorable); --consume-checkpoint opts into the cheaper rename that
+	// destroys it. The "dump" method preserves its file regardless.
+	consumed, rerr := restoreCheckpoint(ctx, rsc, chosen, p.consumeCheckpoint, opts.StreamOut, opts.Log)
 	if rerr != nil {
 		return DeployResult{}, fmt.Errorf("restore failed: %w", rerr)
 	}
@@ -1505,13 +1650,18 @@ func runDeployRollback(ctx context.Context, opts DeployOpts, p deployArgs) (Depl
 	}
 
 	// Un-mark the checkpoint's commits so they can be corrected and redeployed;
-	// drop a consumed (db-method) checkpoint from the store.
+	// drop a consumed (--consume-checkpoint) checkpoint from the store. When it
+	// was preserved (the default), the entry stays so the point is restorable
+	// again.
 	_ = config.UnmarkDeployed(projectKey, targetKey, chosen.DeploySHAs)
+	disposition := "preserved"
 	if consumed {
 		_ = config.RemoveCheckpoint(projectKey, targetKey, chosen.Name)
+		disposition = "consumed"
 	}
 	opts.log("INFO", "", "rollback complete", rsc.prof.DBName,
-		[2]string{"checkpoint", chosen.Name}, [2]string{"unmarked", strconv.Itoa(len(chosen.DeploySHAs))})
+		[2]string{"checkpoint", chosen.Name}, [2]string{"disposition", disposition},
+		[2]string{"unmarked", strconv.Itoa(len(chosen.DeploySHAs))})
 	return DeployResult{
 		Target:     rsc.fromName,
 		DB:         rsc.prof.DBName,
@@ -1666,8 +1816,10 @@ func resolveDeployRemote(opts DeployOpts, from string) (sshHost, remotePath, fro
 func resolveRemoteTarget(cfg *config.Config, palette theme.Palette, from string, log func(level, sub, msg, db string, fields ...[2]string)) (sshHost, remotePath, fromName string, err error) {
 	sshHost, remotePath, err = resolvePullRemote(cfg, from)
 	if errors.Is(err, ErrNoPullRemote) && from == "" {
+		// No binding to mark here — this fires precisely when the directory
+		// has none, so the picker opens on the first row.
 		t, perr := pickConnectTarget(cfg.ConnectTargets, palette,
-			"Select connect target", log)
+			"Select connect target", "", log)
 		if perr != nil {
 			if errors.Is(perr, ErrNoConnectTargets) {
 				return "", "", "", ErrNoPullRemote
@@ -1818,8 +1970,8 @@ func i18nOverwriteDecision(forceI18n, noI18n, detectedUpdate bool) (state string
 // pathsTouchI18n reports whether any changed path lives under the module's
 // i18n/ folder (any file: .po, .pot, or otherwise) — the signal that a
 // deploy of this module should overwrite the database translations.
-func pathsTouchI18n(module string, paths []string) bool {
-	prefix := module + "/i18n/"
+func pathsTouchI18n(moduleDir string, paths []string) bool {
+	prefix := moduleDir + "/i18n/"
 	for _, p := range paths {
 		if strings.HasPrefix(filepath.ToSlash(p), prefix) {
 			return true
@@ -1833,37 +1985,27 @@ func pathsTouchI18n(module string, paths []string) bool {
 // non-addon areas like `[FIX] docs: …` fall through to the diff).
 func moduleFromSubject(root, subject string) string {
 	m := deploySubjectRe.FindStringSubmatch(subject)
-	if m == nil || !isAddonDir(root, m[1]) {
+	if m == nil || !hasAddon(root, m[1]) {
 		return ""
 	}
 	return m[1]
 }
 
-// modulesFromPaths maps changed paths to the distinct top-level addon
-// directories they live in, sorted.
+// modulesFromPaths maps changed paths to the distinct addons they live in,
+// sorted.
 func modulesFromPaths(root string, paths []string) []string {
 	seen := map[string]bool{}
 	var out []string
 	for _, p := range paths {
-		top := strings.SplitN(filepath.ToSlash(p), "/", 2)[0]
-		if top == "" || seen[top] || !isAddonDir(root, top) {
+		mod, _ := addonFromPath(root, p)
+		if mod == "" || seen[mod] {
 			continue
 		}
-		seen[top] = true
-		out = append(out, top)
+		seen[mod] = true
+		out = append(out, mod)
 	}
 	sort.Strings(out)
 	return out
-}
-
-// isAddonDir reports whether <root>/<name> is an Odoo addon (has a
-// __manifest__.py).
-func isAddonDir(root, name string) bool {
-	if name == "" || strings.ContainsAny(name, "/\\") {
-		return false
-	}
-	_, err := os.Stat(filepath.Join(root, name, "__manifest__.py"))
-	return err == nil
 }
 
 // splitInstallUpdate partitions the modules by their remote state: present
@@ -1991,21 +2133,23 @@ func parsePorcelainPaths(out string) []string {
 // module's paths. Pure — the testable core of gitDirtyModules.
 func dirtyModulesFromPaths(root string, paths []string) []dirtyModule {
 	byMod := map[string][]string{}
+	dirs := map[string]string{}
 	var order []string
 	for _, p := range paths {
-		top := strings.SplitN(filepath.ToSlash(p), "/", 2)[0]
-		if top == "" || !isAddonDir(root, top) {
+		mod, dir := addonFromPath(root, p)
+		if mod == "" {
 			continue
 		}
-		if _, ok := byMod[top]; !ok {
-			order = append(order, top)
+		if _, ok := byMod[mod]; !ok {
+			order = append(order, mod)
+			dirs[mod] = dir
 		}
-		byMod[top] = append(byMod[top], p)
+		byMod[mod] = append(byMod[mod], p)
 	}
 	sort.Strings(order)
 	out := make([]dirtyModule, 0, len(order))
 	for _, m := range order {
-		out = append(out, dirtyModule{name: m, paths: byMod[m]})
+		out = append(out, dirtyModule{name: m, dir: dirs[m], paths: byMod[m]})
 	}
 	return out
 }

@@ -125,6 +125,15 @@ func remoteRunFlags(args []string) (from string, remote bool) {
 			}
 		case strings.HasPrefix(a, "--from="):
 			from = strings.TrimPrefix(a, "--from=")
+		case a == "-E", a == "--env":
+			if i+1 < len(args) {
+				from = cmd.ReverbRef(args[i+1])
+				i++
+			}
+		case strings.HasPrefix(a, "-E="):
+			from = cmd.ReverbRef(strings.TrimPrefix(a, "-E="))
+		case strings.HasPrefix(a, "--env="):
+			from = cmd.ReverbRef(strings.TrimPrefix(a, "--env="))
 		}
 	}
 	return from, remote
@@ -133,8 +142,8 @@ func remoteRunFlags(args []string) (from string, remote bool) {
 // parseShellRunArgs splits shell-run's argument list into its flags and
 // positionals. A lone `-` is a positional (the stdin source), NOT an
 // unknown flag — the dash-prefix catch-all must not swallow it. The
-// `--from` value is consumed so it is never mistaken for a script name;
-// other unknown flags are ignored rather than treated as scripts.
+// `--from`/`-E` value is consumed so it is never mistaken for a script
+// name; other unknown flags are ignored rather than treated as scripts.
 func parseShellRunArgs(args []string) (noCopy bool, from string, remote bool, positional []string) {
 	for i := 0; i < len(args); i++ {
 		a := args[i]
@@ -150,6 +159,15 @@ func parseShellRunArgs(args []string) (noCopy bool, from string, remote bool, po
 			}
 		case strings.HasPrefix(a, "--from="):
 			from = strings.TrimPrefix(a, "--from=")
+		case a == "-E", a == "--env":
+			if i+1 < len(args) {
+				from = cmd.ReverbRef(args[i+1])
+				i++
+			}
+		case strings.HasPrefix(a, "-E="):
+			from = cmd.ReverbRef(strings.TrimPrefix(a, "-E="))
+		case strings.HasPrefix(a, "--env="):
+			from = cmd.ReverbRef(strings.TrimPrefix(a, "--env="))
 		case a == "-":
 			positional = append(positional, a)
 		case strings.HasPrefix(a, "-"):
