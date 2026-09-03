@@ -1,10 +1,12 @@
 package cmd
 
 import (
+	"context"
 	"errors"
 	"strings"
 	"testing"
 
+	"github.com/pascualchavez/echo/internal/config"
 	"github.com/pascualchavez/echo/internal/odoo"
 )
 
@@ -259,5 +261,33 @@ func TestResolveAdminCredentialGuard(t *testing.T) {
 				t.Errorf("guard fired = %v, want %v (err = %v)", got, c.wantGuard, err)
 			}
 		})
+	}
+}
+
+func TestParseDBArgsSaveFlags(t *testing.T) {
+	f, pos := parseDBArgs([]string{"--save", "--vault", "Private"})
+	if !f.save {
+		t.Error("save = false, want true")
+	}
+	if f.vault != "Private" {
+		t.Errorf("vault = %q, want Private", f.vault)
+	}
+	if len(pos) != 0 {
+		t.Errorf("positional = %v, want none", pos)
+	}
+	if f, _ = parseDBArgs([]string{"--vault=Shared"}); f.vault != "Shared" {
+		t.Errorf("vault = %q, want Shared", f.vault)
+	}
+}
+
+// --vault names the destination of a save nobody asked for, and it must
+// fail before the reset rather than after it.
+func TestRunDBAdminRejectsVaultWithoutSave(t *testing.T) {
+	err := RunDBAdmin(context.Background(), DBOpts{
+		Cfg:  &config.Config{DBContainer: "db", DBName: "mydb"},
+		Args: []string{"--vault", "Private", "--force"},
+	})
+	if !errors.Is(err, ErrUsage) {
+		t.Errorf("err = %v, want ErrUsage", err)
 	}
 }

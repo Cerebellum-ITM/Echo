@@ -76,9 +76,11 @@ type dbFlags struct {
 	neutralize    bool
 	insecure      bool
 	remote        bool
+	save          bool
 	asName        string
 	password      string
 	from          string
+	vault         string
 }
 
 func parseDBArgs(args []string) (dbFlags, []string) {
@@ -96,6 +98,15 @@ func parseDBArgs(args []string) (dbFlags, []string) {
 			f.neutralize = true
 		case a == "--insecure":
 			f.insecure = true
+		case a == "--save":
+			f.save = true
+		case a == "--vault":
+			if i+1 < len(args) {
+				f.vault = args[i+1]
+				i++
+			}
+		case strings.HasPrefix(a, "--vault="):
+			f.vault = strings.TrimPrefix(a, "--vault=")
 		case a == "--password":
 			if i+1 < len(args) {
 				f.password = args[i+1]
@@ -647,6 +658,10 @@ func confirmNeutralize(palette theme.Palette, name string) error {
 // Admin-reset constants: Odoo's admin user is id 2 (id 1 is the system
 // superuser), and its login is reset to "admin" — the login is not the
 // secret, and generating one would only mean two things to copy.
+// odooBaseURLKey is the ir_config_parameter holding the address the
+// instance is served at — the same one `connect` reads to open a browser.
+const odooBaseURLKey = "web.base.url"
+
 const (
 	adminUserID = 2
 	adminLogin  = "admin"
@@ -675,6 +690,16 @@ func RunDBAdmin(ctx context.Context, opts DBOpts) error {
 	flags, positional := parseDBArgs(opts.Args)
 	if flags.insecure && flags.password != "" {
 		return fmt.Errorf("%w: --password and --insecure both set the admin password", ErrUsage)
+	}
+	if flags.vault != "" && !flags.save {
+		return fmt.Errorf("%w: --vault names the destination of a save that --save did not ask for", ErrUsage)
+	}
+	// Before the UPDATE, not after: a locked vault found at the end would
+	// leave a new password installed and nowhere to store it.
+	if flags.save {
+		if err := opAvailable(ctx); err != nil {
+			return err
+		}
 	}
 	if flags.from != "" || flags.remote {
 		return runDBAdminRemote(ctx, opts, flags, positional)
@@ -717,6 +742,13 @@ func RunDBAdmin(ctx context.Context, opts DBOpts) error {
 		return fmt.Errorf("no user with id %d in %q", adminUserID, target)
 	}
 	reportAdminCredential(opts, flags, target, password)
+	if flags.save {
+		baseURL, err := docker.ConfigParameter(ctx, opts.Cfg.ComposeCmd, opts.Root, opts.Cfg.DBContainer, dbUser(opts), target, odooBaseURLKey)
+		if err != nil {
+			opts.log("WARNING", "save", "could not read "+odooBaseURLKey+": "+err.Error(), target)
+		}
+		saveAdminCredential(ctx, opts, flags, statusProjectName(opts.Cfg, false, "", ""), target, password, baseURL)
+	}
 	return nil
 }
 
@@ -767,7 +799,69 @@ func runDBAdminRemote(ctx context.Context, opts DBOpts, flags dbFlags, positiona
 		return fmt.Errorf("no user with id %d in %q", adminUserID, target)
 	}
 	reportAdminCredential(opts, flags, target, password)
+	if flags.save {
+		baseURL, err := remotePsqlScalar(ctx, rsc, target,
+			fmt.Sprintf("SELECT value FROM ir_config_parameter WHERE key = '%s'", sqlLit(odooBaseURLKey)))
+		if err != nil {
+			opts.log("WARNING", "save", "could not read "+odooBaseURLKey+": "+err.Error(), target)
+		}
+		saveAdminCredential(ctx, opts, flags, targetLabel(rsc), target, password, baseURL)
+	}
 	return nil
+}
+
+// saveAdminCredential stores the credential in 1Password as
+// "Odoo <project> (<db>)", updating the item already under that title.
+// Failures are reported, never returned: the reset already happened and
+// the password is already on screen, so aborting here would only hide a
+// credential the caller can still copy.
+func saveAdminCredential(ctx context.Context, opts DBOpts, flags dbFlags, project, db, password, baseURL string) {
+	title := fmt.Sprintf("Odoo %s (%s)", project, db)
+	url := strings.TrimRight(strings.TrimSpace(baseURL), "/")
+	if url == "" || isLocalBaseURL(url) {
+		// Odoo rewrites web.base.url from the first request it serves
+		// unless web.base.url.freeze is set, so a local-looking value on a
+		// remote instance is stale, not the address anyone browses. A wrong
+		// URL is worse than none: it autofills on the wrong site.
+		if url != "" {
+			opts.log("WARNING", "save", "ignoring "+odooBaseURLKey+" "+url+" — it does not address this instance", db)
+		}
+		url = ""
+	}
+
+	created, err := opSaveLogin(ctx, flags.vault, title, adminLogin, password, url)
+	if err != nil {
+		opts.log("WARNING", "save", "could not save the credential: "+err.Error(), db)
+		return
+	}
+	action := "updated"
+	if created {
+		action = "created"
+	}
+	fields := [][2]string{{"item", title}}
+	if flags.vault != "" {
+		fields = append(fields, [2]string{"vault", flags.vault})
+	}
+	if url != "" {
+		fields = append(fields, [2]string{"url", url})
+	}
+	opts.log("INFO", "save", "1Password item "+action, db, fields...)
+}
+
+// isLocalBaseURL reports whether a web.base.url points at the machine
+// serving it rather than at an address a browser would use.
+func isLocalBaseURL(url string) bool {
+	host := url
+	if i := strings.Index(host, "://"); i >= 0 {
+		host = host[i+3:]
+	}
+	host, _, _ = strings.Cut(host, "/")
+	host, _, _ = strings.Cut(host, ":")
+	switch host {
+	case "localhost", "127.0.0.1", "0.0.0.0", "::1":
+		return true
+	}
+	return false
 }
 
 // resolveAdminCredential picks the password to install and returns it with

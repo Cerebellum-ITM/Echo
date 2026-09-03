@@ -39,6 +39,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   local exige el proyecto como siempre.
 
 ### Added
+- **`db-admin --save` guarda la credencial en 1Password.** La Unit 116 sacó
+  la contraseña de la base, pero la dejó en un solo lugar: el scrollback.
+  Ahora `--save` crea un ítem Login con título `Odoo <proyecto> (<db>)`,
+  usuario `admin`, la contraseña generada, y la URL real de la instancia
+  leída de `web.base.url` en `ir_config_parameter` —la misma fuente que usa
+  `connect` para abrir el navegador— para que 1Password la ofrezca sola al
+  entrar al back office. Si el ítem ya existe **lo actualiza** en vez de
+  crear otro: 1Password conserva el historial de contraseñas, y así no se
+  acumula un ítem por reset. El parcheo manda el ítem completo, de modo que
+  las secciones, notas y campos custom agregados a mano sobreviven. La
+  contraseña viaja **por stdin, nunca en `argv`** (el propio `op` advierte
+  que los argumentos quedan en el historial de shell y son visibles a otros
+  procesos). Las verificaciones de `op` corren **antes** del `UPDATE`: si se
+  comprobaran al final, una bóveda bloqueada dejaría la base ya reseteada y
+  la credencial sin guardar en ningún lado. Después del reset ya no se
+  aborta — un fallo al guardar imprime la contraseña igual y reporta
+  WARNING, porque perder el ítem se recupera copiando de pantalla y perder
+  la contraseña no. Funciona en local y en remoto. `--vault <name>` fija la
+  bóveda; sin `--save` es `ErrUsage`.
 - **`db-admin --from <target>` / `--remote`.** El comando dejó de ser
   local-only: corre la misma sentencia contra el Postgres del target
   remoto reusando `resolveRemoteShell` y `remotePsqlScalar` (los que ya

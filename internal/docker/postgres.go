@@ -216,6 +216,20 @@ func ResetUserCredentials(ctx context.Context, composeCmd, dir, dbContainer, use
 	return strings.TrimSpace(out) != "", nil
 }
 
+// ConfigParameter returns an ir_config_parameter value, empty when the
+// key is absent from the database.
+func ConfigParameter(ctx context.Context, composeCmd, dir, dbContainer, user, db, key string) (string, error) {
+	if user == "" {
+		user = "postgres"
+	}
+	q := fmt.Sprintf("SELECT value FROM ir_config_parameter WHERE key = '%s'", escapeIdent(key))
+	out, err := psqlScalar(ctx, composeCmd, dir, dbContainer, user, db, q)
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(out), nil
+}
+
 // ModuleVersion returns the name, latest_version and state recorded in
 // ir_module_module for a module, or found=false when there is no row.
 // latest_version may be empty (NULL) for a never-installed module.

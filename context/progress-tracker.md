@@ -79,6 +79,35 @@ _(siguiente: Unit 14 — meta-commands. Fix deploy-build-muting: el builder de `
 
 ## Completed
 
+- [x] Unit 117 — db-admin-1password. La Unit 116 sacó la contraseña de la
+  base y la dejó en el scrollback: se imprime una vez, y si la ventana se
+  cierra el único camino de vuelta es otro reset. `--save` (opt-in; escribir
+  en una bóveda es un efecto persistente que no debe dispararse solo por
+  tener `op` instalado) crea un ítem Login `Odoo <proyecto> (<db>)` con
+  usuario `admin`, la contraseña, y la URL de la instancia leída de
+  `web.base.url` en `ir_config_parameter` —misma fuente que `connect_mint.py`—
+  porque un ítem sin URL no autocompleta. Si el ítem existe lo **actualiza**
+  (1Password guarda historial; crear siempre daría tres ítems homónimos a los
+  tres resets) parchando el JSON completo del ítem, así que secciones, notas y
+  campos custom hechos a mano sobreviven. Nuevo `internal/cmd/onepassword.go`
+  (`opAvailable`/`opSaveLogin`/`patchOPItem`/`opRun`): la contraseña va **por
+  stdin**, nunca en `argv` —lo advierte el propio `op item create --help`—, y
+  la URL por el flag `--url`, que no es secreto y existe igual en `create` y
+  en `edit`; en un update sin URL usable se re-declara la que el ítem ya
+  traía. Detalle del CLI verificado con `--dry-run`: `op` solo reconoce la
+  plantilla `-` si stdin es un **pipe** (con archivo redirigido pide
+  `--category`), cosa que `os/exec` cumple por construcción. El pre-flight de
+  `op` corre **antes** del `UPDATE` (criterio del lint pre-flight de la Unit
+  110): una bóveda bloqueada detectada al final dejaría la base reseteada y la
+  credencial sin guardar. Tras el reset ya no se aborta: fallo al guardar =
+  WARNING y la contraseña impresa igual. `docker.ConfigParameter` nuevo para
+  la lectura local; la remota va por `remotePsqlScalar`. Local y remoto.
+  `--vault` sin `--save` es `ErrUsage`. Tests `onepassword_test.go`
+  (preservación de campos ajenos, alta del campo `password` faltante, URL
+  primaria, cuerpo sin `urls`, `isLocalBaseURL`) y `db_test.go`. build/vet/test
+  verdes; **verificación EN VIVO pendiente** (necesita una instancia y escribe
+  en la bóveda real). Spec `117-db-admin-1password.md`.
+
 - [x] Unit 116 — db-admin-generated-password. `db-admin` recuperaba el acceso al
   back office dejando la base abierta: escribía `admin`/`admin` —credencial
   documentada— en **texto plano**, apoyada en el esquema `plaintext` deprecado
