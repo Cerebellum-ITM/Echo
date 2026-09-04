@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/pascualchavez/echo/internal/clipboard"
+	"github.com/pascualchavez/echo/internal/docker"
 )
 
 // remoteServiceArgs returns the positional compose-service arguments from a
@@ -89,6 +90,34 @@ func runRemoteRestart(ctx context.Context, opts DockerOpts, from string) error {
 	remoteCmd := remoteComposeCmd(rsc.remotePath, rsc.target.composeCmd,
 		append([]string{"restart"}, services...)...)
 	return runSSHStream(ctx, rsc.sshHost, remoteCmd, nil, opts.StreamOut)
+}
+
+// runRemotePS lists a remote host's compose containers over SSH. Like
+// `logs`, it works the same on classic and Reverb targets: Reverb owns the
+// lifecycle verbs, but a read of what is running is still a compose call on
+// the host.
+func runRemotePS(ctx context.Context, opts DockerOpts, from string, onTable func(rows []docker.PSContainer, db string)) error {
+	rsc, err := resolveRemoteShell(ctx, opts.Cfg, opts.Palette, opts.Root, from, opts.Log)
+	if err != nil {
+		return err
+	}
+	return remotePSTable(ctx, rsc.sshHost, rsc.remotePath, rsc.target.composeCmd,
+		func(rows []docker.PSContainer) { onTable(rows, rsc.prof.DBName) }, opts.StreamOut)
+}
+
+// remotePSTable reads `<compose> ps --format json` on host over SSH and hands
+// the parsed rows to onTable. When the structured read fails (older compose,
+// SSH hiccup) it streams the raw `<compose> ps` through stream instead, so the
+// caller always gets something on screen.
+func remotePSTable(ctx context.Context, host, remotePath, composeCmd string, onTable func([]docker.PSContainer), stream func(string)) error {
+	jsonCmd := remoteComposeCmd(remotePath, composeCmd, "ps", "--format", "json")
+	if out, err := runSSH(ctx, host, jsonCmd, nil); err == nil {
+		if rows, err := docker.ParsePS(out); err == nil {
+			onTable(rows)
+			return nil
+		}
+	}
+	return runSSHStream(ctx, host, remoteComposeCmd(remotePath, composeCmd, "ps"), nil, stream)
 }
 
 // runRemoteLogs streams a remote host's compose logs over SSH. Follow is the

@@ -245,18 +245,16 @@ func runLinkShow(ctx context.Context, opts LinkOpts) error {
 	}
 	reportDeployedCode(ctx, opts, name, prof.DBName)
 	opts.log("INFO", "remote", "remote containers", prof.DBName)
-	if opts.OnPS != nil {
-		jsonCmd := remoteComposeCmd(opts.Cfg.ConnectRemotePath, prof.ComposeCmd, "ps", "--format", "json")
-		if out, err := runSSH(ctx, opts.Cfg.ConnectSSHHost, jsonCmd, nil); err == nil {
-			if rows, perr := docker.ParsePS(out); perr == nil {
-				opts.OnPS(rows, prof.DBName)
-				return nil
-			}
+	if opts.OnPS == nil {
+		psCmd := remoteComposeCmd(opts.Cfg.ConnectRemotePath, prof.ComposeCmd, "ps")
+		if err := runSSHStream(ctx, opts.Cfg.ConnectSSHHost, psCmd, nil, opts.StreamOut); err != nil {
+			return fmt.Errorf("remote ps: %w", err)
 		}
-		// Structured read failed — fall back to the raw stream below.
+		return nil
 	}
-	psCmd := remoteComposeCmd(opts.Cfg.ConnectRemotePath, prof.ComposeCmd, "ps")
-	if err := runSSHStream(ctx, opts.Cfg.ConnectSSHHost, psCmd, nil, opts.StreamOut); err != nil {
+	err := remotePSTable(ctx, opts.Cfg.ConnectSSHHost, opts.Cfg.ConnectRemotePath, prof.ComposeCmd,
+		func(rows []docker.PSContainer) { opts.OnPS(rows, prof.DBName) }, opts.StreamOut)
+	if err != nil {
 		return fmt.Errorf("remote ps: %w", err)
 	}
 	return nil

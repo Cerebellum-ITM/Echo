@@ -24,7 +24,7 @@ Echo is a work in progress; below is what currently ships in `main`.
 | Area      | Working                                                                 | Pending                         |
 |-----------|-------------------------------------------------------------------------|---------------------------------|
 | Project   | `init`, `reset`, `alias` (`-C <name>` registry), `help`, `clear`        | `version`, `stage`, `theme`, `logo` |
-| Docker    | `up`, `down`, `stop`, `restart`, `ps`, `logs` (`--copy`/`--all`/`-t`; `up`/`stop`/`restart`/`logs` also `--from`/`--remote` over SSH) | — |
+| Docker    | `up`, `down`, `stop`, `restart`, `ps`, `logs` (`--copy`/`--all`/`-t`; `up`/`stop`/`restart`/`ps`/`logs` also `--from`/`--remote` over SSH) | — |
 | Modules   | `install`, `update` (`--i18n`, `--remote`), `uninstall`, `test`, `modules` (`--config`), `modinfo`, `view` | —             |
 | Database  | `db-admin`, `db-backup` (`--with-filestore`), `db-restore` (rename + live progress), `db-pull` (clone a remote DB), `db-drop`, `db-neutralize`, `db-list`, `db-use` | — |
 | Shell     | `shell`, `bash`, `psql`                                                  | —                               |
@@ -141,14 +141,15 @@ points at a local directory.
 Compose lifecycle lines (`Container … Started`) are reformatted into Echo's
 Odoo log style (`docker.container: started name=…`).
 
-`up`, `stop`, `restart`, and `logs` can act on a **remote** host the same way
+`up`, `stop`, `restart`, `ps`, and `logs` can act on a **remote** host the same way
 `deploy` and `shell` do: pass `--from <target>` to name a connect target, or
 `--remote` to use this directory's `link` binding (so you don't retype the
 name). All ride the shared SSH transport. Remote `restart`/`stop` with no
 service target the remote profile's Odoo container and ask for a red
 confirmation when the remote stage is `prod` (`--force` skips it); remote `up`
 is non-destructive so it doesn't confirm. Remote `logs` keeps follow-by-default,
-streaming over SSH, with `-t`/`--no-follow`/`--copy` honored. Without a remote
+streaming over SSH, with `-t`/`--no-follow`/`--copy` honored. Remote `ps`
+renders the same styled table as the local one, read over SSH. Without a remote
 flag they all behave exactly as before (local). In remote mode these run from a
 pure addons repo with no local `docker-compose.yml`.
 
@@ -156,6 +157,7 @@ pure addons repo with no local `docker-compose.yml`.
 echo link prod                 # bind once (see Deploy below)
 echo restart --remote          # restart the linked remote's Odoo container
 echo logs --remote -t 200      # tail 200 lines, then follow, over SSH
+echo ps --remote               # styled container table of the linked remote
 echo restart --from staging    # ad-hoc: a different named target
 ```
 

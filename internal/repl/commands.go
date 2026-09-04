@@ -46,6 +46,7 @@ var commandFlags = map[string][]string{
 	"down":          {"--force", "-E", "--env"},
 	"stop":          {"--from", "--remote", "--force", "-E", "--env"},
 	"restart":       {"--from", "--remote", "--force", "-E", "--env"},
+	"ps":            {"--from", "--remote", "-E", "--env"},
 	"logs":          {"-t", "--no-follow", "-c", "--copy", "--all", "--from", "--remote", "-E", "--env"},
 	"shell":         {"--from", "--remote", "--force", "-E", "--env"},
 	"shell-run":     {"--no-copy", "--force", "--from", "--remote", "-E", "--env"},

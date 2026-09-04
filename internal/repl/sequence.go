@@ -37,7 +37,7 @@ var sequenceCommands = []string{
 // remoteSequenceCommands is the subset valid when the sequence targets a
 // remote — only commands that accept --from/--remote, minus the interactive
 // shells. Cross-checked against commandFlags in the test.
-var remoteSequenceCommands = []string{"up", "stop", "restart", "logs", "i18n-pull", "push", "deploy"}
+var remoteSequenceCommands = []string{"up", "stop", "restart", "ps", "logs", "i18n-pull", "push", "deploy"}
 
 // runSequence builds a sequence of commands interactively (tri-state picker
 // → per-command builder → review) and runs them through the recipe step

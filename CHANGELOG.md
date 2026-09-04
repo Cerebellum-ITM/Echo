@@ -5,6 +5,20 @@ All notable changes to Echo are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- **`ps` acepta `--from <target>` / `--remote` / `-E`.** Era el único verbo de
+  compose sin rama remota: `up`, `stop`, `restart` y `logs` ya corrían sobre el
+  servidor y `ps` seguía mirando solo el stack local, así que "qué hay corriendo
+  en staging" pasaba por `link --show` o por un `shell`. Ahora lee
+  `compose ps --format json` por SSH y pinta **la misma tabla estilizada** que
+  el `ps` local (con la base del perfil remoto en la línea de conteo); si el
+  JSON no se puede parsear degrada al `compose ps` crudo, igual que en local.
+  Es read-only, sin gate de prod, y funciona igual en targets clásicos y de
+  Reverb. `link --show` comparte ahora el mismo lector. `ps` entra también en
+  el menú de `sequence --remote` y autocompleta sus flags.
+
 ## [0.25.0] - 2026-09-03
 
 ### Changed
