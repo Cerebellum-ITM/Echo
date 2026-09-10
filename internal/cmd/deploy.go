@@ -1109,15 +1109,7 @@ func RunDeploy(ctx context.Context, opts DeployOpts) (DeployResult, error) {
 	if err != nil {
 		return DeployResult{}, err
 	}
-	target := connectTarget{
-		remote:        true,
-		composeCmd:    prof.ComposeCmd,
-		odooContainer: prof.OdooContainer,
-		dbContainer:   prof.DBContainer,
-		dbName:        prof.DBName,
-		stage:         prof.Stage,
-		odooVersion:   prof.OdooVersion,
-	}
+	target := remoteConnectTarget(prof)
 	opts.log("INFO", "system", "system", prof.DBName,
 		statusFields(target.odooVersion, prof.Stage,
 			statusProjectName(opts.Cfg, true, remotePath, fromName),
@@ -2032,7 +2024,7 @@ func remoteModuleStates(ctx context.Context, sshHost, remotePath string, t conne
 	}
 	q := "SELECT name, state FROM ir_module_module"
 	argv := odoo.Cmd{"psql", "-U", pgUser, "-d", db, "-At", "-c", q}
-	out, err := runSSH(ctx, sshHost, remoteDBCmd(remotePath, t, argv), nil)
+	out, err := runRemoteDBCmd(ctx, runSSH, sshHost, remotePath, t, argv)
 	if err != nil {
 		return nil, err
 	}

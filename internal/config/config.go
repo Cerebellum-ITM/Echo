@@ -443,6 +443,20 @@ type projectFile struct {
 	Push           *pushConfig       `toml:"push"`
 	Deploy         *deployFile       `toml:"deploy"`
 	Promote        *promoteConfig    `toml:"promote"`
+	Reverb         *reverbMarkerFile `toml:"reverb"`
+}
+
+// reverbMarkerFile is the [reverb] table of a SERVER-side project profile:
+// the marker Reverb writes to say "this project directory is a managed
+// environment". It is not the client's [reverb] credentials table — it
+// carries no secret, only the environment's identity, so Echo can pick the
+// behaviors that differ on a Reverb target (the DB transport today) without
+// a per-invocation flag.
+type reverbMarkerFile struct {
+	EnvID   int64  `toml:"env_id"`
+	Project string `toml:"project"`
+	Env     string `toml:"env"`
+	APIURL  string `toml:"api_url"`
 }
 
 type connectFile struct {
@@ -673,6 +687,11 @@ type RemoteProfile struct {
 	AddonsPaths []string
 	ConfPath    string
 
+	// Reverb is the [reverb] marker of the server-side project profile,
+	// present only when the target is an environment managed by a Reverb
+	// daemon. Nil on every hand-built target.
+	Reverb *ReverbMarker
+
 	// Checkpoint policy declared on the SERVER ([checkpoint] in the remote
 	// global.toml + project profile, project wins). Empty/zero when the
 	// server doesn't declare it — the client then falls back to its own
@@ -766,6 +785,7 @@ func ParseRemoteProfile(globalTOML, projectTOML []byte) RemoteProfile {
 		AddonsMode:        p.AddonsMode,
 		AddonsPaths:       p.AddonsPaths,
 		ConfPath:          p.ConfPath,
+		Reverb:            reverbMarkerFrom(p.Reverb),
 		CheckpointMode:    cp.Mode,
 		CheckpointMethod:  cp.Method,
 		CheckpointKeep:    cp.Keep,
@@ -776,6 +796,25 @@ func ParseRemoteProfile(globalTOML, projectTOML []byte) RemoteProfile {
 		DeployTest:        mergeDeployTest(g.Deploy, p.Deploy),
 		DeployTestModules: mergeDeployTestModules(deployTestModulesFrom(g.Deploy), deployTestModulesFrom(p.Deploy)),
 	}
+}
+
+// ReverbMarker identifies the Reverb environment a remote project directory
+// belongs to. APIURL is the daemon the host declares; it wins over the
+// client's own [reverb] url when both are set, so moving the daemon does not
+// touch every laptop.
+type ReverbMarker struct {
+	EnvID   int64
+	Project string
+	Env     string
+	APIURL  string
+}
+
+// reverbMarkerFrom converts a decoded [reverb] marker table. Nil-safe.
+func reverbMarkerFrom(f *reverbMarkerFile) *ReverbMarker {
+	if f == nil {
+		return nil
+	}
+	return &ReverbMarker{EnvID: f.EnvID, Project: f.Project, Env: f.Env, APIURL: f.APIURL}
 }
 
 // mergeDeployPush resolves the server-side [deploy] push: project over

@@ -69,6 +69,11 @@ type connectTarget struct {
 	dbName        string
 	stage         string
 	odooVersion   string
+	// dbExec is the transport for commands that run INSIDE the Postgres
+	// container: "compose" (the default) when dbContainer names a service
+	// of the project's compose file, "docker" when it only names a
+	// container. See remoteConnectTarget.
+	dbExec string
 }
 
 type userRow struct {
@@ -316,15 +321,7 @@ func resolveConnectTarget(ctx context.Context, opts ConnectOpts) (connectTarget,
 	if err != nil {
 		return connectTarget{}, err
 	}
-	return connectTarget{
-		remote:        true,
-		composeCmd:    prof.ComposeCmd,
-		odooContainer: prof.OdooContainer,
-		dbContainer:   prof.DBContainer,
-		dbName:        prof.DBName,
-		stage:         prof.Stage,
-		odooVersion:   prof.OdooVersion,
-	}, nil
+	return remoteConnectTarget(prof), nil
 }
 
 // fetchRemoteProfile reads the remote host's Echo `global.toml` and the

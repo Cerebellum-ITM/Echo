@@ -70,7 +70,7 @@ func sqlLit(s string) string { return strings.ReplaceAll(s, "'", "''") }
 // Postgres container and returns the trimmed scalar.
 func remotePsqlScalar(ctx context.Context, rsc remoteShellContext, db, query string) (string, error) {
 	argv := odoo.Cmd{"psql", "-U", pgUserFor(rsc), "-d", db, "-At", "-c", query}
-	out, err := ckptRunSSH(ctx, rsc.sshHost, remoteDBCmd(rsc.remotePath, rsc.target, argv), nil)
+	out, err := runRemoteDBCmd(ctx, ckptRunSSH, rsc.sshHost, rsc.remotePath, rsc.target, argv)
 	if err != nil {
 		return "", err
 	}
@@ -81,7 +81,7 @@ func remotePsqlScalar(ctx context.Context, rsc remoteShellContext, db, query str
 // Postgres container, stopping on the first SQL error.
 func remotePsqlExec(ctx context.Context, rsc remoteShellContext, db, stmt string) error {
 	argv := odoo.Cmd{"psql", "-U", pgUserFor(rsc), "-d", db, "-v", "ON_ERROR_STOP=1", "-c", stmt}
-	_, err := ckptRunSSH(ctx, rsc.sshHost, remoteDBCmd(rsc.remotePath, rsc.target, argv), nil)
+	_, err := runRemoteDBCmd(ctx, ckptRunSSH, rsc.sshHost, rsc.remotePath, rsc.target, argv)
 	return err
 }
 
@@ -116,7 +116,7 @@ func remoteDataDir(ctx context.Context, rsc remoteShellContext) (string, error) 
 // the "Available" column is field 4, in KiB).
 func remoteDiskFreeBytes(ctx context.Context, rsc remoteShellContext, path string) (int64, error) {
 	argv := odoo.Cmd{"df", "-Pk", path}
-	out, err := ckptRunSSH(ctx, rsc.sshHost, remoteDBCmd(rsc.remotePath, rsc.target, argv), nil)
+	out, err := runRemoteDBCmd(ctx, ckptRunSSH, rsc.sshHost, rsc.remotePath, rsc.target, argv)
 	if err != nil {
 		return 0, err
 	}
@@ -205,23 +205,25 @@ func remoteCreateDB(ctx context.Context, rsc remoteShellContext, db string) erro
 // server (the dir is created on demand). The dump never leaves the server.
 func remoteDumpToFile(ctx context.Context, rsc remoteShellContext, db, relPath string, stream func(string)) error {
 	dir := relPath[:strings.LastIndex(relPath, "/")]
-	inner := rsc.target.composeCmd + " exec -T " + shellQuote(rsc.target.dbContainer) +
-		" pg_dump -Fc -U " + shellQuote(pgUserFor(rsc)) + " " + shellQuote(db)
-	full := "cd " + shellQuote(rsc.remotePath) +
-		" && mkdir -p " + shellQuote(dir) +
-		" && " + inner + " > " + shellQuote(relPath)
-	return ckptRunSSHStream(ctx, rsc.sshHost, full, nil, stream)
+	argv := odoo.Cmd{"pg_dump", "-Fc", "-U", pgUserFor(rsc), db}
+	return withDBExecFallback(rsc.target, func(mode string) error {
+		full := "cd " + shellQuote(rsc.remotePath) +
+			" && mkdir -p " + shellQuote(dir) +
+			" && " + dbExecInner(rsc.target, mode, argv) + " > " + shellQuote(relPath)
+		return ckptRunSSHStream(ctx, rsc.sshHost, full, nil, stream)
+	})
 }
 
 // remoteRestoreDump pipes the server-side dump at relPath into pg_restore in
 // the remote Postgres container, loading it into the (freshly created) db.
 func remoteRestoreDump(ctx context.Context, rsc remoteShellContext, db, relPath string, stream func(string)) error {
 	user := pgUserFor(rsc)
-	inner := rsc.target.composeCmd + " exec -T " + shellQuote(rsc.target.dbContainer) +
-		" pg_restore --no-owner --role=" + shellQuote(user) +
-		" -U " + shellQuote(user) + " -d " + shellQuote(db)
-	full := "cd " + shellQuote(rsc.remotePath) + " && " + inner + " < " + shellQuote(relPath)
-	return ckptRunSSHStream(ctx, rsc.sshHost, full, nil, stream)
+	argv := odoo.Cmd{"pg_restore", "--no-owner", "--role=" + user, "-U", user, "-d", db}
+	return withDBExecFallback(rsc.target, func(mode string) error {
+		full := "cd " + shellQuote(rsc.remotePath) + " && " +
+			dbExecInner(rsc.target, mode, argv) + " < " + shellQuote(relPath)
+		return ckptRunSSHStream(ctx, rsc.sshHost, full, nil, stream)
+	})
 }
 
 // remoteFileSize returns the byte size of the server-side file at relPath

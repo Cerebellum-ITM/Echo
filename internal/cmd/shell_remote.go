@@ -89,15 +89,7 @@ func resolveRemoteShell(ctx context.Context, cfg *config.Config, palette theme.P
 	if err != nil {
 		return remoteShellContext{}, err
 	}
-	target := connectTarget{
-		remote:        true,
-		composeCmd:    prof.ComposeCmd,
-		odooContainer: prof.OdooContainer,
-		dbContainer:   prof.DBContainer,
-		dbName:        prof.DBName,
-		stage:         prof.Stage,
-		odooVersion:   prof.OdooVersion,
-	}
+	target := remoteConnectTarget(prof)
 	emit("INFO", "system", "system", prof.DBName,
 		statusFields(target.odooVersion, prof.Stage,
 			statusProjectName(cfg, true, remotePath, fromName),

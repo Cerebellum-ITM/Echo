@@ -172,3 +172,27 @@ git_path = "src"
 		t.Errorf("git-deploy topology lost: %+v", after)
 	}
 }
+
+func TestParseRemoteProfileReverbMarker(t *testing.T) {
+	const profile = `odoo_container = "odoo"
+db_container = "reverb-iza-db"
+db_name = "iza_staging"
+
+[reverb]
+env_id = 116
+project = "iza"
+env = "staging"
+api_url = "http://reverb.local:8080"
+`
+	prof := ParseRemoteProfile(nil, []byte(profile))
+	if prof.Reverb == nil {
+		t.Fatal("[reverb] marker not parsed")
+	}
+	if prof.Reverb.EnvID != 116 || prof.Reverb.Project != "iza" ||
+		prof.Reverb.Env != "staging" || prof.Reverb.APIURL != "http://reverb.local:8080" {
+		t.Errorf("marker = %+v", prof.Reverb)
+	}
+	if bare := ParseRemoteProfile(nil, []byte("db_name = \"iza\"\n")); bare.Reverb != nil {
+		t.Errorf("marker invented on a classic profile: %+v", bare.Reverb)
+	}
+}

@@ -369,7 +369,7 @@ func TestCreateCheckpointDumpMethod(t *testing.T) {
 	if !strings.HasPrefix(entry.DumpPath, checkpointDir+"/") {
 		t.Errorf("dump path = %q", entry.DumpPath)
 	}
-	if len(streamCmds) != 1 || !strings.Contains(streamCmds[0], "pg_dump -Fc") {
+	if len(streamCmds) != 1 || !strings.Contains(streamCmds[0], "'pg_dump' '-Fc'") {
 		t.Fatalf("expected one pg_dump stream, got %v", streamCmds)
 	}
 	if !strings.Contains(streamCmds[0], "> "+shellQuote(entry.DumpPath)) {

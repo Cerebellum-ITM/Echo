@@ -8,6 +8,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- **Los comandos de base funcionan contra un Postgres que no es servicio del
+  compose.** Todo lo que Echo corre dentro del contenedor de Postgres —
+  `checkpoint` (dump, restore y sus consultas), `db-pull`, el `df` del
+  pre-flight y las lecturas de `ir_module_module` de `deploy` e `i18n-pull`—
+  emitía `cd <path> && <compose> exec -T <db_container>`, asumiendo que
+  `db_container` nombra un **servicio** del compose del directorio. En un
+  entorno gestionado por Reverb no lo es: la base vive en el compose del
+  proyecto y el del entorno solo trae Odoo, así que fallaban con
+  `no such service` con el contenedor arriba. El perfil del servidor ahora
+  puede declararlo con una tabla marcador `[reverb]`, y entonces el
+  transporte es `docker exec -i`. Sin marcador, un `no such service` se
+  reintenta una vez con esa misma forma, así que un target hecho a mano cuya
+  base se salió del compose también funciona. Los usos de `db_container`
+  como `--db_host` no cambian.
+
 - **Guardar la config deja de borrar secciones.** `SaveGlobal` reconstruía
   `global.toml` desde una lista fija de nueve campos, así que cualquier
   escritura —registrar un connect target, cambiar el theme, fijar un alias— se

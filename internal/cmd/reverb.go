@@ -303,6 +303,9 @@ func resolveReverbShell(ctx context.Context, cfg *config.Config, spec string, lo
 		dbName:        re.DB.Name,
 		stage:         re.Stage,
 		odooVersion:   re.OdooVersion,
+		// containers.db in the resolve payload is a container NAME; the
+		// environment's compose file has no service for it.
+		dbExec: dbExecDocker,
 	}
 	// The profile is synthesized from the same payload so every call site
 	// reading rsc.prof.* behaves exactly as it does on a classic target.

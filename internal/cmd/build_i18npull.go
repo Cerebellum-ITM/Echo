@@ -125,14 +125,7 @@ func remoteI18nModules(ctx context.Context, pullOpts I18nPullOpts, sshHost, remo
 	if err != nil {
 		return nil, "", err
 	}
-	target := connectTarget{
-		remote:        true,
-		composeCmd:    prof.ComposeCmd,
-		odooContainer: prof.OdooContainer,
-		dbContainer:   prof.DBContainer,
-		dbName:        prof.DBName,
-		stage:         prof.Stage,
-	}
+	target := remoteConnectTarget(prof)
 	pullOpts.log("INFO", "remote", "listing modules", prof.DBName, [2]string{"source", "project addons"})
 	mods, err := listRemoteConfModules(ctx, sshHost, remotePath, target, prof.ConfPath, prof.AddonsPaths)
 	if err != nil {
