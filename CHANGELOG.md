@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Guardar la config deja de borrar secciones.** `SaveGlobal` reconstruía
+  `global.toml` desde una lista fija de nueve campos, así que cualquier
+  escritura —registrar un connect target, cambiar el theme, fijar un alias— se
+  llevaba por delante `[reverb]`, `[checkpoint]`, `[push]`, `[deploy]`,
+  `[promote]` e `icons`. Lo mismo en `SaveProject`, que tiraba el `[promote]`
+  del perfil y los campos `git_deploy`/`git_branch`/`git_path` del `[connect]`
+  —por eso `deploy --set-git-branch` sobre un binding de directorio "guardaba"
+  la rama y no quedaba nada en disco—. Ahora ambos escritores hacen
+  load-modify-write: leen el archivo, sobreescriben solo los campos que el
+  `Config` posee (y los limpian explícitamente cuando vuelven a default) y
+  dejan intacto lo demás. Primera de las cuatro unidades del plan de link mode
+  para entornos de Reverb: sin esto, registrar el target borra el token que el
+  modo necesita.
+
 ### Added
 - **`ps` acepta `--from <target>` / `--remote` / `-E`.** Era el único verbo de
   compose sin rama remota: `up`, `stop`, `restart` y `logs` ya corrían sobre el

@@ -815,7 +815,21 @@ func WithDeployActions(existingTOML []byte, actions []DeployAction) ([]byte, err
 	return buf.Bytes(), nil
 }
 
-// SaveGlobal writes theme and logo to global.toml atomically.
+// loadGlobalFile decodes global.toml into the file struct. A missing or
+// unparseable file yields a zero value, so a save still writes a fresh one.
+func loadGlobalFile(path string) globalFile {
+	var g globalFile
+	if data, err := os.ReadFile(path); err == nil {
+		_ = toml.Unmarshal(data, &g)
+	}
+	return g
+}
+
+// SaveGlobal writes the global fields the Config owns to global.toml
+// atomically. It reads the current file first and overwrites only those
+// fields, so the sections the Config does not model — [reverb],
+// [checkpoint], [push], [deploy], [promote], icons — survive a save that
+// was only meant to add a connect target.
 func SaveGlobal(cfg *Config) error {
 	root, err := configRoot()
 	if err != nil {
@@ -825,15 +839,17 @@ func SaveGlobal(cfg *Config) error {
 		return err
 	}
 
-	g := globalFile{
-		Theme:          cfg.Theme,
-		Logo:           cfg.Logo,
-		Banner:         cfg.Banner,
-		ComposeCmd:     cfg.ComposeCmd,
-		LogDBMax:       cfg.LogDBMax,
-		ConnectTargets: connectTargetsToFile(cfg.ConnectTargets),
-		ProjectAliases: cfg.ProjectAliases,
-	}
+	path := filepath.Join(root, "global.toml")
+	g := loadGlobalFile(path)
+	g.Theme = cfg.Theme
+	g.Logo = cfg.Logo
+	g.Banner = cfg.Banner
+	g.ComposeCmd = cfg.ComposeCmd
+	g.LogDBMax = cfg.LogDBMax
+	g.ConnectTargets = connectTargetsToFile(cfg.ConnectTargets)
+	g.ProjectAliases = cfg.ProjectAliases
+
+	g.Prompt = nil
 	if len(cfg.PromptSegments) > 0 || cfg.PromptNameMax > 0 || cfg.HealthTTL > 0 {
 		g.Prompt = &promptFile{
 			Segments: cfg.PromptSegments,
@@ -843,8 +859,9 @@ func SaveGlobal(cfg *Config) error {
 			g.Prompt.HealthTTL = cfg.HealthTTL.String()
 		}
 	}
-	// Preserve a non-default [cmd_logs] section across rewrites; a pure
-	// default config leaves it out so global.toml stays clean.
+	// Emit a non-default [cmd_logs] section; a pure default config clears it
+	// so global.toml stays clean.
+	g.CmdLogs = nil
 	if cfg.CmdLogsDisabled ||
 		cfg.CmdLogsRetentionDays != Defaults.CmdLogsRetentionDays ||
 		cfg.CmdLogsMaxRuns != Defaults.CmdLogsMaxRuns {
@@ -859,7 +876,7 @@ func SaveGlobal(cfg *Config) error {
 	if err := toml.NewEncoder(&buf).Encode(g); err != nil {
 		return err
 	}
-	return writeAtomic(filepath.Join(root, "global.toml"), buf.Bytes())
+	return writeAtomic(path, buf.Bytes())
 }
 
 // SavePromoteBranch persists the [promote] branch into global.toml via a
@@ -892,10 +909,7 @@ func savePromote(mutate func(*promoteConfig)) error {
 		return err
 	}
 	path := filepath.Join(root, "global.toml")
-	var g globalFile
-	if data, err := os.ReadFile(path); err == nil {
-		_ = toml.Unmarshal(data, &g)
-	}
+	g := loadGlobalFile(path)
 	cur := promoteConfig{}
 	if g.Promote != nil {
 		cur = *g.Promote
@@ -913,7 +927,10 @@ func savePromote(mutate func(*promoteConfig)) error {
 	return writeAtomic(path, buf.Bytes())
 }
 
-// SaveProject writes per-project fields to projects/<key>.toml atomically.
+// SaveProject writes the per-project fields the Config owns to
+// projects/<key>.toml atomically. Like SaveGlobal it reads the current file
+// first and overwrites only those fields, so a project-declared [promote]
+// survives a save that was only meant to set a container name.
 func SaveProject(cfg *Config) error {
 	root, err := configRoot()
 	if err != nil {
@@ -924,30 +941,40 @@ func SaveProject(cfg *Config) error {
 		return err
 	}
 
-	p := projectFile{
-		OdooVersion:    cfg.OdooVersion,
-		OdooContainer:  cfg.OdooContainer,
-		DBContainer:    cfg.DBContainer,
-		DBName:         cfg.DBName,
-		Stage:          cfg.Stage,
-		AddonsPaths:    cfg.AddonsPaths,
-		AddonsMode:     cfg.AddonsMode,
-		ConfPath:       cfg.ConfPath,
-		ScriptsDir:     cfg.ScriptsDir,
-		ComposeProject: cfg.ComposeProject,
-		ProjectPath:    cfg.ProjectPath,
-		FilestorePath:  cfg.FilestorePath,
+	path := filepath.Join(projDir, cfg.ProjectKey+".toml")
+	var p projectFile
+	if data, err := os.ReadFile(path); err == nil {
+		_ = toml.Unmarshal(data, &p)
 	}
+	p.OdooVersion = cfg.OdooVersion
+	p.OdooContainer = cfg.OdooContainer
+	p.DBContainer = cfg.DBContainer
+	p.DBName = cfg.DBName
+	p.Stage = cfg.Stage
+	p.AddonsPaths = cfg.AddonsPaths
+	p.AddonsMode = cfg.AddonsMode
+	p.ConfPath = cfg.ConfPath
+	p.ScriptsDir = cfg.ScriptsDir
+	p.ComposeProject = cfg.ComposeProject
+	p.ProjectPath = cfg.ProjectPath
+	p.FilestorePath = cfg.FilestorePath
+
+	p.Connect = nil
 	if cfg.ConnectSSHHost != "" || cfg.ConnectRemotePath != "" ||
-		cfg.ConnectChromePath != "" {
+		cfg.ConnectChromePath != "" || cfg.ConnectGitDeploy ||
+		cfg.ConnectGitBranch != "" || cfg.ConnectGitPath != "" {
 		p.Connect = &connectFile{
 			SSHHost:    cfg.ConnectSSHHost,
 			RemotePath: cfg.ConnectRemotePath,
 			ChromePath: cfg.ConnectChromePath,
+			GitDeploy:  cfg.ConnectGitDeploy,
+			GitBranch:  cfg.ConnectGitBranch,
+			GitPath:    cfg.ConnectGitPath,
 		}
 	}
 	// Persist a declared [push] destination so a picked/configured path
 	// survives across sessions; a pure auto-detect config leaves it out.
+	p.Push = nil
 	if cfg.PushPath != "" || cfg.PushMkdir != nil {
 		p.Push = &pushConfig{Path: cfg.PushPath, Mkdir: cfg.PushMkdir}
 	}
@@ -955,6 +982,7 @@ func SaveProject(cfg *Config) error {
 	// never drops it, and so `deploy --set-checkpoint` persists (Unit 104).
 	// Gate on "project": a policy that only lives in global.toml must NOT be
 	// copied down into the project file.
+	p.Checkpoint = nil
 	if cfg.CheckpointSource == "project" {
 		p.Checkpoint = &checkpointConfig{
 			Mode:   cfg.CheckpointMode,
@@ -965,6 +993,7 @@ func SaveProject(cfg *Config) error {
 	// Persist the [deploy] section when any of the actions list, the push
 	// default, the test default, or the pinned test modules is set; a
 	// pure-default config leaves it out.
+	p.Deploy = nil
 	if len(cfg.DeployActions) > 0 || cfg.DeployPush != nil ||
 		cfg.DeployTest != nil || len(cfg.DeployTestModules) > 0 {
 		p.Deploy = &deployFile{
@@ -978,7 +1007,7 @@ func SaveProject(cfg *Config) error {
 	if err := toml.NewEncoder(&buf).Encode(p); err != nil {
 		return err
 	}
-	return writeAtomic(filepath.Join(projDir, cfg.ProjectKey+".toml"), buf.Bytes())
+	return writeAtomic(path, buf.Bytes())
 }
 
 func writeAtomic(path string, data []byte) error {
