@@ -20,6 +20,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   el modo link.
 
 ### Added
+- **`update --remote` delega en Reverb.** Sobre un entorno de Reverb linkeado
+  (marcador `[reverb]` en el perfil y credenciales locales), `update <mods>
+  --remote` ya no corre un `compose exec … odoo -u` al lado del Odoo vivo:
+  llama a `POST /environments/{id}/update` y transmite los eventos del job,
+  así la actualización corre con Odoo parado, las secuencias de señalización
+  reiniciadas, un checkpoint `pre_update` y rollback si falla.
+  `--no-checkpoint` lo omite; `--all` se rechaza (lista los módulos); `--i18n`
+  sigue por el camino clásico porque el job no tiene ese interruptor.
 - **Un target linkeado que es un entorno de Reverb se comporta como tal, sin
   `-E`.** Cuando el perfil del servidor trae la tabla marcador `[reverb]` y
   esta máquina tiene `[reverb] token`, `checkpoint` va a snapshots por la

@@ -148,6 +148,12 @@ _(siguiente: Unit 122 — el borrado de `-E`, cuando la unidad 30 de Reverb est�
 
 ## Completed
 
+- [x] Unit 123 — update-via-reverb (2026-09-10). `update <mods> --remote`
+  sobre un entorno de Reverb linkeado llama a `POST /environments/{id}/update`
+  (`reverb.Client.UpdateModules`) y sigue el job por `StreamOut`; `--all`
+  rechazado, `--no-checkpoint` → `snapshot:false`, `--i18n` clásico. Spec
+  `123-update-via-reverb.md`. Verificación en vivo contra `iza/staging`
+  registrada en el repo de Reverb (tracker, sesión 2026-09-10).
 - [x] Unit 117 — db-admin-1password. La Unit 116 sacó la contraseña de la
   base y la dejó en el scrollback: se imprime una vez, y si la ventana se
   cierra el único camino de vuelta es otro reset. `--save` (opt-in; escribir
