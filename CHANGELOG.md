@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Un target linkeado que es un entorno de Reverb se comporta como tal, sin
+  `-E`.** Cuando el perfil del servidor trae la tabla marcador `[reverb]` y
+  esta máquina tiene `[reverb] token`, `checkpoint` va a snapshots por la
+  API, `up`/`stop`/`restart` pasan por la API —así la UI de Reverb no lee
+  drift—, `push` avisa qué módulos quedan sombreando la copia desplegada y
+  `push --clean` vacía el overlay en vez de exigir un target git-deploy.
+  Nada de eso pide un round trip HTTP para resolver el entorno: la identidad
+  sale del marcador y el overlay del `[push] path` que el mismo perfil
+  declara. El `api_url` del marcador gana sobre el `url` local, así que
+  mover el daemon no obliga a editar cada laptop. Sin token local todo sigue
+  por compose y una línea INFO dice qué falta. `link --show` gana la línea
+  `reverb env env=<proj>/<env> id=<n> api=on|off`.
+
 ### Fixed
 - **Los comandos de base funcionan contra un Postgres que no es servicio del
   compose.** Todo lo que Echo corre dentro del contenedor de Postgres —

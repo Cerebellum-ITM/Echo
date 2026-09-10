@@ -271,8 +271,8 @@ func TestReverbPushDestinationNeedsOverlay(t *testing.T) {
 	rsc.reverb.paths.Overlay = ""
 	_, err := reverbPushDestination(context.Background(), rsc,
 		PushOpts{Cfg: &config.Config{}}, pushArgs{})
-	if err == nil || !strings.Contains(err.Error(), "paths.overlay") {
-		t.Fatalf("err = %v, want it to name paths.overlay", err)
+	if err == nil || !strings.Contains(err.Error(), "no overlay directory") {
+		t.Fatalf("err = %v, want it to name the missing overlay", err)
 	}
 }
 

@@ -50,6 +50,11 @@ type reverbEnv struct {
 	project string
 	env     string
 	paths   reverb.Paths
+	// apiURL is the daemon the HOST declared in its profile marker. It wins
+	// over the client's own [reverb] url so moving the daemon does not touch
+	// every laptop. Empty on the `-E` path, where the client already had to
+	// know the URL to resolve at all.
+	apiURL string
 }
 
 // ref renders the environment back as the canonical target reference,
@@ -104,6 +109,61 @@ func reverbClient(cfg *config.Config) (*reverb.Client, error) {
 			"(scope: echo) to global.toml", ErrUsage)
 	}
 	return c, err
+}
+
+// reverbClientFor builds the client for a resolved environment, preferring
+// the API URL the host declared over the client's own.
+func reverbClientFor(cfg *config.Config, env *reverbEnv) (*reverb.Client, error) {
+	if env == nil || strings.TrimSpace(env.apiURL) == "" {
+		return reverbClient(cfg)
+	}
+	c, err := reverb.New(env.apiURL, cfg.ReverbToken)
+	if errors.Is(err, reverb.ErrNotConfigured) {
+		return nil, fmt.Errorf("%w: no Reverb token — add `token` (scope: echo) to the [reverb] section "+
+			"of global.toml; the url comes from the environment's own profile (%s)", ErrUsage, env.apiURL)
+	}
+	return c, err
+}
+
+// reverbEnvFromProfile builds the environment context for a CLASSIC linked
+// target whose server-side profile carries the [reverb] marker — link mode,
+// where nothing was resolved over HTTP.
+//
+// It returns a context only when the client can also reach the daemon,
+// because that is the invariant every `rsc.reverb != nil` branch relies on:
+// snapshots and the lifecycle verbs are API calls. With a marker but no
+// token the second return value says what is missing and the caller falls
+// back to the classic behavior, which still works.
+//
+// paths comes from the profile rather than a resolve: Reverb declares the
+// overlay as the profile's [push] path, and the compose dir is the target's
+// own remote path. addons stays empty — isUnderAddons treats that as "not
+// checkable" and refuses nothing.
+func reverbEnvFromProfile(cfg *config.Config, prof config.RemoteProfile, remotePath string) (*reverbEnv, string) {
+	m := prof.Reverb
+	if m == nil {
+		return nil, ""
+	}
+	url := strings.TrimSpace(m.APIURL)
+	if url == "" {
+		url = strings.TrimSpace(cfg.ReverbURL)
+	}
+	switch {
+	case url == "":
+		return nil, "no daemon url — the profile declares none and [reverb] url is unset"
+	case strings.TrimSpace(cfg.ReverbToken) == "":
+		return nil, "no [reverb] token configured"
+	}
+	return &reverbEnv{
+		id:      m.EnvID,
+		project: m.Project,
+		env:     m.Env,
+		apiURL:  url,
+		paths: reverb.Paths{
+			Overlay:    prof.PushPath,
+			ComposeDir: remotePath,
+		},
+	}, ""
 }
 
 // reverbComposeCmd returns the compose binary for a Reverb host.

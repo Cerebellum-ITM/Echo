@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/pascualchavez/echo/internal/config"
@@ -244,6 +245,7 @@ func runLinkShow(ctx context.Context, opts LinkOpts) error {
 		return nil
 	}
 	reportDeployedCode(ctx, opts, name, prof.DBName)
+	reportReverbEnv(opts, prof)
 	opts.log("INFO", "remote", "remote containers", prof.DBName)
 	if opts.OnPS == nil {
 		psCmd := remoteComposeCmd(opts.Cfg.ConnectRemotePath, prof.ComposeCmd, "ps")
@@ -282,6 +284,26 @@ func reportDeployedCode(ctx context.Context, opts LinkOpts, name, db string) {
 		}
 	}
 	opts.log("INFO", "", "deploy code", db, fields...)
+}
+
+// reportReverbEnv adds the marker line to `link --show`: which Reverb
+// environment the target is, and whether this machine can drive it through
+// the API (checkpoints as snapshots, lifecycle verbs) or only through
+// compose. Targets without the marker print nothing.
+func reportReverbEnv(opts LinkOpts, prof config.RemoteProfile) {
+	m := prof.Reverb
+	if m == nil {
+		return
+	}
+	api := "off"
+	if env, _ := reverbEnvFromProfile(opts.Cfg, prof, opts.Cfg.ConnectRemotePath); env != nil {
+		api = "on"
+	}
+	fields := [][2]string{{"env", m.Project + "/" + m.Env}}
+	if m.EnvID != 0 {
+		fields = append(fields, [2]string{"id", strconv.FormatInt(m.EnvID, 10)})
+	}
+	opts.log("INFO", "", "reverb env", prof.DBName, append(fields, [2]string{"api", api})...)
 }
 
 // runLinkRm clears the per-project [connect] binding. Idempotent.

@@ -101,6 +101,16 @@ func resolveRemoteShell(ctx context.Context, cfg *config.Config, palette theme.P
 	conn.User = pg["POSTGRES_USER"]
 	conn.Password = pg["POSTGRES_PASSWORD"]
 
+	// A target whose profile carries the [reverb] marker gets the
+	// Reverb-specific behaviors without a flag — but only when this machine
+	// can reach the daemon, since they are API calls. Without that, one line
+	// says what is missing and everything runs classically.
+	renv, why := reverbEnvFromProfile(cfg, prof, remotePath)
+	if why != "" {
+		emit("INFO", "reverb", "Reverb environment; checkpoints and lifecycle go through compose", prof.DBName,
+			[2]string{"env", prof.Reverb.Project + "/" + prof.Reverb.Env}, [2]string{"reason", why})
+	}
+
 	return remoteShellContext{
 		sshHost:    sshHost,
 		remotePath: remotePath,
@@ -108,6 +118,7 @@ func resolveRemoteShell(ctx context.Context, cfg *config.Config, palette theme.P
 		target:     target,
 		prof:       prof,
 		conn:       conn,
+		reverb:     renv,
 	}, nil
 }
 

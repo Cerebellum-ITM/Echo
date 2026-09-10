@@ -22,7 +22,7 @@ func runCheckpointReverb(ctx context.Context, opts CheckpointOpts, rsc remoteShe
 			"reverb resolved %s without an environment id — the daemon predates the id-addressed routes",
 			rsc.reverb.ref())
 	}
-	client, err := reverbClient(opts.Cfg)
+	client, err := reverbClientFor(opts.Cfg, rsc.reverb)
 	if err != nil {
 		return CheckpointResult{}, err
 	}
@@ -125,7 +125,7 @@ func followReverbJob(ctx context.Context, client *reverb.Client, jobID, sub stri
 // `ssh docker compose`. Reverb reconciles desired vs observed state, so a
 // compose command run behind its back shows up as drift in its UI.
 func runReverbEnvAction(ctx context.Context, opts DockerOpts, rsc remoteShellContext, verb string) error {
-	client, err := reverbClient(opts.Cfg)
+	client, err := reverbClientFor(opts.Cfg, rsc.reverb)
 	if err != nil {
 		return err
 	}
