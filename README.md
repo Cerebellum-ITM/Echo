@@ -972,15 +972,41 @@ runs on, without re-invoking it.
 
 <p align="center"><img src="demo/gifs/logview.gif" alt="echo logview — run list, per-run log view, live text and level filters" width="860"></p>
 
-## Reverb mode
+## Reverb environments
 
-A remote target normally lives in `global.toml` as a `[connect_targets.<name>]`,
-and Echo reads the rest of the mapping off the server over SSH — its own Echo
-profile plus the project's `.env`. When the instance is managed by
-[Reverb](https://github.com/pascualchavez/reverb), all of that is already
-published on one endpoint, so `-E` resolves the target **at call time** and
-builds it in memory. Nothing is written to `global.toml`: that is the whole
-point — zero per-environment configuration.
+An instance managed by [Reverb](https://github.com/pascualchavez/reverb) is a
+**plain connect target**. Reverb writes the same Echo profile a hand-built
+host gets from `echo init` — container names, db, stage, Odoo version, and a
+`[push]` destination pointing at the environment's overlay — so registering it
+is the gesture you already know:
+
+```toml
+[connect_targets.iza-staging]
+ssh_host    = "Ionos-personal-pascual"
+remote_path = "/home/pascual/reverb-data/projects/iza/envs/staging"
+db_name     = "iza_staging"
+```
+
+The environment's Overview hands out that snippet; then `echo link
+iza-staging` in the working directory and every command works with `--remote`
+or `--from`, exactly as against any other server. `push`, `push --dirty` and
+`watch` land in the overlay — the one directory Reverb never swaps — because
+the server declares it; committed code still reaches the environment through
+`git push reverb`.
+
+Adding `[reverb] token` to `global.toml` is optional and buys two things:
+`checkpoint` becomes Reverb's snapshots, and `up`/`stop`/`restart` go through
+the API so the daemon does not read them as drift. Without it those run
+through compose and Echo says so once per invocation. `link --show` reports
+which environment the target is and whether the API is reachable.
+
+### `-E` (deprecated)
+
+`-E <project>/<env>` resolves an environment over HTTP **at call time**
+instead of reading a registered target. It persists nothing — `link --show`
+has nothing to report, every call pays the round trip, and every machine needs
+the token — and it does not support `deploy`, `watch` or `i18n-pull`. Use a
+linked target; `-E` warns and will be removed.
 
 Point Echo at the daemon once, globally:
 
@@ -1051,7 +1077,7 @@ another host.
 **`push` lands in the overlay.** Reverb owns the addons directory and replaces
 it wholesale on every deploy; the overlay is the one directory it never
 touches, and a module there shadows the git copy (Odoo's `get_module_path`
-resolves it to the overlay). So in Reverb mode the default destination is
+resolves it to the overlay). So on a Reverb environment the default destination is
 `paths.overlay`, a `--dest` / `[push] path` that resolves under `paths.addons`
 is **refused** (the next deploy would destroy the code), and a pushed module
 that shadows a deployed one emits a warning so you know the running code is
@@ -1073,9 +1099,11 @@ compose command run behind its back shows up as drift in its UI. `down` maps to
 stop and says so — Reverb models a desired state, so there is no compose-style
 teardown. `ps` and `logs` stay on SSH; they are read-only.
 
-`deploy` and `watch` still refuse a Reverb target: Reverb runs its own deploy,
-and delegating to it means first pushing the branch to the Reverb remote — a
-design that has not landed yet. Each says so when you try.
+`deploy`, `watch` and `i18n-pull` refuse an environment reached with `-E`:
+the first two would be overwritten by Reverb's own deploy, and the third reads
+a server profile that `-E` bypasses. A **linked** environment supports all
+three — `deploy --remote` and `watch` are the rsync-into-the-overlay loop,
+which is exactly what uncommitted work on a Reverb environment wants.
 
 ## Build mode
 

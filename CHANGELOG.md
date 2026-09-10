@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Deprecated
+- **`-E <project>/<env>` queda deprecado.** Resuelve el entorno por HTTP en
+  cada llamada, no persiste nada —`link --show` no tiene qué mostrar y el
+  pre-flight del skill tampoco—, exige el token en cada máquina y no soporta
+  `deploy`, `watch` ni `i18n-pull`. El camino es registrar el entorno como
+  connect target y linkearlo: Reverb escribe el mismo perfil de Echo que
+  tendría un host hecho a mano, así que un entorno linkeado es un target
+  clásico y soporta los tres comandos que `-E` niega. El flag sigue
+  funcionando y avisa una vez por invocación; se retira cuando la unidad 30
+  de Reverb esté desplegada. El README y la ayuda del REPL abren ahora por
+  el modo link.
+
 ### Added
 - **Un target linkeado que es un entorno de Reverb se comporta como tal, sin
   `-E`.** Cuando el perfil del servidor trae la tabla marcador `[reverb]` y

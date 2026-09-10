@@ -593,20 +593,19 @@ var buildHelpEntries = []helpEntry{
 	{"<cmd> --build", "Interactively compose the command (pickers + flags), then run/copy it"},
 }
 
-// reverbHelpEntries document Reverb mode (Unit 107) as one block rather
-// than repeating the same flag row under every command that accepts it.
-// Outside helpSections() for the same reason as the two above.
+// reverbHelpEntries document how a Reverb environment is targeted, as one
+// block rather than repeating the same rows under every command. Outside
+// helpSections() for the same reason as the two above.
 var reverbHelpEntries = []helpEntry{
-	{"-E <project>/<env>", "Target a Reverb environment, resolved over HTTP (no local config)"},
-	{"-E <env>", "Same, with the project inferred when the name is unambiguous"},
-	{"  works with", "shell, shell-run, logs, view, compare, update, test, push, db-pull, actions, sequence"},
-	{"  push lands in", "the environment's overlay — Reverb replaces addons on every deploy"},
+	{"link <target>", "A Reverb environment is a plain connect target — register it and link it"},
+	{"  target from", "Reverb's Overview hands out the [connect_targets.<env>] snippet"},
+	{"  free from it", "stage, db, odoo version, and push landing in the environment's overlay"},
 	{"  push --clean", "Empties the overlay (--all = every module in it)"},
-	{"  checkpoint", "list/create map to Reverb snapshots (rm is admin-scoped)"},
-	{"  up/down/stop/restart", "Go through the Reverb API so the state doesn't read as drift"},
-	{"  config", "[reverb] url + token (scope: echo) in global.toml; the token is a secret"},
-	{"  ssh_host", "Optional [reverb] ssh_host = your own ~/.ssh/config alias for the host"},
-	{"  not yet", "deploy, watch — delegating those needs the push-to-Reverb remote"},
+	{"  [reverb] token", "Optional: adds snapshots for checkpoint and API lifecycle verbs"},
+	{"  without it", "checkpoint and up/stop/restart run through compose; one line says so"},
+	{"  link --show", "Reports the environment and whether the API is reachable (api=on|off)"},
+	{"-E <project>/<env>", "Deprecated: resolves over HTTP per call, persists nothing — use link"},
+	{"  -E does not", "support deploy, watch or i18n-pull; a linked target supports all three"},
 }
 
 // runHelp shows the command reference. It opens the paginated viewer (one

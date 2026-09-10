@@ -319,6 +319,9 @@ func resolveReverbShell(ctx context.Context, cfg *config.Config, spec string, lo
 		project = listed.Project
 	}
 
+	emit("WARNING", "reverb", "-E is deprecated — register the environment as a connect target and `link` it; "+
+		"the server profile carries the rest", "",
+		[2]string{"env", project + "/" + env})
 	emit("INFO", "reverb", "resolving environment", "",
 		[2]string{"project", project}, [2]string{"env", env})
 
