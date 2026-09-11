@@ -747,7 +747,7 @@ func RunDBAdmin(ctx context.Context, opts DBOpts) error {
 		if err != nil {
 			opts.log("WARNING", "save", "could not read "+odooBaseURLKey+": "+err.Error(), target)
 		}
-		saveAdminCredential(ctx, opts, flags, statusProjectName(opts.Cfg, false, "", ""), target, password, baseURL)
+		saveAdminCredential(ctx, opts, flags, statusProjectName(opts.Cfg, false, "", ""), "", target, password, baseURL)
 	}
 	return nil
 }
@@ -805,18 +805,41 @@ func runDBAdminRemote(ctx context.Context, opts DBOpts, flags dbFlags, positiona
 		if err != nil {
 			opts.log("WARNING", "save", "could not read "+odooBaseURLKey+": "+err.Error(), target)
 		}
-		saveAdminCredential(ctx, opts, flags, targetLabel(rsc), target, password, baseURL)
+		saveAdminCredential(ctx, opts, flags, remoteProjectName(rsc), rsc.sshHost, target, password, baseURL)
 	}
 	return nil
 }
 
+// remoteProjectName is the project a remote target serves: its target
+// name, else the basename of its path on the server. targetLabel is the
+// wrong source here — its ssh-host fallback names the SERVER, which one
+// box full of projects makes useless as a title.
+func remoteProjectName(rsc remoteShellContext) string {
+	if rsc.fromName != "" {
+		return rsc.fromName
+	}
+	switch base := filepath.Base(rsc.remotePath); base {
+	case "", ".", "/":
+		return rsc.sshHost
+	default:
+		return base
+	}
+}
+
 // saveAdminCredential stores the credential in 1Password as
-// "Odoo <project> (<db>)", updating the item already under that title.
+// "<project> (<db>)", updating the item already under that title. The
+// item is tagged echo/odoo and, for a remote target, with the server it
+// lives on, which is what makes one item pickable out of a vault holding
+// a dozen Odoo logins. server is empty for the local project.
 // Failures are reported, never returned: the reset already happened and
 // the password is already on screen, so aborting here would only hide a
 // credential the caller can still copy.
-func saveAdminCredential(ctx context.Context, opts DBOpts, flags dbFlags, project, db, password, baseURL string) {
-	title := fmt.Sprintf("Odoo %s (%s)", project, db)
+func saveAdminCredential(ctx context.Context, opts DBOpts, flags dbFlags, project, server, db, password, baseURL string) {
+	title := fmt.Sprintf("%s (%s)", project, db)
+	tags := []string{"echo", "odoo"}
+	if server != "" {
+		tags = append(tags, server)
+	}
 	url := strings.TrimRight(strings.TrimSpace(baseURL), "/")
 	if url == "" || isLocalBaseURL(url) {
 		// Odoo rewrites web.base.url from the first request it serves
@@ -829,7 +852,7 @@ func saveAdminCredential(ctx context.Context, opts DBOpts, flags dbFlags, projec
 		url = ""
 	}
 
-	created, err := opSaveLogin(ctx, flags.vault, title, adminLogin, password, url)
+	created, err := opSaveLogin(ctx, flags.vault, title, adminLogin, password, url, tags)
 	if err != nil {
 		opts.log("WARNING", "save", "could not save the credential: "+err.Error(), db)
 		return
@@ -838,7 +861,7 @@ func saveAdminCredential(ctx context.Context, opts DBOpts, flags dbFlags, projec
 	if created {
 		action = "created"
 	}
-	fields := [][2]string{{"item", title}}
+	fields := [][2]string{{"item", title}, {"tags", strings.Join(tags, ",")}}
 	if flags.vault != "" {
 		fields = append(fields, [2]string{"vault", flags.vault})
 	}

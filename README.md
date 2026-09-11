@@ -235,7 +235,7 @@ asks for a red confirmation unless `--force`; `--last` stays local-only. Like
 | `  --password <pw>`              | Use an explicit password instead of a generated one (also hashed) |
 | `  --insecure`                   | Set it to `admin`/`admin` — known credentials, confirmed on any stage |
 | `  --from <t>` / `--remote`      | Run it against a remote target's Postgres; the hash is computed locally, so the password never leaves your machine |
-| `  --save`                       | Store the credential in 1Password as `Odoo <project> (<db>)`, with the instance's `web.base.url` attached so it autofills; updates the item if it already exists |
+| `  --save`                       | Store the credential in 1Password as `<project> (<db>)`, tagged `echo`, `odoo` and — on a remote target — the server it lives on, with the instance's `web.base.url` attached so it autofills; updates the item if it already exists |
 | `  --vault <name>`               | Vault for `--save` (default: `op`'s own default)                  |
 | `db-backup [name]`               | `pg_dump -Fc` into `./backups/<db>_<ts>.dump`                     |
 | `  --with-filestore`             | Package dump + container filestore into a `.zip` (Odoo-compatible) |

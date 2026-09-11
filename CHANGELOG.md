@@ -19,6 +19,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   de Reverb esté desplegada. El README y la ayuda del REPL abren ahora por
   el modo link.
 
+### Changed
+- **El ítem que `db-admin --save` escribe en 1Password ahora empieza por el
+  proyecto y trae el servidor como etiqueta.** El título pasa de
+  `Odoo <proyecto> (<db>)` a `<proyecto> (<db>)`, así la búsqueda de la
+  bóveda responde al nombre que uno teclea primero, y el ítem se etiqueta
+  `echo`, `odoo` y —en un target remoto— el host SSH donde vive, que es lo
+  que permite filtrar una bóveda con una docena de logins de Odoo. El
+  proyecto de un target remoto sale de su nombre de target (o del basename
+  de `remote_path` cuando se entró por `--remote` a secas): el `ssh_host`
+  nombra al **servidor**, y un servidor con diez proyectos encima no
+  distingue nada en el título. Las
+  etiquetas puestas a mano sobreviven a un update: `op item edit --tags`
+  reemplaza la lista completa, así que Echo la vuelve a declarar entera.
+
 ### Added
 - **`update --remote` delega en Reverb.** Sobre un entorno de Reverb linkeado
   (marcador `[reverb]` en el perfil y credenciales locales), `update <mods>

@@ -404,7 +404,7 @@ func helpSections() []helpSection {
 			{"db-admin [name]", "Reset admin (uid 2) to a generated password, shown once"},
 			{"  --password <pw>", "Use this password instead of a generated one"},
 			{"  --insecure", "Set the password to admin (known credentials, dev only)"},
-			{"  --save", "Store the credential in 1Password (needs the `op` CLI)"},
+			{"  --save", "Store the credential in 1Password, tagged by server (needs the `op` CLI)"},
 			{"  --vault <name>", "Vault for --save (default: op's own default)"},
 			{"  --from <target>", "Reset the admin on a remote instance (named connect target)"},
 			{"  --remote", "Reset the admin on this directory's linked remote"},

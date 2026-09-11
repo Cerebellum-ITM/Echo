@@ -148,6 +148,18 @@ _(siguiente: Unit 122 — el borrado de `-E`, cuando la unidad 30 de Reverb est�
 
 ## Completed
 
+- [x] Ajuste a la Unit 117 — título e etiquetas del ítem de 1Password
+  (2026-09-11). El título deja de anteponer `Odoo`: ahora es
+  `<proyecto> (<db>)`, que es como se busca en la bóveda. El servidor sale
+  del título y entra como etiqueta, junto a `echo` y `odoo`: en un target
+  remoto se etiqueta el host SSH (`rsc.sshHost`), en local no hay servidor
+  que etiquetar. El proyecto de un target remoto es su `fromName`, con
+  fallback al basename de `remote_path`: `targetLabel` no sirve aquí porque
+  su fallback es el `ssh_host`, que nombra al servidor —los cinco targets
+  del usuario cuelgan del mismo `Ionos-personal-pascual`. Un update re-declara la lista de etiquetas completa —
+  `op item edit --tags` la reemplaza— uniendo las que el ítem ya traía con
+  las de Echo, por la misma razón que el cuerpo parcheado conserva secciones
+  y campos custom.
 - [x] Unit 123 — update-via-reverb (2026-09-10). `update <mods> --remote`
   sobre un entorno de Reverb linkeado llama a `POST /environments/{id}/update`
   (`reverb.Client.UpdateModules`) y sigue el job por `StreamOut`; `--all`
