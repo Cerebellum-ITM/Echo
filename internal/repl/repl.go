@@ -345,6 +345,7 @@ func helpSections() []helpSection {
 			{"  --rm <name>", "Remove an alias"},
 			{"  --migrate", "Backfill aliases from connect targets (local paths)"},
 			{"link [<target>]", "Switch this directory's connect target (no args: picker, current marked)"},
+			{"  --add", "Register a new target (SSH host + remote project) and bind to it"},
 			{"  --next", "Switch to the next target, wrapping (the two-target toggle)"},
 			{"  --list [--json]", "List the targets, marking the current one (no SSH, no write)"},
 			{"  --show", "Show the binding, probe the remote, stream its `ps`"},

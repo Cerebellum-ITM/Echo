@@ -102,6 +102,7 @@ and every command is wired to the right containers.
 | `  --rm <name>` | Remove an alias                                            |
 | `  --migrate` | Backfill aliases from connect targets with local paths       |
 | `link [<target>]` | Switch this directory's connect target (no args: picker, current marked) |
+| `  --add`  | Register a new target (SSH host + remote project) and bind to it |
 | `  --next` | Switch to the next target, wrapping — the two-target toggle      |
 | `  --list [--json]` | List the targets, marking the current one (no SSH, no write) |
 | `  --show` | Show the binding, probe the remote, stream its `compose ps`     |
@@ -605,11 +606,15 @@ On your **laptop**, register the remote as a connect target and bind your
 addons repo to it:
 
 ```sh
-echo connect prod                 # one-time: registers ssh_host + remote_path as target "prod"
 cd ~/dev/my-shop-addons           # your local addons repo (no docker-compose.yml needed)
-echo link prod                    # writes this directory's [connect] binding
+echo link --add                   # one-time: pick the SSH host + remote project, name it, bind
 echo link --show                  # verify: probes the profile + streams the remote `compose ps`
 ```
+
+`link --add` registers the target in `global.toml` and binds this directory
+to it in one step; from then on `echo link <name>` switches to it. The same
+wizard is reachable from the picker of a bare `link`, and from `echo connect
+--add` when you want to register and open a session at once.
 
 Then, each deploy (after the server has pulled the new code):
 

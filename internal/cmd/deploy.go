@@ -1811,7 +1811,7 @@ func resolveRemoteTarget(cfg *config.Config, palette theme.Palette, from string,
 		// No binding to mark here — this fires precisely when the directory
 		// has none, so the picker opens on the first row.
 		t, perr := pickConnectTarget(cfg.ConnectTargets, palette,
-			"Select connect target", "", log)
+			"Select connect target", "", log, nil)
 		if perr != nil {
 			if errors.Is(perr, ErrNoConnectTargets) {
 				return "", "", "", ErrNoPullRemote

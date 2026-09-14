@@ -19,6 +19,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   de Reverb esté desplegada. El README y la ayuda del REPL abren ahora por
   el modo link.
 
+### Added
+- **`link --add` registra un sistema nuevo sin pasar por `connect`.** Hasta
+  ahora el asistente que da de alta un connect target vivía solo detrás de
+  `connect --add`, así que para que un servidor apareciera en `link` había
+  que mintear una sesión y abrir el navegador para hacer, en realidad, un
+  paso de configuración. `link --add` corre el mismo asistente —host de
+  `~/.ssh/config`, proyecto de Echo leído del servidor, nombre— guarda el
+  target en `global.toml` y deja este directorio linkeado a él. El picker
+  del `link` pelón ofrece la misma entrada al final de la lista, y el target
+  recién dado de alta ya está visible para `--list` y `--next` sin reiniciar
+  la sesión.
+
 ### Changed
 - **El ítem que `db-admin --save` escribe en 1Password ahora empieza por el
   proyecto y trae el servidor como etiqueta.** El título pasa de

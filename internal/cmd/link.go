@@ -17,7 +17,7 @@ import (
 // ErrNoConnectTargets is returned when `link` has nothing to bind to:
 // the global config holds no named connect targets.
 var ErrNoConnectTargets = errors.New(
-	"no connect targets configured — register one with `echo connect <name>`")
+	"no connect targets configured — register one with `link --add`")
 
 // LinkOpts configures a `link` run.
 type LinkOpts struct {
@@ -53,12 +53,13 @@ type linkArgs struct {
 	rm      bool
 	next    bool
 	list    bool
+	add     bool
 	jsonOut bool
 }
 
 // parseLinkArgs extracts the mode flags and the optional target positional.
-// At most one mode may be named: --show, --rm, --next, --list or a target
-// (bare `link` is the switcher). --json only decorates --list.
+// At most one mode may be named: --show, --rm, --next, --list, --add or a
+// target (bare `link` is the switcher). --json only decorates --list.
 func parseLinkArgs(args []string) (linkArgs, error) {
 	var out linkArgs
 	for _, a := range args {
@@ -71,6 +72,8 @@ func parseLinkArgs(args []string) (linkArgs, error) {
 			out.next = true
 		case a == "--list":
 			out.list = true
+		case a == "--add":
+			out.add = true
 		case a == "--json":
 			out.jsonOut = true
 		case strings.HasPrefix(a, "-"):
@@ -83,13 +86,13 @@ func parseLinkArgs(args []string) (linkArgs, error) {
 		}
 	}
 	modes := 0
-	for _, on := range []bool{out.show, out.rm, out.next, out.list, out.target != ""} {
+	for _, on := range []bool{out.show, out.rm, out.next, out.list, out.add, out.target != ""} {
 		if on {
 			modes++
 		}
 	}
 	if modes > 1 {
-		return out, fmt.Errorf("%w: --show/--rm/--next/--list and a target name are mutually exclusive", ErrUsage)
+		return out, fmt.Errorf("%w: --show/--rm/--next/--list/--add and a target name are mutually exclusive", ErrUsage)
 	}
 	if out.jsonOut && !out.list {
 		return out, fmt.Errorf("%w: --json only applies to --list", ErrUsage)
@@ -101,7 +104,8 @@ func parseLinkArgs(args []string) (linkArgs, error) {
 // writing the target's ssh_host/remote_path into the per-project [connect]
 // section — the binding `connect`, `i18n-pull` and `deploy` consume. With
 // --show it reports the current binding, probes the remote profile and
-// streams the remote `compose ps`; with --rm it removes the binding.
+// streams the remote `compose ps`; with --rm it removes the binding; with
+// --add it registers a new target and binds to it.
 func RunLink(ctx context.Context, opts LinkOpts) error {
 	p, err := parseLinkArgs(opts.Args)
 	if err != nil {
@@ -116,6 +120,8 @@ func RunLink(ctx context.Context, opts LinkOpts) error {
 		return runLinkList(opts, p)
 	case p.next:
 		return runLinkNext(ctx, opts)
+	case p.add:
+		return runLinkAdd(ctx, opts)
 	}
 	return runLinkBind(ctx, opts, p.target)
 }
@@ -193,15 +199,46 @@ func runLinkNext(ctx context.Context, opts LinkOpts) error {
 	return runLinkBind(ctx, opts, opts.Cfg.ConnectTargets[idx].Name)
 }
 
-// runLinkBind resolves the target (explicit name, single auto-pick, or
-// picker) and persists the binding. The save happens BEFORE the probe: a
-// broken VPN must not lose the binding, so an unreachable remote is a
-// WARNING, never a failure.
-func runLinkBind(ctx context.Context, opts LinkOpts, name string) error {
-	t, err := resolveLinkTarget(opts, name)
+// runLinkAdd registers a new connect target and binds this directory to
+// it. Without it a system only reaches the registry through `connect`,
+// which mints a session and opens a browser to do what is really a
+// configuration step.
+func runLinkAdd(ctx context.Context, opts LinkOpts) error {
+	t, err := registerTarget(ctx, opts.Palette, opts.Log)
 	if err != nil {
 		return err
 	}
+	rememberTarget(opts.Cfg, t)
+	return bindLinkTarget(ctx, opts, t)
+}
+
+// rememberTarget mirrors the freshly saved target into the loaded config
+// so the rest of the session — the picker, `--list`, `--next` — sees it
+// without re-reading global.toml.
+func rememberTarget(cfg *config.Config, t config.ConnectTarget) {
+	for i := range cfg.ConnectTargets {
+		if cfg.ConnectTargets[i].Name == t.Name {
+			cfg.ConnectTargets[i] = t
+			return
+		}
+	}
+	cfg.ConnectTargets = append(cfg.ConnectTargets, t)
+}
+
+// runLinkBind resolves the target (explicit name, single auto-pick, or
+// picker) and persists the binding.
+func runLinkBind(ctx context.Context, opts LinkOpts, name string) error {
+	t, err := resolveLinkTarget(ctx, opts, name)
+	if err != nil {
+		return err
+	}
+	return bindLinkTarget(ctx, opts, t)
+}
+
+// bindLinkTarget persists the binding to t. The save happens BEFORE the
+// probe: a broken VPN must not lose the binding, so an unreachable remote
+// is a WARNING, never a failure.
+func bindLinkTarget(ctx context.Context, opts LinkOpts, t config.ConnectTarget) error {
 	// Switching to where you already are costs nothing: no rewrite, no probe.
 	if t.SSHHost == opts.Cfg.ConnectSSHHost && t.RemotePath == opts.Cfg.ConnectRemotePath {
 		opts.log("INFO", "", "already linked", "", [2]string{"target", t.Name})
@@ -350,7 +387,7 @@ func probeLink(ctx context.Context, opts LinkOpts, fromName string) (config.Remo
 // looked up (error listing the available names when unknown), no name with
 // a single registered target auto-uses it, several open a TTY-guarded
 // picker, none yields ErrNoConnectTargets.
-func resolveLinkTarget(opts LinkOpts, name string) (config.ConnectTarget, error) {
+func resolveLinkTarget(ctx context.Context, opts LinkOpts, name string) (config.ConnectTarget, error) {
 	targets := opts.Cfg.ConnectTargets
 	if name != "" {
 		for _, t := range targets {
@@ -365,7 +402,15 @@ func resolveLinkTarget(opts LinkOpts, name string) (config.ConnectTarget, error)
 			"unknown connect target: %s (available: %s)",
 			name, strings.Join(connectTargetNames(targets), ", "))
 	}
-	return pickConnectTarget(targets, opts.Palette, "Switch connect target", linkTargetName(opts.Cfg), opts.Log)
+	return pickConnectTarget(targets, opts.Palette, "Switch connect target", linkTargetName(opts.Cfg), opts.Log,
+		func() (config.ConnectTarget, error) {
+			t, err := registerTarget(ctx, opts.Palette, opts.Log)
+			if err != nil {
+				return t, err
+			}
+			rememberTarget(opts.Cfg, t)
+			return t, nil
+		})
 }
 
 // pickConnectTarget resolves a target when no name was given: none yields
@@ -374,7 +419,11 @@ func resolveLinkTarget(opts LinkOpts, name string) (config.ConnectTarget, error)
 //
 // current names the target the picker should mark and open on ("" when the
 // caller has no notion of a current one, e.g. deploy's target prompt).
-func pickConnectTarget(targets []config.ConnectTarget, palette theme.Palette, title, current string, log func(level, sub, msg, db string, fields ...[2]string)) (config.ConnectTarget, error) {
+//
+// onAdd, when set, puts a "register a new target" row at the end of the
+// picker and runs it if chosen. Callers that cannot register one (deploy)
+// pass nil and get a picker of what exists.
+func pickConnectTarget(targets []config.ConnectTarget, palette theme.Palette, title, current string, log func(level, sub, msg, db string, fields ...[2]string), onAdd func() (config.ConnectTarget, error)) (config.ConnectTarget, error) {
 	switch len(targets) {
 	case 0:
 		return config.ConnectTarget{}, ErrNoConnectTargets
@@ -398,11 +447,17 @@ func pickConnectTarget(targets []config.ConnectTarget, palette theme.Palette, ti
 		}
 		labels[i] = fmt.Sprintf("%s %-16s  %-20s  %s:%s", mark, t.Name, db, t.SSHHost, t.RemotePath)
 	}
+	if onAdd != nil {
+		labels = append(labels, addTargetSentinel)
+	}
 	chosen, err := runSingleFuzzyPickerAt(title, labels, palette, "", start)
 	if err != nil {
 		return config.ConnectTarget{}, err
 	}
-	for i, lbl := range labels {
+	if chosen == addTargetSentinel {
+		return onAdd()
+	}
+	for i, lbl := range labels[:len(targets)] {
 		if lbl == chosen {
 			return validLinkTarget(targets[i])
 		}

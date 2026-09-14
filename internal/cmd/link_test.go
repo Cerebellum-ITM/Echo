@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"errors"
 	"strings"
 	"testing"
@@ -34,6 +35,10 @@ func TestParseLinkArgs(t *testing.T) {
 		{[]string{"--list", "--show"}, linkArgs{}, true},
 		{[]string{"--list", "--rm"}, linkArgs{}, true},
 		{[]string{"--list", "prod"}, linkArgs{}, true},
+		{[]string{"--add"}, linkArgs{add: true}, false},
+		{[]string{"--add", "--list"}, linkArgs{}, true},
+		{[]string{"--add", "--show"}, linkArgs{}, true},
+		{[]string{"--add", "prod"}, linkArgs{}, true},
 		// --json only decorates --list
 		{[]string{"--json"}, linkArgs{}, true},
 		{[]string{"--next", "--json"}, linkArgs{}, true},
@@ -63,16 +68,16 @@ func TestResolveLinkTargetExplicit(t *testing.T) {
 	}}
 	opts := LinkOpts{Cfg: cfg}
 
-	got, err := resolveLinkTarget(opts, "prod")
+	got, err := resolveLinkTarget(context.Background(), opts, "prod")
 	if err != nil || got.SSHHost != "erp.example.com" {
 		t.Fatalf("resolveLinkTarget(prod) = %+v, %v", got, err)
 	}
 
-	if _, err := resolveLinkTarget(opts, "broken"); err == nil {
+	if _, err := resolveLinkTarget(context.Background(), opts, "broken"); err == nil {
 		t.Fatal("target without ssh_host/remote_path must error")
 	}
 
-	_, err = resolveLinkTarget(opts, "nope")
+	_, err = resolveLinkTarget(context.Background(), opts, "nope")
 	if err == nil || !strings.Contains(err.Error(), "prod") {
 		t.Fatalf("unknown target error must list available names, got %v", err)
 	}
@@ -81,10 +86,10 @@ func TestResolveLinkTargetExplicit(t *testing.T) {
 func TestResolveLinkTargetImplicit(t *testing.T) {
 	// No targets at all → ErrNoConnectTargets, with or without a name.
 	empty := LinkOpts{Cfg: &config.Config{}}
-	if _, err := resolveLinkTarget(empty, ""); !errors.Is(err, ErrNoConnectTargets) {
+	if _, err := resolveLinkTarget(context.Background(), empty, ""); !errors.Is(err, ErrNoConnectTargets) {
 		t.Fatalf("no targets: got %v, want ErrNoConnectTargets", err)
 	}
-	if _, err := resolveLinkTarget(empty, "prod"); !errors.Is(err, ErrNoConnectTargets) {
+	if _, err := resolveLinkTarget(context.Background(), empty, "prod"); !errors.Is(err, ErrNoConnectTargets) {
 		t.Fatalf("no targets + name: got %v, want ErrNoConnectTargets", err)
 	}
 
@@ -92,9 +97,25 @@ func TestResolveLinkTargetImplicit(t *testing.T) {
 	one := LinkOpts{Cfg: &config.Config{ConnectTargets: []config.ConnectTarget{
 		{Name: "stage", SSHHost: "stage.example.com", RemotePath: "/srv/odoo/stage"},
 	}}}
-	got, err := resolveLinkTarget(one, "")
+	got, err := resolveLinkTarget(context.Background(), one, "")
 	if err != nil || got.Name != "stage" {
 		t.Fatalf("single target auto-pick = %+v, %v", got, err)
+	}
+}
+
+// A target registered mid-session has to be visible to the picker,
+// `--list` and `--next` right away, not after the next process start.
+func TestRememberTarget(t *testing.T) {
+	cfg := &config.Config{ConnectTargets: []config.ConnectTarget{
+		{Name: "prod", SSHHost: "old.example.com", RemotePath: "/srv/odoo/erp"},
+	}}
+	rememberTarget(cfg, config.ConnectTarget{Name: "stage", SSHHost: "stage.example.com", RemotePath: "/srv/odoo/stage"})
+	if len(cfg.ConnectTargets) != 2 || cfg.ConnectTargets[1].Name != "stage" {
+		t.Fatalf("new target not appended: %+v", cfg.ConnectTargets)
+	}
+	rememberTarget(cfg, config.ConnectTarget{Name: "prod", SSHHost: "new.example.com", RemotePath: "/srv/odoo/erp"})
+	if len(cfg.ConnectTargets) != 2 || cfg.ConnectTargets[0].SSHHost != "new.example.com" {
+		t.Fatalf("re-registered target not replaced: %+v", cfg.ConnectTargets)
 	}
 }
 

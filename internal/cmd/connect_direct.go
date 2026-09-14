@@ -36,7 +36,7 @@ func RunDirectConnect(ctx context.Context, args []string) error {
 	}
 	logf("INFO", "start", "connect", "", startFields...)
 
-	target, err := resolveDirectTarget(ctx, cfg, palette, name, add)
+	target, err := resolveDirectTarget(ctx, cfg, palette, name, add, logf)
 	if err != nil {
 		return err
 	}
@@ -117,9 +117,9 @@ func parseDirectArgs(args []string) (name, login string, add bool, passthrough [
 // name, by interactive pick among registered targets, or by registering
 // a new one (when --add is passed, no targets exist, or the user picks
 // the "register" entry).
-func resolveDirectTarget(ctx context.Context, cfg *config.Config, palette theme.Palette, name string, add bool) (config.ConnectTarget, error) {
+func resolveDirectTarget(ctx context.Context, cfg *config.Config, palette theme.Palette, name string, add bool, log func(level, sub, msg, db string, fields ...[2]string)) (config.ConnectTarget, error) {
 	if add {
-		return registerTarget(ctx, palette)
+		return registerTarget(ctx, palette, log)
 	}
 	if name != "" {
 		for _, t := range cfg.ConnectTargets {
@@ -131,7 +131,7 @@ func resolveDirectTarget(ctx context.Context, cfg *config.Config, palette theme.
 			name, targetNames(cfg.ConnectTargets))
 	}
 	if len(cfg.ConnectTargets) == 0 {
-		return registerTarget(ctx, palette)
+		return registerTarget(ctx, palette, log)
 	}
 
 	labels := make([]string, 0, len(cfg.ConnectTargets)+1)
@@ -145,7 +145,7 @@ func resolveDirectTarget(ctx context.Context, cfg *config.Config, palette theme.
 		return config.ConnectTarget{}, err
 	}
 	if chosen == addTargetSentinel {
-		return registerTarget(ctx, palette)
+		return registerTarget(ctx, palette, log)
 	}
 	for i, lbl := range labels[:len(cfg.ConnectTargets)] {
 		if lbl == chosen {
@@ -158,8 +158,9 @@ func resolveDirectTarget(ctx context.Context, cfg *config.Config, palette theme.
 // registerTarget walks the user through creating a new named target:
 // pick an SSH host from ~/.ssh/config, pick one of that host's existing
 // Echo projects (read over SSH), and name it. Nothing is scanned beyond
-// Echo's own config on the server.
-func registerTarget(ctx context.Context, palette theme.Palette) (config.ConnectTarget, error) {
+// Echo's own config on the server. The target is saved to global.toml and
+// returned; log reports it and may be nil.
+func registerTarget(ctx context.Context, palette theme.Palette, log func(level, sub, msg, db string, fields ...[2]string)) (config.ConnectTarget, error) {
 	hosts := sshConfigHosts()
 	if len(hosts) == 0 {
 		return config.ConnectTarget{}, fmt.Errorf("no Host entries found in ~/.ssh/config")
@@ -217,7 +218,12 @@ func registerTarget(ctx context.Context, palette theme.Palette) (config.ConnectT
 	if err := config.SaveConnectTarget(target); err != nil {
 		return config.ConnectTarget{}, fmt.Errorf("save target: %w", err)
 	}
-	fmt.Printf("✓ Registered target %q → %s:%s\n", target.Name, target.SSHHost, target.RemotePath)
+	if log != nil {
+		log("INFO", "", "registered target", target.DBName,
+			[2]string{"target", target.Name},
+			[2]string{"host", target.SSHHost},
+			[2]string{"path", target.RemotePath})
+	}
 	return target, nil
 }
 
