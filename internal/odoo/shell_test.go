@@ -21,3 +21,15 @@ func TestShellOmitsEmptyConnFields(t *testing.T) {
 		t.Fatalf("Shell argv\n got: %q\nwant: %q", got, want)
 	}
 }
+
+func TestUninstallScriptQuotesModules(t *testing.T) {
+	got := UninstallScript([]string{"fb_curp_probe", "sale_extra"})
+	for _, want := range []string{
+		`names = ["fb_curp_probe", "sale_extra"]`,
+		"mods.button_immediate_uninstall()",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("UninstallScript missing %q in:\n%s", want, got)
+		}
+	}
+}

@@ -68,6 +68,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `reverb env env=<proj>/<env> id=<n> api=on|off`.
 
 ### Fixed
+- **`uninstall` works.** It ran `odoo --uninstall <mods>`, a flag Odoo's CLI
+  has never had, so every run died with `no such option: --uninstall`. It now
+  pipes a script to `odoo shell` that calls `button_immediate_uninstall()` —
+  the Apps menu path — and aborts with a non-zero exit, before removing
+  anything, when a named module is not installed.
 - **Los comandos de base funcionan contra un Postgres que no es servicio del
   compose.** Todo lo que Echo corre dentro del contenedor de Postgres —
   `checkpoint` (dump, restore y sus consultas), `db-pull`, el `df` del
