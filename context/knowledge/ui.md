@@ -33,7 +33,7 @@ Odoo line: `YYYY-MM-DD HH:MM:SS,mmm PID LEVEL db logger: message key=val ...` (c
 | logger | pastel rotation, FNV-1a of the name mod 8, stable across runs |
 | message | Fg |
 | field key | by name: `module(s)` Accent bold, `err(s)` Error bold, `warnings` Warning bold, `copied` Info bold, else Dim |
-| field value | `status` ok green / failed red / cancelled+skipped amber; `cmd` tinted by its first token (same rotation); else Fg |
+| field value | `status` ok green / failed red / cancelled+skipped amber; `cmd` tinted by its first token (same rotation); `age` red bold from one hour on (a `humanAge` value with `h` or `d`, e.g. `deploy --apply`'s `plan matches`); else Fg |
 
 - Values with whitespace or quotes are Go-quoted (`quoteIfNeeded`); empty is `""`. A db of `""` renders as `-`.
 - **Two renderers exist**: `repl.renderOdooLog` (full styling) and `cmd.renderOdooLogLine` (`internal/cmd/connect_log.go`, used by the projectless `connect <name>` path because `internal/cmd` cannot import `repl`). The cmd copy is simpler: logger in Info instead of the pastel rotation, no per-key/value styling, unstyled message. A style change to log lines must touch both. Source: `connect_log.go:directConnectLogger`.

@@ -20,6 +20,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   el modo link.
 
 ### Added
+- **`deploy --dry-run --save-plan <file>` and `deploy --apply <file>`: a
+  deploy runs exactly as reviewed, or refuses.** The dry-run writes a JSON
+  plan (mode 0600, no secrets) with the target, each module's action, source
+  and content identity (`sha` + `tree` for committed content, a digest of the
+  directory as rsync ships it for a working-tree module), the run's effective
+  decisions, the deploy actions by name and digest, a digest of the target's
+  deploy lock and the dependency findings. `--apply` re-resolves the same
+  selection with every decision pinned and, before the first write on the
+  server, compares: a moved ref, an edit on disk, any lock write since (even a
+  push of another module), a module installed meanwhile or a changed action
+  list each print `ERROR echo.deploy.plan: changed what=… planned=… now=…` and
+  refuse with exit 1 (`plan_stale` under `--json`). An unchanged plan logs
+  `plan matches age=…` (red from one hour on) and runs as a normal deploy, with
+  the prod and dependency confirms intact. `--apply` combines only with
+  `--force`, `--rollback-on-fail`/`--no-rollback-on-fail`, `--json`,
+  `--dry-run` and the plan's own `--from`; anything else, a file that is not a
+  plan, another schema or another project is a usage error (exit 2) before any
+  SSH. `--save-plan` requires a path and `--dry-run`.
 - **`compare --targets <a>,<b>`: what one target has that the other does
   not, from their deploy locks.** Per module it shows the source, sha and
   version each target's `.echo/lock.json` records, side by side, with a

@@ -197,7 +197,8 @@ func TestRefTouchesI18n(t *testing.T) {
 
 // fakeRemote is a target whose "server" is a local directory: a fake `ssh` on
 // PATH runs every remote command locally, records compose calls instead of
-// running them, and answers the module-state query.
+// running them, and answers the module-state query (sale and stock installed,
+// plus the lines of $FAKE_MODULE_STATES).
 type fakeRemote struct {
 	dir     string
 	logPath string
@@ -224,7 +225,7 @@ shift
 cmd="$*"
 printf '%s\n' "$cmd" >> "`+f.sshLogPath()+`"
 case "$cmd" in
-  *psql*) printf 'sale|installed|18.0.1.0\nstock|installed|18.0.1.0\n' ;;
+  *psql*) printf 'sale|installed|18.0.1.0\nstock|installed|18.0.1.0\n'; [ -z "$FAKE_MODULE_STATES" ] || printf '%s\n' "$FAKE_MODULE_STATES" ;;
   *stop-after-init*) printf '%s\n' "$cmd" >> "`+f.logPath+`"; [ -z "$FAKE_FAIL_RUN" ] ;;
   *compose*) printf '%s\n' "$cmd" >> "`+f.logPath+`" ;;
   *) exec sh -c "$cmd" ;;

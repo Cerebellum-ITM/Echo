@@ -524,6 +524,8 @@ func helpSections() []helpSection {
 			{"  --no-git", "Force the legacy rsync push on a git-deploy target for this run"},
 			{"  --no-lint", "Skip the pre-flight lint of the selected modules (see lint)"},
 			{"  --no-dep-check", "Skip the check for methods, fields and XML ids the shipped modules drop while staying modules still use them"},
+			{"  --save-plan <file>", "With --dry-run: write the resolved plan (modules, shas, sources, run decisions, lock) to <file>"},
+			{"  --apply <file>", "Run a saved plan exactly, or refuse before any server write when anything changed since"},
 			{"watch [<branch>]", "Auto push+deploy when new commits land on a branch; no branch → picker (Ctrl+C to stop)"},
 			{"  --from <target>", "Use a named connect target (default: this dir's link)"},
 			{"  --remote", "Target this directory's linked remote"},

@@ -436,6 +436,8 @@ the code there — that's for the tool you use to sync the working tree.
 | `  --keep-overlay` / `--with-local` / `--fetch` / `--no-fetch` | `--set-code` modifiers (overlay, local branch, remote refresh) |
 | `  --set-git-branch <name>` | Name the branch the target's code lives on and exit (no deploy); `--rename` also moves the one already on the server |
 | `  --lock`         | Print the target's deploy lock: what each module runs and where it came from (no deploy; `--json` prints the raw file) |
+| `  --save-plan <file>` | With `--dry-run`: write the resolved plan to `<file>` for a later `--apply` (see below) |
+| `  --apply <file>` | Run a saved plan exactly as reviewed, or refuse before any server write when anything changed since (see below) |
 
 **Push by default.** For an image-built remote where a deploy always ships
 code, make `--push` the default instead of typing it every time: `deploy
@@ -632,6 +634,47 @@ INFO    echo.deploy.plan: dependency check clean modules=4 removed=0
   signatures, no JS/OWL and no QWeb `t-call` by short name; a word match can be a
   comment, which is why it asks instead of refusing. Only modules visible on the
   server's filesystem are searched.
+
+#### Review once, run exactly that (saved plans)
+
+A `--dry-run` and the deploy after it resolve everything twice: a branch that
+moved, an edit on disk or another machine's push in between changes what ships.
+Save the reviewed plan and apply it instead:
+
+```
+deploy --modules sale_custom@release/1.4,stock_custom --from staging --dry-run --save-plan plan.json
+deploy --apply plan.json --from staging
+```
+
+The plan (JSON, mode 0600) records the target, each module with its action and
+source and, when pushing, what ships (`sha` and `tree` for committed content, a
+digest of the directory as rsync ships it for a working-tree module), the run's
+effective decisions (push, git, checkpoint, tests, i18n overwrite, actions,
+lint, dependency check), the deploy actions by name plus a digest, a digest of
+the target's `.echo/lock.json` and the dependency findings. No secret: action
+commands and DB credentials are never written.
+
+`--apply` re-resolves the same selection (a pinned module by its ref, so a moved
+ref is noticed) with every decision pinned, so a changed server policy runs the
+reviewed decision. Before anything is written on the server it compares the
+fresh plan with the saved one; any difference refuses with exit 1 and one line
+each:
+
+```
+ERROR echo.deploy.plan: changed what=ref module=sale_custom planned=99f2109 now=a1c4e02 ref=release/1.4
+ERROR echo.deploy.plan: changed what=lock planned=3f2a9c1 now=b77d0e4
+```
+
+Re-plan with `--dry-run --save-plan`. Any lock write in between refuses, even a
+`push` of another module. When nothing changed it logs `plan matches age=…` (red
+from one hour on) and runs as a normal deploy: the prod confirm and the
+dependency confirm still ask (`--force` skips them; no TTY fails closed).
+`--apply` takes only `--force`, `--rollback-on-fail`/`--no-rollback-on-fail`,
+`--json` (adds `plan` and `plan_stale`), `--dry-run` (compare and stop) and a
+`--from` naming the plan's target; anything else is a usage error (exit 2), as is
+a file that is not a plan, another schema or a plan made in another project.
+`--save-plan` needs a path and `--dry-run`. A hand edit on the server is
+invisible to the plan, as it is to the lock.
 
 #### Deploy + test in one command
 

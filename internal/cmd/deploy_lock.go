@@ -205,21 +205,26 @@ func parseDeployLock(raw []byte) (DeployLock, lockState, error) {
 // unreadable or unparsable file warns and reads as a fresh lock, so the next
 // write replaces it instead of every deploy failing on it.
 func readDeployLock(ctx context.Context, rsc remoteShellContext, log logFn) (lock DeployLock, found bool) {
-	fresh := newDeployLock(rsc.fromName)
 	raw, state, err := fetchDeployLock(ctx, rsc)
 	if state == lockUnreadable {
 		ckptLog(log, "WARNING", "lock", "could not read the deploy lock", rsc.prof.DBName,
 			[2]string{"reason", err.Error()})
-		return fresh, false
+		return newDeployLock(rsc.fromName), false
 	}
+	return decodeDeployLock(rsc, log, raw)
+}
+
+// decodeDeployLock parses lock bytes already fetched; like readDeployLock, a
+// file that does not parse warns and reads as a fresh lock.
+func decodeDeployLock(rsc remoteShellContext, log logFn, raw []byte) (lock DeployLock, found bool) {
 	parsed, state, err := parseDeployLock(raw)
 	switch state {
 	case lockAbsent:
-		return fresh, false
+		return newDeployLock(rsc.fromName), false
 	case lockCorrupt:
 		ckptLog(log, "WARNING", "lock", "deploy lock is unreadable — the next write replaces it", rsc.prof.DBName,
 			[2]string{"reason", err.Error()})
-		return fresh, false
+		return newDeployLock(rsc.fromName), false
 	}
 	return parsed, true
 }

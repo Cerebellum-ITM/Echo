@@ -153,6 +153,11 @@ func valueStyleFor(key, value string, p theme.Palette) (lipgloss.Style, bool) {
 		case "cancelled", "skipped":
 			return lipgloss.NewStyle().Foreground(p.Warning), true
 		}
+	case "age":
+		// humanAge spells an hour or more with h or d: an old plan is a warning.
+		if strings.ContainsAny(value, "hd") {
+			return lipgloss.NewStyle().Foreground(p.Error).Bold(true), true
+		}
 	case "cmd":
 		action := value
 		if i := strings.IndexByte(action, ' '); i >= 0 {

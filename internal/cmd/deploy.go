@@ -172,7 +172,15 @@ type deployArgs struct {
 	rename       bool
 	// lock prints the target's deploy lock and exits (Unit 124).
 	lock bool
+	// savePlan writes what a dry run resolved to this path; apply runs the
+	// plan saved at this path, or refuses when anything changed (Unit 129).
+	savePlan string
+	apply    string
 }
+
+// applyFlags are the only flags --apply accepts: everything else shapes the
+// run, and the plan already decided it.
+var applyFlags = []string{"--apply", "--force", "--rollback-on-fail", "--no-rollback-on-fail", "--json", "--dry-run", "--from"}
 
 // isTestManage reports whether the args carry a config-only test-management
 // operation (toggle / pin-list edit) that runs standalone and exits.
@@ -202,8 +210,13 @@ func (p deployArgs) isCheckpointManage() bool {
 func parseDeployArgs(args []string) (deployArgs, error) {
 	out := deployArgs{limit: 20}
 	var sawRB, sawNoRB bool
+	var flags []string
 	for i := 0; i < len(args); i++ {
 		a := args[i]
+		if strings.HasPrefix(a, "-") {
+			name, _, _ := strings.Cut(a, "=")
+			flags = append(flags, name)
+		}
 		switch {
 		case a == "--i18n":
 			out.i18n = true
@@ -438,6 +451,26 @@ func parseDeployArgs(args []string) (deployArgs, error) {
 			i++
 		case strings.HasPrefix(a, "--test-rm="):
 			out.testRm = splitCSV(strings.TrimPrefix(a, "--test-rm="))
+		case a == "--save-plan", a == "--apply":
+			if i+1 >= len(args) || strings.HasPrefix(args[i+1], "-") {
+				return out, fmt.Errorf("%w: %s needs the path of a plan file", ErrUsage, a)
+			}
+			if a == "--apply" {
+				out.apply = args[i+1]
+			} else {
+				out.savePlan = args[i+1]
+			}
+			i++
+		case strings.HasPrefix(a, "--save-plan="):
+			out.savePlan = strings.TrimPrefix(a, "--save-plan=")
+			if strings.TrimSpace(out.savePlan) == "" {
+				return out, fmt.Errorf("%w: --save-plan needs the path of a plan file", ErrUsage)
+			}
+		case strings.HasPrefix(a, "--apply="):
+			out.apply = strings.TrimPrefix(a, "--apply=")
+			if strings.TrimSpace(out.apply) == "" {
+				return out, fmt.Errorf("%w: --apply needs the path of a plan file", ErrUsage)
+			}
 		case a == "--json":
 			out.jsonOut = true
 		case a == "--dry-run":
@@ -449,6 +482,16 @@ func parseDeployArgs(args []string) (deployArgs, error) {
 		default:
 			return out, fmt.Errorf("%w: deploy takes no positional arguments (commits are picked interactively)", ErrUsage)
 		}
+	}
+	if out.apply != "" {
+		for _, f := range flags {
+			if !slices.Contains(applyFlags, f) {
+				return out, fmt.Errorf("%w: --apply runs the saved plan as reviewed; %s would change it — re-plan with deploy --dry-run --save-plan", ErrUsage, f)
+			}
+		}
+	}
+	if out.savePlan != "" && !out.dryRun {
+		return out, fmt.Errorf("%w: --save-plan writes the plan of a dry run; add --dry-run", ErrUsage)
 	}
 	if out.i18n && out.noI18n {
 		return out, fmt.Errorf("%w: --i18n and --no-i18n are mutually exclusive", ErrUsage)
@@ -869,6 +912,10 @@ type DeployResult struct {
 	// Dependencies lists the uses, in modules staying on the server, of the
 	// symbols the shipped modules no longer define (Unit 128).
 	Dependencies []DependencyFinding `json:"dependencies,omitempty"`
+	// Plan is the plan --save-plan wrote or --apply ran; PlanStale lists why
+	// --apply refused it (Unit 129).
+	Plan      *DeployPlan  `json:"plan,omitempty"`
+	PlanStale []PlanChange `json:"plan_stale,omitempty"`
 	// JSON echoes whether the caller asked for --json, so the REPL wrapper can
 	// route output without re-parsing the args.
 	JSON bool `json:"-"`
@@ -912,6 +959,15 @@ func RunDeploy(ctx context.Context, opts DeployOpts) (DeployResult, error) {
 	if err != nil {
 		return DeployResult{}, err
 	}
+	var saved *DeployPlan
+	if p.apply != "" {
+		plan, applied, aerr := loadAppliedPlan(opts, p)
+		if aerr != nil {
+			return DeployResult{}, aerr
+		}
+		saved, p = &plan, applied
+	}
+	planning := saved != nil || p.savePlan != ""
 	if err := requireNoReverb("deploy", p.from); err != nil {
 		return DeployResult{}, err
 	}
@@ -1041,6 +1097,9 @@ func RunDeploy(ctx context.Context, opts DeployOpts) (DeployResult, error) {
 		if len(selected) == 0 && len(selectedDirty) == 0 {
 			opts.log("INFO", "", "nothing to deploy", "",
 				[2]string{"reason", "no pending commits or dirty modules"})
+			if p.savePlan != "" {
+				opts.log("INFO", "plan", "no plan written — nothing to deploy", "", [2]string{"path", p.savePlan})
+			}
 			return DeployResult{Target: fromName, JSON: p.jsonOut}, nil
 		}
 	case len(p.commits) > 0 || len(p.modules) > 0 || len(refSources) > 0:
@@ -1272,8 +1331,19 @@ func RunDeploy(ctx context.Context, opts DeployOpts) (DeployResult, error) {
 	}
 	ckptPolicy := resolveCheckpointPolicy(prof, opts.Cfg)
 	ckptEnabled, ckptMethod := resolveCheckpointMode(p, ckptPolicy, target.stage)
+	// A plan records the lock as read, so it is read even without a push, and
+	// a read that fails leaves nothing to check the plan against.
 	var current DeployLock
-	if p.push {
+	var lockID string
+	switch {
+	case planning:
+		raw, state, lerr := fetchDeployLock(ctx, rsc)
+		if state == lockUnreadable {
+			return DeployResult{}, fmt.Errorf("read the deploy lock, which the plan records: %w", lerr)
+		}
+		lockID = lockDigest(raw, state)
+		current, _ = decodeDeployLock(rsc, opts.Log, raw)
+	case p.push:
 		current, _ = readDeployLock(ctx, rsc, opts.Log)
 	}
 
@@ -1438,6 +1508,50 @@ func RunDeploy(ctx context.Context, opts DeployOpts) (DeployResult, error) {
 		sort.Strings(releasing)
 	}
 
+	// The saved plan is compared here: everything it records is resolved and
+	// nothing has been written on the server yet.
+	var plan DeployPlan
+	if planning {
+		mods, perr := planModules(opts, update, install, archived, branchMods, shipped)
+		if perr != nil {
+			return DeployResult{}, perr
+		}
+		ckpt := "off"
+		if ckptEnabled {
+			ckpt = ckptMethod
+		}
+		dest := ""
+		if p.push {
+			dest, _, _ = resolvePushDest(pushArgs{}, prof, opts.Cfg)
+		}
+		plan = newDeployPlan(ctx, opts.Root)
+		plan.Target = planTarget{Name: fromName, SSHHost: sshHost, RemotePath: remotePath, DB: target.dbName, Stage: target.stage}
+		plan.Run = planRun{
+			Push: p.push, Git: gitActive, Checkpoint: ckpt, Test: runTests, I18nOverwrite: overwrite,
+			Actions: !p.noActions, Lint: !p.noLint, DepCheck: !p.noDepCheck, Fetch: planFetch(p),
+		}
+		plan.Commits = append([]string{}, deployedShas...)
+		plan.Modules = mods
+		plan.BranchTip = gitTip
+		plan.Dest = dest
+		plan.TestModules = append([]string{}, testMods...)
+		plan.DeployActions = actionsDigest(actions)
+		plan.Lock = lockID
+		plan.Dependencies = planDependencies(result.Dependencies)
+	}
+	if saved != nil {
+		result.Plan = saved
+		if changes := diffPlans(*saved, plan); len(changes) > 0 {
+			for _, c := range changes {
+				opts.log("ERROR", "plan", "changed", prof.DBName, c.fields()...)
+			}
+			result.PlanStale = changes
+			return result, planStaleError(p.apply, *saved, len(changes))
+		}
+		opts.log("INFO", "plan", "plan matches", prof.DBName,
+			[2]string{"age", humanAge(time.Since(saved.CreatedAt))})
+	}
+
 	// --push shares the deploy's already-resolved target: sync the resolved
 	// modules' local code to the remote addons dir before the run. In dry-run
 	// it prints the rsync itemization; on a real run a push failure aborts
@@ -1566,6 +1680,14 @@ func RunDeploy(ctx context.Context, opts DeployOpts) (DeployResult, error) {
 		}
 		if ckptEnabled {
 			opts.log("INFO", "plan", "checkpoint enabled", prof.DBName, [2]string{"method", ckptMethod})
+		}
+		if p.savePlan != "" {
+			if err := writePlan(p.savePlan, plan); err != nil {
+				return DeployResult{}, fmt.Errorf("save the plan: %w", err)
+			}
+			result.Plan = &plan
+			opts.log("INFO", "plan", "plan saved", prof.DBName,
+				[2]string{"path", p.savePlan}, [2]string{"modules", strconv.Itoa(len(plan.Modules))})
 		}
 		opts.log("INFO", "", "dry-run — nothing executed", prof.DBName)
 		return result, nil

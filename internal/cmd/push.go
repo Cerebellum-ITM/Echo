@@ -364,6 +364,20 @@ var rsyncCommand = func(ctx context.Context, args ...string) *exec.Cmd {
 	return exec.CommandContext(ctx, "rsync", args...)
 }
 
+// rsyncExcludes is what a push never ships. Each pattern matches a path's
+// last component at any depth, as rsync applies an --exclude without a slash.
+var rsyncExcludes = []string{"__pycache__", "*.pyc", ".git"}
+
+// rsyncExcluded reports whether a file or directory name matches rsyncExcludes.
+func rsyncExcluded(name string) bool {
+	for _, pattern := range rsyncExcludes {
+		if ok, _ := filepath.Match(pattern, name); ok {
+			return true
+		}
+	}
+	return false
+}
+
 // rsyncArgs builds the rsync argv: archive + itemized changes, the shared
 // exclude set (build/VCS noise, mirroring skipViewPath), optional dry-run
 // (`-n`) and `--delete`, and a trailing slash on both endpoints so the
@@ -376,11 +390,11 @@ var rsyncCommand = func(ctx context.Context, args ...string) *exec.Cmd {
 // transferred (and, paired with parseItemize dropping attribute-only lines,
 // only those show in the change tree).
 func rsyncArgs(srcDir, sshHost, destDir string, dryRun, del bool) []string {
-	args := []string{
-		"-az", "--checksum", "--itemize-changes",
-		"--exclude", "__pycache__", "--exclude", "*.pyc", "--exclude", ".git",
-		"-e", "ssh -o BatchMode=yes",
+	args := []string{"-az", "--checksum", "--itemize-changes"}
+	for _, pattern := range rsyncExcludes {
+		args = append(args, "--exclude", pattern)
 	}
+	args = append(args, "-e", "ssh -o BatchMode=yes")
 	if dryRun {
 		args = append(args, "-n")
 	}
