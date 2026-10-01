@@ -324,7 +324,9 @@ func RunUninstall(ctx context.Context, opts ModulesOpts) ([]string, error) {
 		modules = picked
 	}
 	emitResolved(opts, modules)
-	return modules, runOdoo(ctx, opts, odoo.WithLogLevel(odoo.Uninstall(buildConn(opts), modules), level))
+	argv := odoo.WithLogLevel(odoo.Shell(buildConn(opts)), level)
+	return modules, docker.ExecWithStdinReader(ctx, opts.Cfg.ComposeCmd, opts.Root, opts.Cfg.OdooContainer,
+		argv, strings.NewReader(odoo.UninstallScript(modules)), opts.StreamOut)
 }
 
 // RunTest runs the Odoo test suite for the given modules.

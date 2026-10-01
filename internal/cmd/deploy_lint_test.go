@@ -60,7 +60,7 @@ func runPreflight(t *testing.T, root string, p deployArgs, modules []string) (er
 			lines = append(lines, logLine{level, sub, msg, f})
 		},
 	}
-	return deployLintPreflight(opts, p, modules), lines
+	return deployLintPreflight(opts, p, []lintScope{{root: root, modules: modules}}), lines
 }
 
 // hasLine reports whether any captured line is at level and its message

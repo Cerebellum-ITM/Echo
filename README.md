@@ -24,14 +24,14 @@ Echo is a work in progress; below is what currently ships in `main`.
 | Area      | Working                                                                 | Pending                         |
 |-----------|-------------------------------------------------------------------------|---------------------------------|
 | Project   | `init`, `reset`, `alias` (`-C <name>` registry), `help`, `clear`        | `version`, `stage`, `theme`, `logo` |
-| Docker    | `up`, `down`, `stop`, `restart`, `ps`, `logs` (`--copy`/`--all`/`-t`; `up`/`stop`/`restart`/`logs` also `--from`/`--remote` over SSH) | — |
+| Docker    | `up`, `down`, `stop`, `restart`, `ps`, `logs` (`--copy`/`--all`/`-t`; `up`/`stop`/`restart`/`ps`/`logs` also `--from`/`--remote` over SSH) | — |
 | Modules   | `install`, `update` (`--i18n`, `--remote`), `uninstall`, `test`, `modules` (`--config`), `modinfo`, `view` | —             |
 | Database  | `db-admin`, `db-backup` (`--with-filestore`), `db-restore` (rename + live progress), `db-pull` (clone a remote DB), `db-drop`, `db-neutralize`, `db-list`, `db-use` | — |
 | Shell     | `shell`, `bash`, `psql`                                                  | —                               |
 | i18n      | `i18n-export`, `i18n-update`, `i18n-pull` (from a remote)                | —                               |
 | Connect   | `connect` — open Chrome logged in as any user, no password              | —                               |
 | Deploy    | `link` — bind a local repo to a remote target; `deploy` — commit- and dirty-module-driven remote update/install over SSH, with a DB checkpoint + auto-rollback on failure; `checkpoint` — list/create/remove those checkpoints | — |
-| Sync      | `push` — rsync local modules to the remote addons dir; `watch` — auto push+deploy on new commits; `compare` — diff a module against its Docker copy (`--all` for a whole-module status table) | — |
+| Sync      | `push` — rsync local modules to the remote addons dir; `watch` — auto push+deploy on new commits; `compare` — diff a module against its Docker copy (`--all` for a whole-module status table, `--targets a,b` for two targets' deploy locks) | — |
 | Build     | `<cmd> --build` / `-b` — compose any command interactively, then run/copy | —                             |
 | Scripting | `echo <cmd>` one-shot, `echo run <file>` recipes, `sequence` (interactive multi-command), `report`, `logview` (interactive log history) | —              |
 | REPL UX   | ↑↓ history, fzf picker, level-colored logs, ✓/✗ result, Tab + flag autocomplete, live command/flag highlighting | Full ASCII banners |
@@ -102,10 +102,14 @@ and every command is wired to the right containers.
 | `  --rm <name>` | Remove an alias                                            |
 | `  --migrate` | Backfill aliases from connect targets with local paths       |
 | `link [<target>]` | Switch this directory's connect target (no args: picker, current marked) |
+| `  --add`  | Register a new target (SSH host + remote project) and bind to it |
 | `  --next` | Switch to the next target, wrapping — the two-target toggle      |
 | `  --list [--json]` | List the targets, marking the current one (no SSH, no write) |
 | `  --show` | Show the binding, probe the remote, stream its `compose ps`     |
 | `  --rm`   | Remove this directory's `[connect]` binding                     |
+| `doctor [--from <target>]` | Check a remote target is ready for deploy, push and checkpoints (read-only) |
+| `  --remote` | Check this directory's linked remote                          |
+| `  --json` | One JSON report on stdout, lines on stderr                      |
 | `help`   | Print the in-REPL command list, grouped by area                    |
 | `clear`  | Clear screen and reprint the header                                |
 | `exit` / `quit` / `Ctrl+D` | Quit Echo                                        |
@@ -115,6 +119,30 @@ Aliases live in `~/.config/echo/global.toml` (`[project_aliases]`) as a
 path; a real directory of the same name always wins, so `-C <dir>` behavior is
 unchanged. `-C` also falls back to a connect target's `remote_path` when it
 points at a local directory.
+
+`doctor` answers "is this target ready" before a deploy finds out halfway. It
+reads the target over three SSH round trips and changes nothing on either
+side, then prints one `echo.doctor.<check>` line per check, in this order:
+`ssh` (reachable; a literal `user@host` warns), `profile` (the server's Echo
+profile exists, parses, names the containers and the database, declares a
+stage), `rsync` (on both ends; missing fails only when a deploy would push),
+`git` (git-deploy targets: the checkout exists and is a clone of this
+repository), `disk` (free space for the checkpoint a deploy would take: 1.2×
+the database on the data directory for `db`, 0.5× on the host under
+`remote_path` for `dump`), `lock` (absent, unreadable, corrupt, unverified
+entries, `.echo/` tracked by the server's repository), `dest` (the push
+destination exists, or the addons directory auto-detect would use) and one
+`dest.shared` line per other target on the same host whose destination is the
+same directory (WARNING when its stage differs). Every check runs even after
+one fails; any failed check exits 1, warnings alone exit 0.
+
+```
+$ echo_cli doctor --from habitta_prod
+INFO    echo.doctor: target target=habitta_prod host=habitta path=/srv/habitta
+ERROR   echo.doctor.rsync: rsync not found on the server status=failed side=remote push=on
+WARNING echo.doctor.dest.shared: push destination shared status=warn dest=/srv/.cache/all_odoo with=habitta_dev stage=dev
+INFO    echo.doctor: doctor summary target=habitta_prod ok=5 warn=1 failed=1 skipped=1
+```
 
 ### Docker
 
@@ -141,14 +169,18 @@ points at a local directory.
 Compose lifecycle lines (`Container … Started`) are reformatted into Echo's
 Odoo log style (`docker.container: started name=…`).
 
-`up`, `stop`, `restart`, and `logs` can act on a **remote** host the same way
+`up`, `stop`, `restart`, `ps`, and `logs` can act on a **remote** host the same way
 `deploy` and `shell` do: pass `--from <target>` to name a connect target, or
 `--remote` to use this directory's `link` binding (so you don't retype the
 name). All ride the shared SSH transport. Remote `restart`/`stop` with no
 service target the remote profile's Odoo container and ask for a red
-confirmation when the remote stage is `prod` (`--force` skips it); remote `up`
-is non-destructive so it doesn't confirm. Remote `logs` keeps follow-by-default,
-streaming over SSH, with `-t`/`--no-follow`/`--copy` honored. Without a remote
+confirmation when the remote stage is `prod` (`--force` skips it). A server
+profile whose `stage` is missing or not `dev`/`staging`/`prod` is treated as
+`prod` by every remote gate, with a WARNING after the system status line; a
+server profile that does not parse fails the command before it touches the
+server. Remote `up` is non-destructive so it doesn't confirm. Remote `logs`
+keeps follow-by-default, streaming over SSH, with `-t`/`--no-follow`/`--copy` honored. Remote `ps`
+renders the same styled table as the local one, read over SSH. Without a remote
 flag they all behave exactly as before (local). In remote mode these run from a
 pure addons repo with no local `docker-compose.yml`.
 
@@ -156,6 +188,7 @@ pure addons repo with no local `docker-compose.yml`.
 echo link prod                 # bind once (see Deploy below)
 echo restart --remote          # restart the linked remote's Odoo container
 echo logs --remote -t 200      # tail 200 lines, then follow, over SSH
+echo ps --remote               # styled container table of the linked remote
 echo restart --from staging    # ad-hoc: a different named target
 ```
 
@@ -233,7 +266,7 @@ asks for a red confirmation unless `--force`; `--last` stays local-only. Like
 | `  --password <pw>`              | Use an explicit password instead of a generated one (also hashed) |
 | `  --insecure`                   | Set it to `admin`/`admin` — known credentials, confirmed on any stage |
 | `  --from <t>` / `--remote`      | Run it against a remote target's Postgres; the hash is computed locally, so the password never leaves your machine |
-| `  --save`                       | Store the credential in 1Password as `Odoo <project> (<db>)`, with the instance's `web.base.url` attached so it autofills; updates the item if it already exists |
+| `  --save`                       | Store the credential in 1Password as `<project> (<db>)`, tagged `echo`, `odoo` and — on a remote target — the server it lives on, with the instance's `web.base.url` attached so it autofills; updates the item if it already exists |
 | `  --vault <name>`               | Vault for `--save` (default: `op`'s own default)                  |
 | `db-backup [name]`               | `pg_dump -Fc` into `./backups/<db>_<ts>.dump`                     |
 | `  --with-filestore`             | Package dump + container filestore into a `.zip` (Odoo-compatible) |
@@ -378,15 +411,17 @@ the code there — that's for the tool you use to sync the working tree.
 | `  --from <target>`| Use a named connect target (default: this directory's `link`) |
 | `  --limit <N>`    | Commits offered in the picker (default `20`)             |
 | `  --dry-run`      | Resolve modules and show the plan; execute nothing       |
-| `  --force`        | Skip the prod-stage confirmation                         |
+| `  --force`        | Skip the prod-stage and dependency-check confirmations   |
 | `  --commits <shas>` | Deploy these commits non-interactively (skips the picker) |
-| `  --modules <names>` | Deploy these (dirty) modules non-interactively (skips the picker) |
+| `  --modules <names>` | Deploy these (dirty) modules non-interactively (skips the picker); `mod@ref` ships a module as committed at `ref` |
+| `  --at <ref>`     | Ship every `--modules` entry as committed at `<ref>` — branch, tag or SHA — never from the working tree (see below) |
 | `  --checkpoint[=db\|dump]` | Force a DB checkpoint before the run (default: auto on `staging`/`prod`) |
 | `  --no-checkpoint` | Skip the DB checkpoint even on `staging`/`prod`          |
 | `  --set-checkpoint[=on\|off\|auto]` | Persist the checkpoint policy for this project and exit (no deploy) |
 | `  --set-checkpoint-method=db\|dump` / `--set-checkpoint-keep=N` | Companion setters for method / retention (no deploy) |
-| `  --rollback-on-fail` / `--no-rollback-on-fail` | Fix the on-failure decision headlessly: restore, or keep the broken DB — no prompt |
+| `  --rollback-on-fail` / `--no-rollback-on-fail` | Fix the on-failure decision headlessly: restore code (and DB), or keep the broken state — no prompt |
 | `  --no-actions`   | Skip declared `[[deploy.actions]]` for this run          |
+| `  --no-dep-check` | Skip the dependency check of the shipped modules for this run (see below) |
 | `  --push` / `--no-push` | Push the resolved modules before the run / skip it even when it's the default |
 | `  --set-push[=bool]` | Set `deploy` to push by default and exit (no deploy)  |
 | `  --test` / `--no-test` | Run the deployed modules' tests this run / skip them even when it's the default |
@@ -394,19 +429,22 @@ the code there — that's for the tool you use to sync the working tree.
 | `  --test-modules[=<list>]` | Pin which modules get tested: bare opens a picker, `=csv` sets, empty clears (no deploy) |
 | `  --test-add` / `--test-rm <list>` | Add/remove modules from the pinned test list (no deploy) |
 | `  --test-clear`   | Clear the pinned test modules — back to testing what's deployed (no deploy) |
-| `  --rollback`     | Restore the target's most recent checkpoint (no deploy)  |
+| `  --rollback`     | Restore the target's most recent checkpoint — DB, code, or both (no deploy) |
 | `  --consume-checkpoint` | With `--rollback`: restore a `db` checkpoint by renaming it over the live DB (cheaper on disk, but destroys the checkpoint — no restore point remains) |
 | `  --restore-code [<sha>]` | Move a git-deploy target's code back to a hash it already ran (bare = picker over the branch's history), then restart (no DB) |
 | `  --set-code <ref>` | Re-baseline a git-deploy target's code onto **any** ref — branch, tag, SHA — then restart (no DB, see below) |
 | `  --keep-overlay` / `--with-local` / `--fetch` / `--no-fetch` | `--set-code` modifiers (overlay, local branch, remote refresh) |
 | `  --set-git-branch <name>` | Name the branch the target's code lives on and exit (no deploy); `--rename` also moves the one already on the server |
+| `  --lock`         | Print the target's deploy lock: what each module runs and where it came from (no deploy; `--json` prints the raw file) |
+| `  --save-plan <file>` | With `--dry-run`: write the resolved plan to `<file>` for a later `--apply` (see below) |
+| `  --apply <file>` | Run a saved plan exactly as reviewed, or refuse before any server write when anything changed since (see below) |
 
 **Push by default.** For an image-built remote where a deploy always ships
 code, make `--push` the default instead of typing it every time: `deploy
 --set-push` writes `[deploy] push = true` to the local profile (headless, no
 deploy), or declare it in the server profile (server wins, local falls back).
 Then `deploy` pushes on its own; `deploy --no-push` skips it for one run.
-`watch` always pushes from its own git archive, so the default never
+`watch` always pushes each module as committed, so the default never
 double-pushes there.
 
 #### Re-baseline the deploy line (`--set-code`)
@@ -474,6 +512,169 @@ git config --get echo.deployed-at
 `link --show` reports the same thing (`deploy code branch=… sha=… ref=… at=…`).
 A `--restore-code` clears the ref, since a rollback lands on a hash and not on a
 line.
+
+#### The deploy lock
+
+Every command that moves code on a target (`deploy`, `watch-deploy`, `push`,
+`push --clean`, `deploy --set-code`, `--restore-code`) also records **what it
+shipped** in a lock file on the target itself, `<remote_path>/.echo/lock.json`,
+so any machine that deploys there — or anyone over SSH — can answer "which
+version of this module is running, and where did it come from?":
+
+```json
+{
+  "schema": 1,
+  "target": "staging",
+  "modules": {
+    "sale_custom": {
+      "source": "worktree", "sha": "0b6fc41…", "dirty": false,
+      "version": "18.0.1.31.0", "dest": "/srv/odoo/addons/sale_custom",
+      "via": "deploy", "at": "2026-09-30T09:20:00Z",
+      "by": "dev@example.com", "verified": true
+    }
+  }
+}
+```
+
+`source` is `worktree` (rsync from your working tree; `sha` is the local HEAD
+and `dirty` says whether uncommitted edits went along), `commit` (rsync of the
+module's tree at the selected commit), `ref` (a module pinned with `mod@ref` /
+`--at`) or `branch` (the module rode a git-deploy target's branch, which the
+lock also records as `base`). `verified` turns true
+once Odoo ran `-u` on that code successfully; a failed run leaves it false.
+
+```
+deploy --lock --from staging          # one line per module
+deploy --lock --from staging --json   # the file as is
+```
+
+`deploy --dry-run` prints, per module about to ship, what ships next to what the
+lock holds (`code module=… ship=worktree@3c1d2e0 version=… locked=…`), and
+`link --show` adds a summary (`deploy lock modules=14 unverified=0 last=…`).
+
+`.echo/` **ignores itself**: Echo writes a `.gitignore` containing `*` inside
+it, so it never shows in `git status` of a repository that contains it and the
+repository itself is not modified. If that repository already *tracks* files
+under `.echo/`, Echo warns with the fix (`git rm --cached -r .echo`). A lock
+read or write that fails is a warning, never a failed deploy.
+
+Content shipped from a commit is synced **exactly**: rsync runs with
+`--delete` scoped to each module directory, so a file the commit deleted is
+removed from the server too. Pushes from the working tree keep `push`'s opt-in
+`--delete`.
+
+#### Where each module's code comes from
+
+Every module in a deploy first resolves **what** ships, and the target's
+transport then decides **how**:
+
+| Source | rsync target | git-deploy target |
+|---|---|---|
+| working tree — a dirty module (picker, `--auto`, `--modules` without `@`) | rsync from disk | rsync overlay |
+| a selected commit | rsync of the module's tree at its newest selected commit | rides the deploy branch |
+| a ref — `--modules mod@ref` or `--at <ref>` | rsync of the module's tree at the ref | rsync overlay of that tree; the branch does not move |
+
+Selecting commits ships those commits: not later ones, not uncommitted edits
+that happen to be on disk. To ship one module exactly as it is at some commit,
+whatever your checkout is on:
+
+```
+deploy --modules sale_custom@99f2109 --from staging --dry-run
+deploy --modules sale_custom@99f2109 --from staging
+deploy --modules sale_custom,stock_custom --at origin/release/1.4 --from staging
+```
+
+The ref resolves **locally** (a `<remote>/<branch>` ref fetches that remote
+first; `--fetch` forces it, `--no-fetch` skips it), the module is located in the
+ref's own tree (it does not need to exist on disk), and its folder on the server
+ends up identical to `git archive <ref> -- <module>`. Uncommitted edits to that
+module are ignored with a warning. The plan shows, per module, the source, the
+manifest version at it, the version installed in the database and what the lock
+holds; only the pinned modules run `-u`. A pinned module must ship, so it cannot
+combine with `--no-push`.
+
+**The last ship wins.** The next deploy of a pinned module, from any source,
+replaces it whole: on an rsync target with `--delete`, on a git-deploy target by
+reverting the module's overlay before the branch moves (`pin released` in the
+log). `push --clean` and `deploy --set-code` (without `--keep-overlay`) also
+drop pins.
+
+#### Modules that stay behind (dependency check)
+
+A partial deploy replaces some modules and leaves the rest as they are. When a
+shipped module drops a method, a field or an XML id that a module left on the
+server still uses, the `-u` passes and the next request that reaches the old
+caller breaks. Before shipping, `deploy` compares each shipped module as it is on
+the server with the tree that replaces it, and greps the modules next to it on
+the server (same addons directory or build context, not shipped in this run) for
+what disappears:
+
+```
+WARNING echo.deploy.plan: dependency removed=_get_promotion_from_sale_order kind=method from=ccima_crm_reassign used_by=ccima_flow_mail at=ccima_flow_mail/models/mail_flow.py:212
+INFO    echo.deploy.plan: dependency check clean modules=4 removed=0
+```
+
+- It looks for `def <name>(` and `<name> = fields.<Type>(` in a class body and
+  `id="<id>"` on `record`, `template`, `menuitem`, `act_window` and `report`
+  (ignoring `tests/` and `migrations/`); a use is the word `<name>`, or
+  `<module>.<id>` for an XML id, in a `.py` or `.xml` file. A name another
+  module of the same run now defines was moved, not removed; the ORM methods
+  modules override all the time (`create`, `write`, `search`, …) are never
+  reported, and neither is a staying module that defines the name itself.
+- On `dev` it only warns. On `staging` and `prod` (and a target whose stage is
+  undeclared) a real run with findings asks `Deploy anyway?`; without a TTY it
+  fails closed (exit 2) unless `--force`. `--dry-run` never blocks, and `watch`
+  is never blocked (it deploys with `--force`) but logs the warnings.
+- `--json` lists the findings under `dependencies`. `--no-dep-check` skips the
+  check for one run and says so in the log; it is deliberately not a config key.
+  If the check itself cannot run, it warns `dependency check skipped` and the
+  deploy goes on.
+- It is a regex check, not a parser: it knows no classes (a method removed from
+  one model but kept on another of the same module counts as present), no
+  signatures, no JS/OWL and no QWeb `t-call` by short name; a word match can be a
+  comment, which is why it asks instead of refusing. Only modules visible on the
+  server's filesystem are searched.
+
+#### Review once, run exactly that (saved plans)
+
+A `--dry-run` and the deploy after it resolve everything twice: a branch that
+moved, an edit on disk or another machine's push in between changes what ships.
+Save the reviewed plan and apply it instead:
+
+```
+deploy --modules sale_custom@release/1.4,stock_custom --from staging --dry-run --save-plan plan.json
+deploy --apply plan.json --from staging
+```
+
+The plan (JSON, mode 0600) records the target, each module with its action and
+source and, when pushing, what ships (`sha` and `tree` for committed content, a
+digest of the directory as rsync ships it for a working-tree module), the run's
+effective decisions (push, git, checkpoint, tests, i18n overwrite, actions,
+lint, dependency check), the deploy actions by name plus a digest, a digest of
+the target's `.echo/lock.json` and the dependency findings. No secret: action
+commands and DB credentials are never written.
+
+`--apply` re-resolves the same selection (a pinned module by its ref, so a moved
+ref is noticed) with every decision pinned, so a changed server policy runs the
+reviewed decision. Before anything is written on the server it compares the
+fresh plan with the saved one; any difference refuses with exit 1 and one line
+each:
+
+```
+ERROR echo.deploy.plan: changed what=ref module=sale_custom planned=99f2109 now=a1c4e02 ref=release/1.4
+ERROR echo.deploy.plan: changed what=lock planned=3f2a9c1 now=b77d0e4
+```
+
+Re-plan with `--dry-run --save-plan`. Any lock write in between refuses, even a
+`push` of another module. When nothing changed it logs `plan matches age=…` (red
+from one hour on) and runs as a normal deploy: the prod confirm and the
+dependency confirm still ask (`--force` skips them; no TTY fails closed).
+`--apply` takes only `--force`, `--rollback-on-fail`/`--no-rollback-on-fail`,
+`--json` (adds `plan` and `plan_stale`), `--dry-run` (compare and stop) and a
+`--from` naming the plan's target; anything else is a usage error (exit 2), as is
+a file that is not a plan, another schema or a plan made in another project.
+`--save-plan` needs a path and `--dry-run`. A hand edit on the server is
+invisible to the plan, as it is to the lock.
 
 #### Deploy + test in one command
 
@@ -561,6 +762,40 @@ it needs no extra disk but destroys the checkpoint, leaving no restore point.
 The on-failure auto-rollback (during a deploy) still consumes its just-made
 checkpoint, since its purpose ends the moment the failed deploy is reverted.
 
+#### The code comes back too
+
+A rollback that restores only the database leaves the new code in place, which
+is a state that never existed: the old schema under the new modules, waiting for
+the next restart or image build to turn it into a second incident. So before a
+deploy writes any code, Echo saves on the server what it is about to overwrite —
+the destination directory of every module it rsyncs (and, on a git-deploy
+target, the overlays it reverts) plus the deploy lock — as
+`backups/code/<name>.tar.gz`. A module being installed is recorded as absent.
+
+Any failure from the first code write on — a push that breaks half-way, a
+failing `post_push` build, `stop`/`up -d`, the `-u` run or its verify — goes
+through the usual rollback decision (`--rollback-on-fail` /
+`--no-rollback-on-fail`, `--force`, the prompt, the headless default). Rolling
+back now:
+
+1. stops the app, when the run had touched it;
+2. restores the database, when there is a checkpoint (on `dev`, where
+   checkpoints are off by default, **the code still comes back**; the log says
+   the database was not restored);
+3. moves a git-deploy branch back and extracts the snapshot — files the failed
+   run added are gone, a module it was installing disappears;
+4. re-runs the `pre_push`/`post_push` actions, so an image-built target rebuilds
+   from the restored code (`--no-actions` skips them);
+5. starts the app.
+
+A green deploy keeps the snapshot with its checkpoint, so a later `deploy
+--rollback` restores database and code together; without a checkpoint it is
+deleted. A declined rollback is recorded as a checkpoint — a `code` one when
+there was no database copy — that `deploy --rollback` can restore later.
+`--no-rollback-on-fail` takes no snapshot at all. If the snapshot cannot be
+taken, the deploy stops before writing anything. `backups/code/` ignores itself
+the same way `.echo/` does.
+
 The `checkpoint` command inspects and cleans them:
 
 | Command                          | Description                                                       |
@@ -603,11 +838,15 @@ On your **laptop**, register the remote as a connect target and bind your
 addons repo to it:
 
 ```sh
-echo connect prod                 # one-time: registers ssh_host + remote_path as target "prod"
 cd ~/dev/my-shop-addons           # your local addons repo (no docker-compose.yml needed)
-echo link prod                    # writes this directory's [connect] binding
+echo link --add                   # one-time: pick the SSH host + remote project, name it, bind
 echo link --show                  # verify: probes the profile + streams the remote `compose ps`
 ```
+
+`link --add` registers the target in `global.toml` and binds this directory
+to it in one step; from then on `echo link <name>` switches to it. The same
+wizard is reachable from the picker of a bare `link`, and from `echo connect
+--add` when you want to register and open a session at once.
 
 Then, each deploy (after the server has pulled the new code):
 
@@ -911,12 +1150,34 @@ the differing files then feed an interactive drill-down: pick one, read its
 diff, go back, until `esc`. Comparison is by checksum (one hashing command per
 side), not file-by-file reads.
 
+`compare --targets <a>,<b>` answers a different question: what one target has
+that the other does not, before a partial deploy. It reads the deploy lock of
+both connect targets (one SSH read each, nothing written, no stage gate, no
+compose project needed) and lists, per module, what each recorded shipping:
+
+```
+INFO    echo.compare.targets: lock target=dev modules=14 unverified=1 last=2026-09-30T18:02:11Z overlay=ccima_crm_reassign,ccima_flow_mail base=echo/deploy@3f2a9c1
+INFO    echo.compare.targets: lock target=staging modules=12 unverified=0 last=2026-09-29T21:40:03Z
+  module              status    dev                                staging
+  ccima_crm_reassign  only dev  worktree@0b6fc41+dirty 1.2.0 unv.  none
+  ccima_flow_mail     differs   ref@99f2109 1.4.0                  commit@a1c4e02 1.3.0
+INFO    echo.compare.targets: targets compared a=dev b=staging same=11 differs=1 unknown=0 only_dev=1 only_staging=0
+```
+
+Modules are compared by content (the module's git tree), not by sha:
+`differs`, `only <target>` (never shipped there by Echo), `unknown` (a dirty
+entry, a sha not in your local repository, or an unreadable lock) and `same`,
+which is hidden unless you name the module. It exits 0 whatever the
+differences and 1 when a lock cannot be read or parsed.
+
 | Command                          | Description                                                       |
 |----------------------------------|-------------------------------------------------------------------|
 | `compare [<mod>]`                | Diff a local module file against its Docker copy                  |
 | `  --all`                        | Compare the whole module: `changed`/`added`/`missing` status table + drill-down |
 | `  --from <target>` / `--remote` | Compare against a remote target instead of the local container   |
-| `  --copy`                       | Copy the diff (or the `--all` table) to the clipboard            |
+| `  --copy`                       | Copy the diff (or the `--all` or `--targets` table) to the clipboard |
+| `  --targets <a>,<b> [<mod>...]` | Compare two targets' deploy locks module by module (read-only)   |
+| `  --json`                       | With `--targets`: one JSON object on stdout, logs on stderr       |
 
 <p align="center"><img src="demo/gifs/compare.gif" alt="echo compare sale_extra --all — status table, verdict, and per-file diff drill-down" width="860"></p>
 
@@ -970,15 +1231,41 @@ runs on, without re-invoking it.
 
 <p align="center"><img src="demo/gifs/logview.gif" alt="echo logview — run list, per-run log view, live text and level filters" width="860"></p>
 
-## Reverb mode
+## Reverb environments
 
-A remote target normally lives in `global.toml` as a `[connect_targets.<name>]`,
-and Echo reads the rest of the mapping off the server over SSH — its own Echo
-profile plus the project's `.env`. When the instance is managed by
-[Reverb](https://github.com/pascualchavez/reverb), all of that is already
-published on one endpoint, so `-E` resolves the target **at call time** and
-builds it in memory. Nothing is written to `global.toml`: that is the whole
-point — zero per-environment configuration.
+An instance managed by [Reverb](https://github.com/pascualchavez/reverb) is a
+**plain connect target**. Reverb writes the same Echo profile a hand-built
+host gets from `echo init` — container names, db, stage, Odoo version, and a
+`[push]` destination pointing at the environment's overlay — so registering it
+is the gesture you already know:
+
+```toml
+[connect_targets.iza-staging]
+ssh_host    = "Ionos-personal-pascual"
+remote_path = "/home/pascual/reverb-data/projects/iza/envs/staging"
+db_name     = "iza_staging"
+```
+
+The environment's Overview hands out that snippet; then `echo link
+iza-staging` in the working directory and every command works with `--remote`
+or `--from`, exactly as against any other server. `push`, `push --dirty` and
+`watch` land in the overlay — the one directory Reverb never swaps — because
+the server declares it; committed code still reaches the environment through
+`git push reverb`.
+
+Adding `[reverb] token` to `global.toml` is optional and buys two things:
+`checkpoint` becomes Reverb's snapshots, and `up`/`stop`/`restart` go through
+the API so the daemon does not read them as drift. Without it those run
+through compose and Echo says so once per invocation. `link --show` reports
+which environment the target is and whether the API is reachable.
+
+### `-E` (deprecated)
+
+`-E <project>/<env>` resolves an environment over HTTP **at call time**
+instead of reading a registered target. It persists nothing — `link --show`
+has nothing to report, every call pays the round trip, and every machine needs
+the token — and it does not support `deploy`, `watch` or `i18n-pull`. Use a
+linked target; `-E` warns and will be removed.
 
 Point Echo at the daemon once, globally:
 
@@ -1049,7 +1336,7 @@ another host.
 **`push` lands in the overlay.** Reverb owns the addons directory and replaces
 it wholesale on every deploy; the overlay is the one directory it never
 touches, and a module there shadows the git copy (Odoo's `get_module_path`
-resolves it to the overlay). So in Reverb mode the default destination is
+resolves it to the overlay). So on a Reverb environment the default destination is
 `paths.overlay`, a `--dest` / `[push] path` that resolves under `paths.addons`
 is **refused** (the next deploy would destroy the code), and a pushed module
 that shadows a deployed one emits a warning so you know the running code is
@@ -1071,9 +1358,11 @@ compose command run behind its back shows up as drift in its UI. `down` maps to
 stop and says so — Reverb models a desired state, so there is no compose-style
 teardown. `ps` and `logs` stay on SSH; they are read-only.
 
-`deploy` and `watch` still refuse a Reverb target: Reverb runs its own deploy,
-and delegating to it means first pushing the branch to the Reverb remote — a
-design that has not landed yet. Each says so when you try.
+`deploy`, `watch` and `i18n-pull` refuse an environment reached with `-E`:
+the first two would be overwritten by Reverb's own deploy, and the third reads
+a server profile that `-E` bypasses. A **linked** environment supports all
+three — `deploy --remote` and `watch` are the rsync-into-the-overlay loop,
+which is exactly what uncommitted work on a Reverb environment wants.
 
 ## Build mode
 
@@ -1232,6 +1521,13 @@ Per-project files are keyed by the SHA-256 of the project root so two projects
 with the same folder name never collide. `reset` lets you wipe global,
 per-project, or both. Echo writes only under `~/.config/echo/` — never into
 your project repo (except appending `backups/` to an existing `.gitignore`).
+
+A `global.toml` or project profile that does not parse stops Echo at startup
+with one `ERROR echo.config:` line naming the file, line and column (exit 2),
+and no command writes over it: fix the file or move it aside. Echo's own state
+files (deploy history, checkpoints, recalls, connect sessions) still read as
+empty when corrupt; the next write first moves the broken copy aside as
+`<name>.corrupt-<YYYYMMDD-HHMMSS>` and logs a WARNING.
 
 ## Project layout
 

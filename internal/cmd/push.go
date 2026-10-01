@@ -177,7 +177,7 @@ func RunPush(ctx context.Context, opts PushOpts) error {
 			return nil
 		}
 		picked, perr := pickModulesInteractive(ctx,
-			ModulesOpts{Cfg: withStage(opts.Cfg, rsc.target.stage), Root: opts.Root, Palette: opts.Palette},
+			ModulesOpts{Cfg: withStage(opts.Cfg, rsc.target.rawStage), Root: opts.Root, Palette: opts.Palette},
 			"Modules to push", nil)
 		if perr != nil {
 			return perr
@@ -199,9 +199,15 @@ func RunPush(ctx context.Context, opts PushOpts) error {
 		warnOverlayShadow(ctx, rsc, opts, modules)
 	}
 
-	files, err := pushModuleSet(ctx, rsc, opts, modules, opts.Root, destBase, p.dryRun, p.del)
+	files, dests, err := pushModuleSet(ctx, rsc, opts, modules, opts.Root, destBase, p.dryRun, p.del)
 	if err != nil {
 		return err
+	}
+	if !p.dryRun {
+		entries := lockEntries(ctx, opts.Cfg, opts.Root,
+			shipSource{kind: lockSourceWorktree, srcRoot: opts.Root, via: "push"}, modules)
+		setLockDests(entries, dests)
+		updateDeployLock(ctx, rsc, opts.Log, func(l *DeployLock) { l.record(entries) })
 	}
 	verb := "push complete"
 	if p.dryRun {
@@ -222,36 +228,34 @@ type FileChange struct {
 
 // pushModuleSet syncs each module to the remote target, reading the source
 // files from srcRoot (the project root for a manual push, the archive
-// scratch dir for the watcher). Returns the total number of changed files.
+// scratch dir for the watcher). Returns the total number of changed files and
+// the remote directory each synced module landed in.
 // Shared by `push`, `deploy --push`, and `watch`. A greppable syncing/synced
 // log frame brackets each module; opts.OnSync (when set) receives the file
 // list so the caller can render the change tree between them.
 // destBase, when non-empty, is the resolved remote directory every module
 // lands under (<destBase>/<module>) — the explicit-destination path (Unit
 // 91). Empty destBase keeps the per-module auto-detect (`pushDest`).
-func pushModuleSet(ctx context.Context, rsc remoteShellContext, opts PushOpts, modules []string, srcRoot, destBase string, dryRun, del bool) (int, error) {
+func pushModuleSet(ctx context.Context, rsc remoteShellContext, opts PushOpts, modules []string, srcRoot, destBase string, dryRun, del bool) (int, map[string]string, error) {
 	rv := remoteView{rsc: rsc}
 	total := 0
+	dests := make(map[string]string, len(modules))
 	for _, m := range modules {
 		srcDir, err := moduleSrcDir(opts.Cfg, srcRoot, m)
 		if err != nil {
-			return total, fmt.Errorf("module %q: %w", m, err)
+			return total, dests, fmt.Errorf("module %q: %w", m, err)
 		}
-		var destDir string
-		if destBase != "" {
-			destDir = path.Join(destBase, m)
-		} else {
-			destDir, err = pushDest(ctx, rv, opts, m)
-			if err != nil {
-				return total, err
-			}
+		destDir, err := moduleDestDir(ctx, rv, opts, destBase, m)
+		if err != nil {
+			return total, dests, err
 		}
 		opts.log("INFO", "module", "syncing", rsc.prof.DBName,
 			[2]string{"module", m}, [2]string{"dest", destDir})
 		changes, err := rsyncModule(ctx, srcDir, rsc.sshHost, destDir, dryRun, del)
 		if err != nil {
-			return total, fmt.Errorf("rsync %q: %w", m, err)
+			return total, dests, fmt.Errorf("rsync %q: %w", m, err)
 		}
+		dests[m] = destDir
 		if opts.OnSync != nil {
 			opts.OnSync(changes)
 		}
@@ -263,7 +267,16 @@ func pushModuleSet(ctx context.Context, rsc remoteShellContext, opts PushOpts, m
 		}
 		opts.log("INFO", "module", "synced", rsc.prof.DBName, fields...)
 	}
-	return total, nil
+	return total, dests, nil
+}
+
+// moduleDestDir is the remote directory a module syncs into: under destBase
+// when one was resolved, else wherever auto-detection finds it.
+func moduleDestDir(ctx context.Context, rv remoteView, opts PushOpts, destBase, module string) (string, error) {
+	if destBase != "" {
+		return path.Join(destBase, module), nil
+	}
+	return pushDest(ctx, rv, opts, module)
 }
 
 // countChanges tallies a change slice by operation.
@@ -351,6 +364,20 @@ var rsyncCommand = func(ctx context.Context, args ...string) *exec.Cmd {
 	return exec.CommandContext(ctx, "rsync", args...)
 }
 
+// rsyncExcludes is what a push never ships. Each pattern matches a path's
+// last component at any depth, as rsync applies an --exclude without a slash.
+var rsyncExcludes = []string{"__pycache__", "*.pyc", ".git"}
+
+// rsyncExcluded reports whether a file or directory name matches rsyncExcludes.
+func rsyncExcluded(name string) bool {
+	for _, pattern := range rsyncExcludes {
+		if ok, _ := filepath.Match(pattern, name); ok {
+			return true
+		}
+	}
+	return false
+}
+
 // rsyncArgs builds the rsync argv: archive + itemized changes, the shared
 // exclude set (build/VCS noise, mirroring skipViewPath), optional dry-run
 // (`-n`) and `--delete`, and a trailing slash on both endpoints so the
@@ -363,11 +390,11 @@ var rsyncCommand = func(ctx context.Context, args ...string) *exec.Cmd {
 // transferred (and, paired with parseItemize dropping attribute-only lines,
 // only those show in the change tree).
 func rsyncArgs(srcDir, sshHost, destDir string, dryRun, del bool) []string {
-	args := []string{
-		"-az", "--checksum", "--itemize-changes",
-		"--exclude", "__pycache__", "--exclude", "*.pyc", "--exclude", ".git",
-		"-e", "ssh -o BatchMode=yes",
+	args := []string{"-az", "--checksum", "--itemize-changes"}
+	for _, pattern := range rsyncExcludes {
+		args = append(args, "--exclude", pattern)
 	}
+	args = append(args, "-e", "ssh -o BatchMode=yes")
 	if dryRun {
 		args = append(args, "-n")
 	}

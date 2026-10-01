@@ -210,10 +210,22 @@ func UpdateAll(c Conn) Cmd {
 	return append(args, "-u", "all", "--stop-after-init")
 }
 
-// Uninstall builds the argv to uninstall one or more modules.
-func Uninstall(c Conn, modules []string) Cmd {
-	args := append(Cmd{"odoo"}, c.flags()...)
-	return append(args, "--uninstall", strings.Join(modules, ","), "--stop-after-init")
+// UninstallScript returns the Python fed to `odoo shell` (see Shell) to
+// uninstall modules. Odoo's CLI has no uninstall flag, so this goes through
+// button_immediate_uninstall — the Apps menu path, which commits and reloads
+// the registry itself. A module that is not installed aborts the run with a
+// non-zero exit before anything is removed.
+func UninstallScript(modules []string) string {
+	quoted := make([]string, len(modules))
+	for i, m := range modules {
+		quoted[i] = strconv.Quote(m)
+	}
+	return "names = [" + strings.Join(quoted, ", ") + "]\n" +
+		`mods = env["ir.module.module"].search([("name", "in", names), ("state", "in", ("installed", "to upgrade", "to remove"))])` + "\n" +
+		`missing = sorted(set(names) - set(mods.mapped("name")))` + "\n" +
+		"if missing:\n" +
+		`    raise SystemExit("not installed: " + ", ".join(missing))` + "\n" +
+		"mods.button_immediate_uninstall()\n"
 }
 
 // Neutralize builds the argv for `odoo neutralize`, which applies the

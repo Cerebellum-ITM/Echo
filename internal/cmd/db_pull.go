@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/pascualchavez/echo/internal/odoo"
 )
 
 // dbPullFlags is the parsed argument set for db-pull. neutralize is a
@@ -117,7 +119,7 @@ func RunDBPull(ctx context.Context, opts DBOpts) error {
 
 	opts.log("INFO", "", "pulling database", asName,
 		[2]string{"target", label}, [2]string{"source", remoteDB},
-		[2]string{"stage", rsc.target.stage})
+		[2]string{"stage", rsc.target.rawStage})
 
 	// --- dump: stream pg_dump's binary stdout straight into ./backups/ ---
 	backupsDir := filepath.Join(opts.Root, "backups")
@@ -128,16 +130,19 @@ func RunDBPull(ctx context.Context, opts DBOpts) error {
 	outName := fmt.Sprintf("%s_%s_%s.dump", sanitizeDBName(remoteDB), sanitizeDBName(label), ts)
 	outPath := filepath.Join(backupsDir, outName)
 
-	dumpArgv := []string{"exec", "-T", rsc.prof.DBContainer, "pg_dump", "-Fc", "--no-owner"}
+	dumpArgv := odoo.Cmd{"pg_dump", "-Fc", "--no-owner"}
 	if user != "" {
 		dumpArgv = append(dumpArgv, "-U", user)
 	}
 	dumpArgv = append(dumpArgv, remoteDB)
-	dumpCmd := remoteComposeCmd(rsc.remotePath, rsc.prof.ComposeCmd, dumpArgv...)
 
 	opts.log("INFO", "dump", "streaming remote dump", asName, [2]string{"file", outName})
-	if err := runSSHToFile(ctx, rsc.sshHost, dumpCmd, outPath, func(n int64) {
-		opts.log("DEBUG", "dump", "pulled "+humanBytes(n), asName)
+	if err := withDBExecFallback(rsc.target, func(mode string) error {
+		return runSSHToFile(ctx, rsc.sshHost,
+			dbExecCmd(rsc.remotePath, rsc.target, mode, dumpArgv), outPath,
+			func(n int64) {
+				opts.log("DEBUG", "dump", "pulled "+humanBytes(n), asName)
+			})
 	}); err != nil {
 		return fmt.Errorf("dump: %w", err)
 	}

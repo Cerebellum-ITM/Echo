@@ -27,6 +27,10 @@ type CheckpointEntry struct {
 	// restores the code to this hash alongside the DB; empty on non-git
 	// targets and pre-Unit-102 entries (DB-only restore, unchanged).
 	CodeSHA string `toml:"code_sha"`
+	// CodeSnapshot names the server-side copy of the module directories the
+	// deploy overwrote (Unit 126), restored with the DB. A "code"-method
+	// entry carries only this and CodeSHA: a code-only restore point.
+	CodeSnapshot string `toml:"code_snapshot,omitempty"`
 }
 
 // checkpointTarget is the set of checkpoints recorded for one remote target.
@@ -85,6 +89,9 @@ func SaveCheckpoints(projectKey, targetKey string, entries []CheckpointEntry) er
 
 	var buf bytes.Buffer
 	if err := toml.NewEncoder(&buf).Encode(f); err != nil {
+		return err
+	}
+	if err := preserveCorrupt(path, &checkpointStoreFile{}); err != nil {
 		return err
 	}
 	return writeAtomic(path, buf.Bytes())

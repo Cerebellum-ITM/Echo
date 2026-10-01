@@ -35,8 +35,12 @@ dejó en un solo lugar: la terminal. Eso mueve el problema, no lo cierra:
    historial de contraseñas, así que la anterior no se pierde y no se
    acumula un ítem por reset. Sin esto, a los tres resets hay tres ítems
    con el mismo nombre y ninguno confiable.
-3. **Título `Odoo <target> (<db>)`.** Agrupa por producto en la búsqueda
-   y distingue dos bases del mismo proyecto.
+3. **Título `<proyecto> (<db>)`, servidor en las etiquetas.** El título
+   empieza por lo que uno teclea al buscar —el proyecto— y distingue dos
+   bases del mismo proyecto. El servidor no cabe ahí sin alargarlo: va como
+   etiqueta, junto a `echo` y `odoo`, que es lo que deja filtrar la bóveda
+   cuando tiene una docena de logins de Odoo. (Revisado 2026-09-11; antes
+   era `Odoo <target> (<db>)`.)
 4. **Local y remoto.** La maquinaria es idéntica en ambos caminos;
    limitarlo a remoto sería una regla más que recordar sin nada que la
    justifique. Sin `--save` no cambia nada.

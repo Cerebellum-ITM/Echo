@@ -2,7 +2,9 @@ package config
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
@@ -443,6 +445,20 @@ type projectFile struct {
 	Push           *pushConfig       `toml:"push"`
 	Deploy         *deployFile       `toml:"deploy"`
 	Promote        *promoteConfig    `toml:"promote"`
+	Reverb         *reverbMarkerFile `toml:"reverb"`
+}
+
+// reverbMarkerFile is the [reverb] table of a SERVER-side project profile:
+// the marker Reverb writes to say "this project directory is a managed
+// environment". It is not the client's [reverb] credentials table — it
+// carries no secret, only the environment's identity, so Echo can pick the
+// behaviors that differ on a Reverb target (the DB transport today) without
+// a per-invocation flag.
+type reverbMarkerFile struct {
+	EnvID   int64  `toml:"env_id"`
+	Project string `toml:"project"`
+	Env     string `toml:"env"`
+	APIURL  string `toml:"api_url"`
 }
 
 type connectFile struct {
@@ -486,21 +502,88 @@ type ProjectInfo struct {
 // ParseProjectInfo decodes one project profile's TOML bytes. A profile
 // without `project_path` (written by an older Echo) yields an empty
 // ProjectPath and is unusable as a connect target.
-func ParseProjectInfo(projectTOML []byte) ProjectInfo {
+func ParseProjectInfo(projectTOML []byte) (ProjectInfo, error) {
 	var p projectFile
-	if len(projectTOML) > 0 {
-		_ = toml.Unmarshal(projectTOML, &p)
+	if err := decodeTOML(projectProfileName, projectTOML, &p); err != nil {
+		return ProjectInfo{}, err
 	}
 	return ProjectInfo{
 		ProjectPath:   p.ProjectPath,
 		DBName:        p.DBName,
 		OdooContainer: p.OdooContainer,
 		Stage:         p.Stage,
+	}, nil
+}
+
+// GlobalFileName is the user-wide config file under the config root. It also
+// names the global half of a ParseRemoteProfile error.
+const GlobalFileName = "global.toml"
+
+// projectProfileName names a project profile parsed from bytes, whose path
+// only the caller knows.
+const projectProfileName = "project profile"
+
+// ParseError reports a config file Echo could not decode. Path is the file
+// as read, or GlobalFileName / "project profile" for bytes fetched from a
+// server.
+type ParseError struct {
+	Path string
+	Err  error
+}
+
+func (e *ParseError) Error() string {
+	return "cannot parse " + homeRelative(e.Path) + ": " + e.Detail()
+}
+
+func (e *ParseError) Unwrap() error { return e.Err }
+
+// Detail is the decode failure without the file name, led by the position
+// when the TOML library reports one.
+func (e *ParseError) Detail() string {
+	var perr toml.ParseError
+	if !errors.As(e.Err, &perr) || perr.Position.Line == 0 {
+		return e.Err.Error()
 	}
+	if perr.Position.Col == 0 {
+		return fmt.Sprintf("line %d: %s", perr.Position.Line, perr.Message)
+	}
+	return fmt.Sprintf("line %d, column %d: %s", perr.Position.Line, perr.Position.Col, perr.Message)
+}
+
+func decodeTOML(path string, data []byte, v any) error {
+	if err := toml.Unmarshal(data, v); err != nil {
+		return &ParseError{Path: path, Err: err}
+	}
+	return nil
+}
+
+// loadTOMLFile decodes the file at path into v. A missing file leaves v
+// untouched and is not an error.
+func loadTOMLFile(path string, v any) error {
+	data, err := os.ReadFile(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	return decodeTOML(path, data, v)
+}
+
+func homeRelative(path string) string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return path
+	}
+	if rel, err := filepath.Rel(home, path); err == nil && !strings.HasPrefix(rel, "..") {
+		return "~/" + rel
+	}
+	return path
 }
 
 // Load reads global + per-project config for the given project path.
-// Missing files are silently treated as empty; defaults are applied.
+// Missing files are treated as empty and defaults are applied; a file that
+// exists but does not parse is a *ParseError.
 func Load(projectPath string) (*Config, error) {
 	root, err := configRoot()
 	if err != nil {
@@ -512,9 +595,9 @@ func Load(projectPath string) (*Config, error) {
 		ProjectKey:  projectKey(projectPath),
 	}
 
-	var g globalFile
-	if data, err := os.ReadFile(filepath.Join(root, "global.toml")); err == nil {
-		_ = toml.Unmarshal(data, &g)
+	g, err := loadGlobalFile(filepath.Join(root, GlobalFileName))
+	if err != nil {
+		return nil, err
 	}
 	cfg.Theme = g.Theme
 	cfg.Logo = g.Logo
@@ -550,8 +633,8 @@ func Load(projectPath string) (*Config, error) {
 	}
 
 	var p projectFile
-	if data, err := os.ReadFile(filepath.Join(root, "projects", cfg.ProjectKey+".toml")); err == nil {
-		_ = toml.Unmarshal(data, &p)
+	if err := loadTOMLFile(filepath.Join(root, "projects", cfg.ProjectKey+".toml"), &p); err != nil {
+		return nil, err
 	}
 	cfg.OdooVersion = p.OdooVersion
 	cfg.OdooContainer = p.OdooContainer
@@ -673,6 +756,11 @@ type RemoteProfile struct {
 	AddonsPaths []string
 	ConfPath    string
 
+	// Reverb is the [reverb] marker of the server-side project profile,
+	// present only when the target is an environment managed by a Reverb
+	// daemon. Nil on every hand-built target.
+	Reverb *ReverbMarker
+
 	// Checkpoint policy declared on the SERVER ([checkpoint] in the remote
 	// global.toml + project profile, project wins). Empty/zero when the
 	// server doesn't declare it — the client then falls back to its own
@@ -709,15 +797,16 @@ type RemoteProfile struct {
 // ParseRemoteProfile decodes a remote host's `global.toml` and
 // `projects/<key>.toml` bytes into a RemoteProfile. Either input may be
 // empty (missing file); ComposeCmd falls back to the same default as a
-// local config when the global file is absent or omits it.
-func ParseRemoteProfile(globalTOML, projectTOML []byte) RemoteProfile {
+// local config when the global file is absent or omits it. A file that does
+// not parse is a *ParseError whose Path is GlobalFileName for the global half.
+func ParseRemoteProfile(globalTOML, projectTOML []byte) (RemoteProfile, error) {
 	var g globalFile
-	if len(globalTOML) > 0 {
-		_ = toml.Unmarshal(globalTOML, &g)
+	if err := decodeTOML(GlobalFileName, globalTOML, &g); err != nil {
+		return RemoteProfile{}, err
 	}
 	var p projectFile
-	if len(projectTOML) > 0 {
-		_ = toml.Unmarshal(projectTOML, &p)
+	if err := decodeTOML(projectProfileName, projectTOML, &p); err != nil {
+		return RemoteProfile{}, err
 	}
 	compose := g.ComposeCmd
 	if compose == "" {
@@ -766,6 +855,7 @@ func ParseRemoteProfile(globalTOML, projectTOML []byte) RemoteProfile {
 		AddonsMode:        p.AddonsMode,
 		AddonsPaths:       p.AddonsPaths,
 		ConfPath:          p.ConfPath,
+		Reverb:            reverbMarkerFrom(p.Reverb),
 		CheckpointMode:    cp.Mode,
 		CheckpointMethod:  cp.Method,
 		CheckpointKeep:    cp.Keep,
@@ -775,7 +865,26 @@ func ParseRemoteProfile(globalTOML, projectTOML []byte) RemoteProfile {
 		DeployPush:        mergeDeployPush(g.Deploy, p.Deploy),
 		DeployTest:        mergeDeployTest(g.Deploy, p.Deploy),
 		DeployTestModules: mergeDeployTestModules(deployTestModulesFrom(g.Deploy), deployTestModulesFrom(p.Deploy)),
+	}, nil
+}
+
+// ReverbMarker identifies the Reverb environment a remote project directory
+// belongs to. APIURL is the daemon the host declares; it wins over the
+// client's own [reverb] url when both are set, so moving the daemon does not
+// touch every laptop.
+type ReverbMarker struct {
+	EnvID   int64
+	Project string
+	Env     string
+	APIURL  string
+}
+
+// reverbMarkerFrom converts a decoded [reverb] marker table. Nil-safe.
+func reverbMarkerFrom(f *reverbMarkerFile) *ReverbMarker {
+	if f == nil {
+		return nil
 	}
+	return &ReverbMarker{EnvID: f.EnvID, Project: f.Project, Env: f.Env, APIURL: f.APIURL}
 }
 
 // mergeDeployPush resolves the server-side [deploy] push: project over
@@ -815,7 +924,20 @@ func WithDeployActions(existingTOML []byte, actions []DeployAction) ([]byte, err
 	return buf.Bytes(), nil
 }
 
-// SaveGlobal writes theme and logo to global.toml atomically.
+// loadGlobalFile decodes global.toml into the file struct. A missing file
+// yields a zero value; one that does not parse is a *ParseError, and every
+// writer that reads first returns it instead of writing over the file.
+func loadGlobalFile(path string) (globalFile, error) {
+	var g globalFile
+	err := loadTOMLFile(path, &g)
+	return g, err
+}
+
+// SaveGlobal writes the global fields the Config owns to global.toml
+// atomically. It reads the current file first and overwrites only those
+// fields, so the sections the Config does not model — [reverb],
+// [checkpoint], [push], [deploy], [promote], icons — survive a save that
+// was only meant to add a connect target.
 func SaveGlobal(cfg *Config) error {
 	root, err := configRoot()
 	if err != nil {
@@ -825,15 +947,20 @@ func SaveGlobal(cfg *Config) error {
 		return err
 	}
 
-	g := globalFile{
-		Theme:          cfg.Theme,
-		Logo:           cfg.Logo,
-		Banner:         cfg.Banner,
-		ComposeCmd:     cfg.ComposeCmd,
-		LogDBMax:       cfg.LogDBMax,
-		ConnectTargets: connectTargetsToFile(cfg.ConnectTargets),
-		ProjectAliases: cfg.ProjectAliases,
+	path := filepath.Join(root, GlobalFileName)
+	g, err := loadGlobalFile(path)
+	if err != nil {
+		return err
 	}
+	g.Theme = cfg.Theme
+	g.Logo = cfg.Logo
+	g.Banner = cfg.Banner
+	g.ComposeCmd = cfg.ComposeCmd
+	g.LogDBMax = cfg.LogDBMax
+	g.ConnectTargets = connectTargetsToFile(cfg.ConnectTargets)
+	g.ProjectAliases = cfg.ProjectAliases
+
+	g.Prompt = nil
 	if len(cfg.PromptSegments) > 0 || cfg.PromptNameMax > 0 || cfg.HealthTTL > 0 {
 		g.Prompt = &promptFile{
 			Segments: cfg.PromptSegments,
@@ -843,8 +970,9 @@ func SaveGlobal(cfg *Config) error {
 			g.Prompt.HealthTTL = cfg.HealthTTL.String()
 		}
 	}
-	// Preserve a non-default [cmd_logs] section across rewrites; a pure
-	// default config leaves it out so global.toml stays clean.
+	// Emit a non-default [cmd_logs] section; a pure default config clears it
+	// so global.toml stays clean.
+	g.CmdLogs = nil
 	if cfg.CmdLogsDisabled ||
 		cfg.CmdLogsRetentionDays != Defaults.CmdLogsRetentionDays ||
 		cfg.CmdLogsMaxRuns != Defaults.CmdLogsMaxRuns {
@@ -859,7 +987,7 @@ func SaveGlobal(cfg *Config) error {
 	if err := toml.NewEncoder(&buf).Encode(g); err != nil {
 		return err
 	}
-	return writeAtomic(filepath.Join(root, "global.toml"), buf.Bytes())
+	return writeAtomic(path, buf.Bytes())
 }
 
 // SavePromoteBranch persists the [promote] branch into global.toml via a
@@ -891,10 +1019,10 @@ func savePromote(mutate func(*promoteConfig)) error {
 	if err := os.MkdirAll(root, 0o700); err != nil {
 		return err
 	}
-	path := filepath.Join(root, "global.toml")
-	var g globalFile
-	if data, err := os.ReadFile(path); err == nil {
-		_ = toml.Unmarshal(data, &g)
+	path := filepath.Join(root, GlobalFileName)
+	g, err := loadGlobalFile(path)
+	if err != nil {
+		return err
 	}
 	cur := promoteConfig{}
 	if g.Promote != nil {
@@ -913,7 +1041,10 @@ func savePromote(mutate func(*promoteConfig)) error {
 	return writeAtomic(path, buf.Bytes())
 }
 
-// SaveProject writes per-project fields to projects/<key>.toml atomically.
+// SaveProject writes the per-project fields the Config owns to
+// projects/<key>.toml atomically. Like SaveGlobal it reads the current file
+// first and overwrites only those fields, so a project-declared [promote]
+// survives a save that was only meant to set a container name.
 func SaveProject(cfg *Config) error {
 	root, err := configRoot()
 	if err != nil {
@@ -924,30 +1055,40 @@ func SaveProject(cfg *Config) error {
 		return err
 	}
 
-	p := projectFile{
-		OdooVersion:    cfg.OdooVersion,
-		OdooContainer:  cfg.OdooContainer,
-		DBContainer:    cfg.DBContainer,
-		DBName:         cfg.DBName,
-		Stage:          cfg.Stage,
-		AddonsPaths:    cfg.AddonsPaths,
-		AddonsMode:     cfg.AddonsMode,
-		ConfPath:       cfg.ConfPath,
-		ScriptsDir:     cfg.ScriptsDir,
-		ComposeProject: cfg.ComposeProject,
-		ProjectPath:    cfg.ProjectPath,
-		FilestorePath:  cfg.FilestorePath,
+	path := filepath.Join(projDir, cfg.ProjectKey+".toml")
+	var p projectFile
+	if err := loadTOMLFile(path, &p); err != nil {
+		return err
 	}
+	p.OdooVersion = cfg.OdooVersion
+	p.OdooContainer = cfg.OdooContainer
+	p.DBContainer = cfg.DBContainer
+	p.DBName = cfg.DBName
+	p.Stage = cfg.Stage
+	p.AddonsPaths = cfg.AddonsPaths
+	p.AddonsMode = cfg.AddonsMode
+	p.ConfPath = cfg.ConfPath
+	p.ScriptsDir = cfg.ScriptsDir
+	p.ComposeProject = cfg.ComposeProject
+	p.ProjectPath = cfg.ProjectPath
+	p.FilestorePath = cfg.FilestorePath
+
+	p.Connect = nil
 	if cfg.ConnectSSHHost != "" || cfg.ConnectRemotePath != "" ||
-		cfg.ConnectChromePath != "" {
+		cfg.ConnectChromePath != "" || cfg.ConnectGitDeploy ||
+		cfg.ConnectGitBranch != "" || cfg.ConnectGitPath != "" {
 		p.Connect = &connectFile{
 			SSHHost:    cfg.ConnectSSHHost,
 			RemotePath: cfg.ConnectRemotePath,
 			ChromePath: cfg.ConnectChromePath,
+			GitDeploy:  cfg.ConnectGitDeploy,
+			GitBranch:  cfg.ConnectGitBranch,
+			GitPath:    cfg.ConnectGitPath,
 		}
 	}
 	// Persist a declared [push] destination so a picked/configured path
 	// survives across sessions; a pure auto-detect config leaves it out.
+	p.Push = nil
 	if cfg.PushPath != "" || cfg.PushMkdir != nil {
 		p.Push = &pushConfig{Path: cfg.PushPath, Mkdir: cfg.PushMkdir}
 	}
@@ -955,6 +1096,7 @@ func SaveProject(cfg *Config) error {
 	// never drops it, and so `deploy --set-checkpoint` persists (Unit 104).
 	// Gate on "project": a policy that only lives in global.toml must NOT be
 	// copied down into the project file.
+	p.Checkpoint = nil
 	if cfg.CheckpointSource == "project" {
 		p.Checkpoint = &checkpointConfig{
 			Mode:   cfg.CheckpointMode,
@@ -965,6 +1107,7 @@ func SaveProject(cfg *Config) error {
 	// Persist the [deploy] section when any of the actions list, the push
 	// default, the test default, or the pinned test modules is set; a
 	// pure-default config leaves it out.
+	p.Deploy = nil
 	if len(cfg.DeployActions) > 0 || cfg.DeployPush != nil ||
 		cfg.DeployTest != nil || len(cfg.DeployTestModules) > 0 {
 		p.Deploy = &deployFile{
@@ -978,7 +1121,26 @@ func SaveProject(cfg *Config) error {
 	if err := toml.NewEncoder(&buf).Encode(p); err != nil {
 		return err
 	}
-	return writeAtomic(filepath.Join(projDir, cfg.ProjectKey+".toml"), buf.Bytes())
+	return writeAtomic(path, buf.Bytes())
+}
+
+// preserveCorrupt moves a state file that exists but does not decode into
+// shape aside as <path>.corrupt-<timestamp>, so the write that follows does
+// not destroy the only copy. A missing or decodable file is left alone.
+func preserveCorrupt(path string, shape any) error {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil
+	}
+	if _, err := toml.Decode(string(data), shape); err == nil {
+		return nil
+	}
+	aside := path + ".corrupt-" + time.Now().Format("20060102-150405")
+	if err := os.Rename(path, aside); err != nil {
+		return fmt.Errorf("keep unparseable state file aside: %w", err)
+	}
+	log.Warn("state file did not parse; kept it aside and started a new one", "file", aside)
+	return nil
 }
 
 func writeAtomic(path string, data []byte) error {
@@ -1035,16 +1197,17 @@ func connectTargetsToFile(targets []ConnectTarget) map[string]*connectTargetFile
 }
 
 // LoadGlobal reads only the global config (no project), for the
-// projectless `connect` direct mode. Missing file → defaults.
+// projectless `connect` direct mode. Missing file → defaults; a file that
+// does not parse is a *ParseError.
 func LoadGlobal() (*Config, error) {
 	root, err := configRoot()
 	if err != nil {
 		return nil, err
 	}
 	cfg := &Config{}
-	var g globalFile
-	if data, err := os.ReadFile(filepath.Join(root, "global.toml")); err == nil {
-		_ = toml.Unmarshal(data, &g)
+	g, err := loadGlobalFile(filepath.Join(root, GlobalFileName))
+	if err != nil {
+		return nil, err
 	}
 	cfg.Theme = g.Theme
 	cfg.Logo = g.Logo

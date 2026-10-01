@@ -25,7 +25,7 @@ func runUpdateRemote(ctx context.Context, opts ModulesOpts, from string) ([]stri
 	if err != nil {
 		return nil, err
 	}
-	all, i18n, installed, modules, err := parseRemoteUpdateFlags(rest)
+	all, i18n, installed, noCheckpoint, modules, err := parseRemoteUpdateFlags(rest)
 	if err != nil {
 		return nil, err
 	}
@@ -46,7 +46,7 @@ func runUpdateRemote(ctx context.Context, opts ModulesOpts, from string) ([]stri
 			return nil, ErrNoModulesAvailable
 		}
 		title := "Modules to update on " + targetLabel(rsc)
-		picked, _, canceled, perr := runFuzzyPickerCore(title, avail, nil, nil, nil, opts.Palette, rsc.target.stage)
+		picked, _, canceled, perr := runFuzzyPickerCore(title, avail, nil, nil, nil, opts.Palette, rsc.target.rawStage)
 		if perr != nil {
 			return nil, perr
 		}
@@ -58,6 +58,18 @@ func runUpdateRemote(ctx context.Context, opts ModulesOpts, from string) ([]stri
 
 	if err := confirmRemoteProd(opts.Palette, "update", rsc, opts.Args); err != nil {
 		return nil, err
+	}
+
+	// A linked Reverb environment with a reachable API runs the update on the
+	// daemon's side: Odoo stopped, signaling sequences reset, a pre_update
+	// checkpoint and a rollback on failure — none of which a `compose exec`
+	// beside the live process gives. `--i18n` stays on the classic path: the
+	// job has no i18n switch.
+	if rsc.reverb != nil && !i18n {
+		if all {
+			return nil, fmt.Errorf("%w: --all is refused on a Reverb environment; list the modules to update", ErrUsage)
+		}
+		return runUpdateReverb(ctx, opts, rsc, modules, !noCheckpoint)
 	}
 
 	var argv odoo.Cmd
@@ -83,7 +95,7 @@ func runUpdateRemote(ctx context.Context, opts ModulesOpts, from string) ([]stri
 // `--force` are consumed here (their value token skipped) so they never read
 // as modules. `--last` is rejected (local-only state) and any other `-`-flag
 // is a usage error.
-func parseRemoteUpdateFlags(rest []string) (all, i18n, installed bool, modules []string, err error) {
+func parseRemoteUpdateFlags(rest []string) (all, i18n, installed, noCheckpoint bool, modules []string, err error) {
 	for i := 0; i < len(rest); i++ {
 		a := rest[i]
 		switch {
@@ -93,6 +105,10 @@ func parseRemoteUpdateFlags(rest []string) (all, i18n, installed bool, modules [
 			i18n = true
 		case a == "--installed":
 			installed = true
+		case a == "--no-checkpoint":
+			// Only meaningful on a Reverb environment, where the update takes a
+			// pre_update checkpoint by default.
+			noCheckpoint = true
 		case a == "--force", a == "--remote":
 			// consumed by confirmRemoteProd / remoteFlagsIn
 		case a == "--from", a == "-E", a == "--env":
@@ -101,15 +117,49 @@ func parseRemoteUpdateFlags(rest []string) (all, i18n, installed bool, modules [
 			strings.HasPrefix(a, "--env="):
 			// consumed by remoteFlagsIn
 		case a == "--last":
-			return false, false, false, nil,
+			return false, false, false, false, nil,
 				fmt.Errorf("%w: --last is local-only (not supported with --remote)", ErrUsage)
 		case strings.HasPrefix(a, "-"):
-			return false, false, false, nil, fmt.Errorf("%w: unknown flag: %s", ErrUsage, a)
+			return false, false, false, false, nil, fmt.Errorf("%w: unknown flag: %s", ErrUsage, a)
 		default:
 			modules = append(modules, a)
 		}
 	}
-	return all, i18n, installed, modules, nil
+	return all, i18n, installed, noCheckpoint, modules, nil
+}
+
+// runUpdateReverb posts the update to Reverb and streams the job's events,
+// so the user sees the stop, the one-shot's output, the start and — when it
+// fails — the rollback to the checkpoint.
+func runUpdateReverb(ctx context.Context, opts ModulesOpts, rsc remoteShellContext, modules []string, checkpoint bool) ([]string, error) {
+	client, err := reverbClientFor(opts.Cfg, rsc.reverb)
+	if err != nil {
+		return nil, err
+	}
+	jobID, err := client.UpdateModules(ctx, rsc.reverb.id, modules, checkpoint)
+	if err != nil {
+		return nil, reverbError(err)
+	}
+	emitResolved(opts, modules)
+	stream := func(line string) {
+		if opts.StreamOut != nil {
+			opts.StreamOut(line)
+		}
+	}
+	stream("reverb: update delegated to " + rsc.reverb.ref() + " job=" + jobID + " checkpoint=" + boolWord(checkpoint))
+	if err := followReverbJob(ctx, client, jobID, "update",
+		func(_, _, msg, _ string, _ ...[2]string) { stream(msg) },
+		rsc.prof.DBName); err != nil {
+		return modules, err
+	}
+	return modules, nil
+}
+
+func boolWord(b bool) string {
+	if b {
+		return "yes"
+	}
+	return "no"
 }
 
 // remoteUpdateCandidates lists the modules the remote `update` picker offers:

@@ -37,17 +37,18 @@ func opAvailable(ctx context.Context) error {
 
 // opSaveLogin stores username/password under title, updating the item
 // when one already carries that title and creating it otherwise. url is
-// attached as the item's website when non-empty. created reports which of
-// the two paths ran.
-func opSaveLogin(ctx context.Context, vault, title, username, password, url string) (created bool, err error) {
+// attached as the item's website when non-empty, and tags are applied to
+// the item so a vault full of them stays filterable. created reports
+// which of the two paths ran.
+func opSaveLogin(ctx context.Context, vault, title, username, password, url string, tags []string) (created bool, err error) {
 	existing, err := opItemGet(ctx, vault, title)
 	switch {
 	case errors.Is(err, errOPItemMissing):
-		return true, opItemCreate(ctx, vault, title, username, password, url)
+		return true, opItemCreate(ctx, vault, title, username, password, url, tags)
 	case err != nil:
 		return false, err
 	}
-	return false, opItemEdit(ctx, vault, existing, password, url)
+	return false, opItemEdit(ctx, vault, existing, password, url, tags)
 }
 
 // opItemGet returns the raw JSON of the item titled title.
@@ -68,7 +69,7 @@ func opItemGet(ctx context.Context, vault, title string) ([]byte, error) {
 	return out, nil
 }
 
-func opItemCreate(ctx context.Context, vault, title, username, password, url string) error {
+func opItemCreate(ctx context.Context, vault, title, username, password, url string, tags []string) error {
 	body, err := opCreateBody(title, username, password, url)
 	if err != nil {
 		return err
@@ -79,6 +80,9 @@ func opItemCreate(ctx context.Context, vault, title, username, password, url str
 	}
 	if url != "" {
 		args = append(args, "--url", url)
+	}
+	if len(tags) > 0 {
+		args = append(args, "--tags", strings.Join(tags, ","))
 	}
 	_, err = opRun(ctx, body, args...)
 	return err
@@ -108,8 +112,8 @@ func opCreateBody(title, username, password, url string) ([]byte, error) {
 // opItemEdit rewrites the password (and website) of an item the vault
 // already holds. The whole item is patched and sent back so the sections,
 // notes and custom fields someone added by hand survive the update.
-func opItemEdit(ctx context.Context, vault string, current []byte, password, url string) error {
-	patched, id, existingURL, err := patchOPItem(current, password)
+func opItemEdit(ctx context.Context, vault string, current []byte, password, url string, tags []string) error {
+	patched, id, existingURL, existingTags, err := patchOPItem(current, password)
 	if err != nil {
 		return err
 	}
@@ -123,25 +127,33 @@ func opItemEdit(ctx context.Context, vault string, current []byte, password, url
 	if url != "" {
 		args = append(args, "--url", url)
 	}
+	// --tags replaces the item's tag list, so the ones someone added by
+	// hand have to be handed back or the edit would drop them.
+	if merged := mergeTags(existingTags, tags); len(merged) > 0 {
+		args = append(args, "--tags", strings.Join(merged, ","))
+	}
 	_, err = opRun(ctx, patched, args...)
 	return err
 }
 
 // patchOPItem rewrites the password on an item's JSON, leaving every
-// other member untouched, and reports the website the item already
-// carries so the caller can re-declare it through --url. The `urls`
-// member is dropped from the body for the reason opCreateBody explains.
-func patchOPItem(current []byte, password string) (patched []byte, id, existingURL string, err error) {
+// other member untouched, and reports the website and tags the item
+// already carries so the caller can re-declare them through --url and
+// --tags. Those two members are dropped from the body for the reason
+// opCreateBody explains.
+func patchOPItem(current []byte, password string) (patched []byte, id, existingURL string, existingTags []string, err error) {
 	var raw map[string]any
 	if err := json.Unmarshal(current, &raw); err != nil {
-		return nil, "", "", fmt.Errorf("read the 1Password item: %w", err)
+		return nil, "", "", nil, fmt.Errorf("read the 1Password item: %w", err)
 	}
 	id, _ = raw["id"].(string)
 	if id == "" {
-		return nil, "", "", errors.New("the 1Password item carries no id")
+		return nil, "", "", nil, errors.New("the 1Password item carries no id")
 	}
 	existingURL = primaryURL(raw)
+	existingTags = itemTags(raw)
 	delete(raw, "urls")
+	delete(raw, "tags")
 
 	fields, _ := raw["fields"].([]any)
 	found := false
@@ -164,7 +176,35 @@ func patchOPItem(current []byte, password string) (patched []byte, id, existingU
 	raw["fields"] = fields
 
 	patched, err = json.Marshal(raw)
-	return patched, id, existingURL, err
+	return patched, id, existingURL, existingTags, err
+}
+
+// itemTags reads the tags an item already carries.
+func itemTags(raw map[string]any) []string {
+	listed, _ := raw["tags"].([]any)
+	tags := make([]string, 0, len(listed))
+	for _, t := range listed {
+		if tag, ok := t.(string); ok && tag != "" {
+			tags = append(tags, tag)
+		}
+	}
+	return tags
+}
+
+// mergeTags appends the tags missing from current, preserving the order
+// the item already has.
+func mergeTags(current, extra []string) []string {
+	seen := make(map[string]bool, len(current))
+	for _, tag := range current {
+		seen[tag] = true
+	}
+	for _, tag := range extra {
+		if !seen[tag] {
+			current = append(current, tag)
+			seen[tag] = true
+		}
+	}
+	return current
 }
 
 // primaryURL returns the item's primary website, falling back to the

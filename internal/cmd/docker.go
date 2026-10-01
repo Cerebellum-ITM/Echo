@@ -106,17 +106,22 @@ func RunStop(ctx context.Context, opts DockerOpts) error {
 	return docker.Stop(ctx, opts.Cfg.ComposeCmd, opts.Root, opts.Args, opts.StreamOut)
 }
 
-// PSList returns the compose services' containers as structured rows for
-// Echo's styled `ps` table. The REPL renders it; on any error the caller
-// falls back to RunPS (raw streaming) so `ps` never regresses.
-func PSList(ctx context.Context, opts DockerOpts) ([]docker.PSContainer, error) {
-	return docker.PSList(ctx, opts.Cfg.ComposeCmd, opts.Root)
-}
-
-// RunPS streams the raw `<compose> ps` table. Kept as the fallback for the
-// styled table when `--format json` can't be parsed.
-func RunPS(ctx context.Context, opts DockerOpts) error {
-	return docker.PS(ctx, opts.Cfg.ComposeCmd, opts.Root, opts.StreamOut)
+// RunPS lists the compose containers. It reads `<compose> ps --format json`
+// and hands the rows (plus the database they belong to) to onTable for Echo's
+// styled table; when the structured read can't be parsed it streams the raw
+// `<compose> ps` through opts.StreamOut instead, so `ps` never regresses.
+// With `--from <target>` / `--remote` both reads run on the remote host over
+// SSH. Read-only: no prod gate.
+func RunPS(ctx context.Context, opts DockerOpts, onTable func(rows []docker.PSContainer, db string)) error {
+	if from, remote := remoteFlagsIn(opts.Args); from != "" || remote {
+		return runRemotePS(ctx, opts, from, onTable)
+	}
+	rows, err := docker.PSList(ctx, opts.Cfg.ComposeCmd, opts.Root)
+	if err != nil {
+		return docker.PS(ctx, opts.Cfg.ComposeCmd, opts.Root, opts.StreamOut)
+	}
+	onTable(rows, opts.Cfg.DBName)
+	return nil
 }
 
 // RunLogs follows logs by default. With no service argument, targets the

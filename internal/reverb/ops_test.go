@@ -275,3 +275,22 @@ func TestJobDone(t *testing.T) {
 		}
 	}
 }
+
+func TestUpdateModulesPostsListAndCheckpoint(t *testing.T) {
+	var gotPath, gotBody string
+	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		b, _ := io.ReadAll(r.Body)
+		gotBody = string(b)
+		w.WriteHeader(http.StatusAccepted)
+		_, _ = w.Write([]byte(`{"job_id":"j_u"}`))
+	})
+	id, err := c.UpdateModules(context.Background(), 116, []string{"crm_iza", "sale_iza"}, false)
+	if err != nil || id != "j_u" {
+		t.Fatalf("UpdateModules: %v (%q)", err, id)
+	}
+	if gotPath != "/api/v1/environments/116/update" ||
+		!strings.Contains(gotBody, `"modules":["crm_iza","sale_iza"]`) || !strings.Contains(gotBody, `"snapshot":false`) {
+		t.Errorf("%s %s", gotPath, gotBody)
+	}
+}

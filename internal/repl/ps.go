@@ -10,28 +10,24 @@ import (
 )
 
 // runPSTable renders `ps` as an Echo-styled table (service / image / status /
-// ports) instead of docker's raw output. If the structured `--format json`
-// read fails for any reason, it falls back to streaming the raw
-// `docker compose ps` so the command never regresses.
+// ports) instead of docker's raw output; cmd.RunPS falls back to streaming
+// the raw `docker compose ps` when the structured read fails, locally or on
+// the remote named by `--from` / `--remote`.
 func (sess *session) runPSTable(ctx context.Context, opts cmd.DockerOpts) {
-	rows, err := cmd.PSList(ctx, opts)
-	if err != nil {
-		sess.readonlyFinalize("ps", cmd.RunPS(ctx, opts))
-		return
+	rendered := false
+	err := cmd.RunPS(ctx, opts, func(rows []docker.PSContainer, db string) {
+		rendered = true
+		sess.emitPSTableAs(rows, "echo.ps", db)
+	})
+	if !rendered {
+		sess.readonlyFinalize("ps", err)
 	}
-	sess.emitPSTable(rows)
 }
 
-// emitPSTable prints the aligned, theme-styled container table and closes
-// with an Odoo-style count line, mirroring `modstate`. The status cell is
-// colored by container state/health; ports are dimmed.
-func (sess *session) emitPSTable(rows []docker.PSContainer) {
-	sess.emitPSTableAs(rows, "echo.ps", sess.cfg.DBName)
-}
-
-// emitPSTableAs is emitPSTable with the closing count line's logger and
-// database parametrized, so other commands (`link --show` rendering a
-// REMOTE `ps`) reuse the table under their own namespace.
+// emitPSTableAs prints the aligned, theme-styled container table and closes
+// with an Odoo-style count line under logger/db, mirroring `modstate`, so
+// `link --show` reuses it for a remote `ps` under its own namespace. The
+// status cell is colored by container state/health; ports are dimmed.
 func (sess *session) emitPSTableAs(rows []docker.PSContainer, logger, db string) {
 	if len(rows) == 0 {
 		emitOdooLog("INFO", logger, "no containers running",

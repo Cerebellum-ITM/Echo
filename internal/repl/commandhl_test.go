@@ -104,11 +104,11 @@ func TestFlagsWithPrefix(t *testing.T) {
 		t.Errorf("flagsWithPrefix(db-restore, --f) = %v, want [--force]", g)
 	}
 	// A command with no declared flags still completes the universal ones.
-	if g := flagsWithPrefix("ps", "-"); len(g) != 2 || g[0] != "--build" || g[1] != "-b" {
-		t.Errorf("flagsWithPrefix(ps, -) = %v, want [--build -b]", g)
+	if g := flagsWithPrefix("reset", "-"); len(g) != 2 || g[0] != "--build" || g[1] != "-b" {
+		t.Errorf("flagsWithPrefix(reset, -) = %v, want [--build -b]", g)
 	}
-	if g := flagsWithPrefix("ps", "-b"); len(g) != 1 || g[0] != "-b" {
-		t.Errorf("flagsWithPrefix(ps, -b) = %v, want [-b]", g)
+	if g := flagsWithPrefix("reset", "-b"); len(g) != 1 || g[0] != "-b" {
+		t.Errorf("flagsWithPrefix(reset, -b) = %v, want [-b]", g)
 	}
 }
 

@@ -123,6 +123,19 @@ func (c *Client) Deploy(ctx context.Context, envID int64, rev string) (string, e
 	return out.JobID, nil
 }
 
+// UpdateModules enqueues Reverb's env_update (unit 29 there): `odoo -u` of
+// the named modules run the way a deploy runs it — Odoo stopped, signaling
+// reset, one-shot, start, health wait — with a pre_update checkpoint unless
+// snapshot is false. Returns the job id.
+func (c *Client) UpdateModules(ctx context.Context, envID int64, modules []string, snapshot bool) (string, error) {
+	var out jobAccepted
+	body := map[string]any{"modules": modules, "snapshot": snapshot}
+	if err := c.post(ctx, "/api/v1/environments/"+strconv.FormatInt(envID, 10)+"/update", body, &out); err != nil {
+		return "", err
+	}
+	return out.JobID, nil
+}
+
 // Job is one unit of asynchronous work. Status is queued | running |
 // succeeded | failed | canceled.
 type Job struct {

@@ -172,41 +172,6 @@ func TestIsFastForwardAndRangeCommits(t *testing.T) {
 	}
 }
 
-func TestArchiveModules(t *testing.T) {
-	if _, err := exec.LookPath("git"); err != nil {
-		t.Skip("git not available")
-	}
-	ctx := context.Background()
-	root, commit := gitScratchRepo(t)
-	commit("first content")
-	sha := commit("[ADD] sale: second content")
-
-	cfg := &config.Config{AddonsPaths: []string{"addons"}}
-	dir, cleanup, err := archiveModules(ctx, cfg, root, sha, []string{"sale"})
-	if err != nil {
-		t.Fatalf("archiveModules: %v", err)
-	}
-	defer cleanup()
-
-	// The extracted tree holds the module at its repo-relative path with the
-	// content committed at <sha>.
-	got, err := os.ReadFile(filepath.Join(dir, "addons", "sale", "models.py"))
-	if err != nil {
-		t.Fatalf("read extracted file: %v", err)
-	}
-	if string(got) != "[ADD] sale: second content" {
-		t.Errorf("extracted content = %q, want the committed content at sha", string(got))
-	}
-	// The manifest ships too.
-	if _, err := os.Stat(filepath.Join(dir, "addons", "sale", "__manifest__.py")); err != nil {
-		t.Errorf("manifest missing from archive: %v", err)
-	}
-	// moduleSrcDir resolves the module inside the scratch root.
-	if _, err := moduleSrcDir(cfg, dir, "sale"); err != nil {
-		t.Errorf("moduleSrcDir on scratch root: %v", err)
-	}
-}
-
 func TestParseWatchArgsNoLogs(t *testing.T) {
 	p, err := parseWatchArgs([]string{"dev", "--no-logs"})
 	if err != nil {

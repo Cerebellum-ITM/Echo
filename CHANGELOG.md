@@ -5,6 +5,267 @@ All notable changes to Echo are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Deprecated
+- **`-E <project>/<env>` queda deprecado.** Resuelve el entorno por HTTP en
+  cada llamada, no persiste nada —`link --show` no tiene qué mostrar y el
+  pre-flight del skill tampoco—, exige el token en cada máquina y no soporta
+  `deploy`, `watch` ni `i18n-pull`. El camino es registrar el entorno como
+  connect target y linkearlo: Reverb escribe el mismo perfil de Echo que
+  tendría un host hecho a mano, así que un entorno linkeado es un target
+  clásico y soporta los tres comandos que `-E` niega. El flag sigue
+  funcionando y avisa una vez por invocación; se retira cuando la unidad 30
+  de Reverb esté desplegada. El README y la ayuda del REPL abren ahora por
+  el modo link.
+
+### Added
+- **`deploy --dry-run --save-plan <file>` and `deploy --apply <file>`: a
+  deploy runs exactly as reviewed, or refuses.** The dry-run writes a JSON
+  plan (mode 0600, no secrets) with the target, each module's action, source
+  and content identity (`sha` + `tree` for committed content, a digest of the
+  directory as rsync ships it for a working-tree module), the run's effective
+  decisions, the deploy actions by name and digest, a digest of the target's
+  deploy lock and the dependency findings. `--apply` re-resolves the same
+  selection with every decision pinned and, before the first write on the
+  server, compares: a moved ref, an edit on disk, any lock write since (even a
+  push of another module), a module installed meanwhile or a changed action
+  list each print `ERROR echo.deploy.plan: changed what=… planned=… now=…` and
+  refuse with exit 1 (`plan_stale` under `--json`). An unchanged plan logs
+  `plan matches age=…` (red from one hour on) and runs as a normal deploy, with
+  the prod and dependency confirms intact. `--apply` combines only with
+  `--force`, `--rollback-on-fail`/`--no-rollback-on-fail`, `--json`,
+  `--dry-run` and the plan's own `--from`; anything else, a file that is not a
+  plan, another schema or another project is a usage error (exit 2) before any
+  SSH. `--save-plan` requires a path and `--dry-run`.
+- **`compare --targets <a>,<b>`: what one target has that the other does
+  not, from their deploy locks.** Per module it shows the source, sha and
+  version each target's `.echo/lock.json` records, side by side, with a
+  status: `differs` (different content), `only <target>` (Echo never
+  recorded shipping it to the other one), `unknown` (a `dirty` entry, a sha
+  not in the local repository, or a lock that could not be read) and `same`.
+  Content is compared by the module's git tree, not the sha, so the same code
+  shipped as `worktree@X` to dev and `ref@Y` to staging reads `same`; a
+  git-deploy target's modules without an entry are read from its lock base.
+  Only rows that are not `same` print, plus any module named as a positional
+  (`compare --targets dev,staging ccima_flow_mail`); `newer=` names the side
+  with the higher manifest version. It reads one lock per target over SSH
+  (no server profile, nothing written, no stage gate), runs outside a compose
+  project, exits 0 whatever the differences and 1 when a lock is unreadable
+  or corrupt (the other side is still shown). `--copy` puts the table on the
+  clipboard; `--json` writes one object to stdout. `--targets` takes exactly
+  two connect targets and refuses `--all`, `--from`, `--remote` and `-E`.
+- **`doctor`: one read-only health report of a remote target.** `doctor
+  --from <target>` (or `--remote`, or the usual link binding / single target /
+  picker) answers "is this target ready for deploy, push and checkpoints" in
+  one go: SSH reachability (and a warning for a literal `user@host`
+  `ssh_host`), the server profile (missing, not parsing with file and line,
+  missing containers or database, undeclared stage, unknown Odoo version,
+  invalid deploy actions), rsync on both ends, the git-deploy preflight on
+  git targets, free disk for the checkpoint a deploy would take, the deploy
+  lock (absent, unreadable, corrupt, unverified entries, `.echo/` tracked by
+  the server's repository), the push destination, and every other target on
+  the same host whose destination is the same directory (WARNING when its
+  stage differs, INFO when it matches). Each check prints one
+  `echo.doctor.<check>` line and every check runs even after one fails. It
+  changes nothing on either side, runs outside a compose project, takes three
+  SSH round trips, and exits 1 when any check failed (warnings alone exit 0).
+  `--json` writes one object to stdout with the target, the checks and their
+  counts; `.env` values never appear in either stream.
+- **`deploy` warns when a shipped module drops something a staying module still
+  uses.** Before shipping, the plan compares each shipped module as it is on the
+  server with the tree that replaces it (methods and fields in class bodies, XML
+  ids of records, templates, menus, actions and reports; `tests/` and
+  `migrations/` ignored) and greps the modules next to it on the server that
+  this run does not ship. Each use found is one `WARNING
+  echo.deploy.plan: dependency removed=… kind=… from=… used_by=… at=…` line
+  (five locations at most, then `more=N`), and `--json` lists them under
+  `dependencies`. A name another module of the same run now defines counts as
+  moved, and common ORM overrides (`create`, `write`, `search`, …) are never
+  reported. On `dev` it only warns; on `staging`, `prod` or an undeclared stage
+  a real run with findings asks `Deploy anyway?`, and without a TTY fails
+  closed (exit 2) unless `--force`. `--dry-run` never blocks and `watch` is
+  never blocked. `--no-dep-check` skips it for one run and logs that it did;
+  a check that cannot run warns and the deploy goes on. It is a regex check:
+  no class awareness, no signatures, no JS, and only modules on the server's
+  filesystem are searched.
+- **A failed deploy puts the code back, not only the database.** Before the
+  first code write, a deploy saves on the server what it is about to
+  overwrite — every module directory it rsyncs, the overlays it reverts and
+  the deploy lock — under `backups/code/`. Any failure from then on (a broken
+  push, a failing `post_push` build, `stop`/`up -d`, the `-u` run) goes
+  through the rollback decision, and rolling back restores the deploy branch
+  and the snapshot, re-runs the push actions so an image-built target
+  rebuilds from the restored code, and restores the database when a
+  checkpoint exists. Without a checkpoint (the `dev` default) the code still
+  comes back. A green deploy keeps the snapshot with its checkpoint for
+  `deploy --rollback`; a declined rollback is recorded as a `code` checkpoint
+  restorable later; `--no-rollback-on-fail` takes no snapshot.
+- **`deploy --modules mod@ref` and `--at <ref>`: ship a module as it is at any
+  commit.** The module ships as committed at the ref — branch, tag or SHA,
+  resolved locally and fetched like `--set-code` — whatever the local checkout
+  is on and whatever is uncommitted in it, and its server folder ends up
+  identical to `git archive <ref> -- <module>`. The module is located in the
+  ref's own tree, so it does not need to exist on disk. On a git-deploy target
+  it ships as overlay and the deploy branch does not move. The plan shows the
+  version at the ref next to the one installed, i18n changes are detected
+  against the commit the lock records, and only the pinned modules run `-u`.
+  The next ship of a pinned module replaces it whole: with `--delete` on an
+  rsync target, by reverting its overlay before the branch moves on a
+  git-deploy one.
+- **Deploy lock: every target records the code it runs.** `deploy`,
+  `watch-deploy`, `push`, `push --clean`, `deploy --set-code` and
+  `--restore-code` now write `<remote_path>/.echo/lock.json` on the target:
+  per module, where its content came from (`worktree`, `commit` or `branch`,
+  with the SHA, the git tree id and whether uncommitted edits went along), the
+  manifest version as shipped, the destination, who shipped it and whether
+  Odoo has since run `-u` on it successfully. `deploy --lock [--json]` prints
+  it, the `--dry-run` plan shows per module what ships next to what the lock
+  holds, `link --show` adds a summary line, and the `deploy --json` modules
+  carry `source`/`sha`/`version`. `.echo/` ignores itself (a `.gitignore` with
+  `*` inside it), so a repository containing it is never modified; a
+  repository that already tracks it gets a warning with the fix. Lock reads
+  and writes never fail a deploy.
+- **`link --add` registra un sistema nuevo sin pasar por `connect`.** Hasta
+  ahora el asistente que da de alta un connect target vivía solo detrás de
+  `connect --add`, así que para que un servidor apareciera en `link` había
+  que mintear una sesión y abrir el navegador para hacer, en realidad, un
+  paso de configuración. `link --add` corre el mismo asistente —host de
+  `~/.ssh/config`, proyecto de Echo leído del servidor, nombre— guarda el
+  target en `global.toml` y deja este directorio linkeado a él. El picker
+  del `link` pelón ofrece la misma entrada al final de la lista, y el target
+  recién dado de alta ya está visible para `--list` y `--next` sin reiniciar
+  la sesión.
+
+### Changed
+- **A remote target whose stage is not declared is treated as prod.** A server
+  profile without `stage`, or with a value other than `dev`, `staging` or
+  `prod`, used to pass every remote gate silently. Now the remote prod
+  confirm, the deploy checkpoint default, test-on-prod, `watch` on prod and
+  the `db-admin` risk check all treat it as `prod`, and the command logs one
+  WARNING after the system status line asking to set `stage` in the server
+  profile. The status line and the pickers still show what the server says.
+  Local projects keep their rule (no profile means `dev`), and Reverb
+  environments always declare their stage.
+- **Selecting commits ships those commits, not the disk.** On a target without
+  git-deploy, a module resolved from selected commits used to rsync the working
+  tree, carrying later commits and uncommitted edits along. It now ships the
+  module's tree at its newest selected commit; a module selected as dirty still
+  ships the working tree. The pre-flight lint reads the tree that ships, and
+  `watch-deploy` no longer archives on its own.
+- **Code shipped from a commit is synced exactly.** When a deploy pushes from a
+  `git archive` (today, `watch-deploy`), rsync runs with `--delete` scoped to
+  each module directory, so files the commit deleted no longer linger on the
+  server or in an image built from it. Pushes from the working tree keep
+  `push`'s opt-in `--delete`.
+- **El ítem que `db-admin --save` escribe en 1Password ahora empieza por el
+  proyecto y trae el servidor como etiqueta.** El título pasa de
+  `Odoo <proyecto> (<db>)` a `<proyecto> (<db>)`, así la búsqueda de la
+  bóveda responde al nombre que uno teclea primero, y el ítem se etiqueta
+  `echo`, `odoo` y —en un target remoto— el host SSH donde vive, que es lo
+  que permite filtrar una bóveda con una docena de logins de Odoo. El
+  proyecto de un target remoto sale de su nombre de target (o del basename
+  de `remote_path` cuando se entró por `--remote` a secas): el `ssh_host`
+  nombra al **servidor**, y un servidor con diez proyectos encima no
+  distingue nada en el título. Las
+  etiquetas puestas a mano sobreviven a un update: `op item edit --tags`
+  reemplaza la lista completa, así que Echo la vuelve a declarar entera.
+
+### Added
+- **`update --remote` delega en Reverb.** Sobre un entorno de Reverb linkeado
+  (marcador `[reverb]` en el perfil y credenciales locales), `update <mods>
+  --remote` ya no corre un `compose exec … odoo -u` al lado del Odoo vivo:
+  llama a `POST /environments/{id}/update` y transmite los eventos del job,
+  así la actualización corre con Odoo parado, las secuencias de señalización
+  reiniciadas, un checkpoint `pre_update` y rollback si falla.
+  `--no-checkpoint` lo omite; `--all` se rechaza (lista los módulos); `--i18n`
+  sigue por el camino clásico porque el job no tiene ese interruptor.
+- **Un target linkeado que es un entorno de Reverb se comporta como tal, sin
+  `-E`.** Cuando el perfil del servidor trae la tabla marcador `[reverb]` y
+  esta máquina tiene `[reverb] token`, `checkpoint` va a snapshots por la
+  API, `up`/`stop`/`restart` pasan por la API —así la UI de Reverb no lee
+  drift—, `push` avisa qué módulos quedan sombreando la copia desplegada y
+  `push --clean` vacía el overlay en vez de exigir un target git-deploy.
+  Nada de eso pide un round trip HTTP para resolver el entorno: la identidad
+  sale del marcador y el overlay del `[push] path` que el mismo perfil
+  declara. El `api_url` del marcador gana sobre el `url` local, así que
+  mover el daemon no obliga a editar cada laptop. Sin token local todo sigue
+  por compose y una línea INFO dice qué falta. `link --show` gana la línea
+  `reverb env env=<proj>/<env> id=<n> api=on|off`.
+
+### Fixed
+- **The disk check before a `dump` checkpoint measures the right disk.** The
+  preflight compared the database size with the free space of the Postgres
+  data directory for both checkpoint methods, but a dump is written on the
+  host under `<remote_path>/backups/checkpoints`, so a full host disk passed
+  the check and the dump failed halfway. A `dump` checkpoint (in `deploy` and
+  `checkpoint create --method dump`) now measures the host filesystem of
+  `<remote_path>`; a `db` checkpoint keeps measuring the data directory.
+- **A deploy lock that exists but cannot be read is no longer taken for no
+  lock.** The read (`cat … || true`) turned a permission error into "no lock"
+  silently; it now logs the `could not read the deploy lock` WARNING an SSH
+  failure already logged, and the deploy goes on.
+- **A config file that does not parse is never overwritten.** A syntax error
+  in `global.toml` or a project profile used to load defaults silently, and
+  the next save (`--set-*`, `link`, registering a target, the compose
+  detection at startup) wrote a fresh file over the user's. Echo now stops at
+  startup with one `ERROR echo.config:` line naming the file, line and column
+  (exit 2, REPL and one-shot alike), and every writer refuses to write over a
+  file it could not read. State files Echo owns (deploy history, checkpoints,
+  update and sequence recalls, connect sessions) still read as empty when
+  corrupt, but the next write keeps the broken copy as
+  `<name>.corrupt-<YYYYMMDD-HHMMSS>` and logs a WARNING. Registering a target
+  skips a server profile that does not parse with a WARNING naming it.
+- **A server profile that does not parse fails the command.** It used to read
+  as an empty profile: no container names, no stage, no actions. Now any
+  remote command stops before touching the server with
+  `server profile <path> on <host> does not parse: line N, column M: …`.
+- **`uninstall` works.** It ran `odoo --uninstall <mods>`, a flag Odoo's CLI
+  has never had, so every run died with `no such option: --uninstall`. It now
+  pipes a script to `odoo shell` that calls `button_immediate_uninstall()` —
+  the Apps menu path — and aborts with a non-zero exit, before removing
+  anything, when a named module is not installed.
+- **Los comandos de base funcionan contra un Postgres que no es servicio del
+  compose.** Todo lo que Echo corre dentro del contenedor de Postgres —
+  `checkpoint` (dump, restore y sus consultas), `db-pull`, el `df` del
+  pre-flight y las lecturas de `ir_module_module` de `deploy` e `i18n-pull`—
+  emitía `cd <path> && <compose> exec -T <db_container>`, asumiendo que
+  `db_container` nombra un **servicio** del compose del directorio. En un
+  entorno gestionado por Reverb no lo es: la base vive en el compose del
+  proyecto y el del entorno solo trae Odoo, así que fallaban con
+  `no such service` con el contenedor arriba. El perfil del servidor ahora
+  puede declararlo con una tabla marcador `[reverb]`, y entonces el
+  transporte es `docker exec -i`. Sin marcador, un `no such service` se
+  reintenta una vez con esa misma forma, así que un target hecho a mano cuya
+  base se salió del compose también funciona. Los usos de `db_container`
+  como `--db_host` no cambian.
+
+- **Guardar la config deja de borrar secciones.** `SaveGlobal` reconstruía
+  `global.toml` desde una lista fija de nueve campos, así que cualquier
+  escritura —registrar un connect target, cambiar el theme, fijar un alias— se
+  llevaba por delante `[reverb]`, `[checkpoint]`, `[push]`, `[deploy]`,
+  `[promote]` e `icons`. Lo mismo en `SaveProject`, que tiraba el `[promote]`
+  del perfil y los campos `git_deploy`/`git_branch`/`git_path` del `[connect]`
+  —por eso `deploy --set-git-branch` sobre un binding de directorio "guardaba"
+  la rama y no quedaba nada en disco—. Ahora ambos escritores hacen
+  load-modify-write: leen el archivo, sobreescriben solo los campos que el
+  `Config` posee (y los limpian explícitamente cuando vuelven a default) y
+  dejan intacto lo demás. Primera de las cuatro unidades del plan de link mode
+  para entornos de Reverb: sin esto, registrar el target borra el token que el
+  modo necesita.
+
+### Added
+- **`ps` acepta `--from <target>` / `--remote` / `-E`.** Era el único verbo de
+  compose sin rama remota: `up`, `stop`, `restart` y `logs` ya corrían sobre el
+  servidor y `ps` seguía mirando solo el stack local, así que "qué hay corriendo
+  en staging" pasaba por `link --show` o por un `shell`. Ahora lee
+  `compose ps --format json` por SSH y pinta **la misma tabla estilizada** que
+  el `ps` local (con la base del perfil remoto en la línea de conteo); si el
+  JSON no se puede parsear degrada al `compose ps` crudo, igual que en local.
+  Es read-only, sin gate de prod, y funciona igual en targets clásicos y de
+  Reverb. `link --show` comparte ahora el mismo lector. `ps` entra también en
+  el menú de `sequence --remote` y autocompleta sus flags.
+
 ## [0.25.0] - 2026-09-03
 
 ### Changed

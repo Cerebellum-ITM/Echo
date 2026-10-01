@@ -20,10 +20,11 @@ func TestPatchOPItemPreservesTheRest(t *testing.T) {
 	    {"id": "password", "purpose": "PASSWORD", "value": "old"},
 	    {"id": "custom1", "section": {"id": "s1"}, "label": "ticket", "value": "OPS-42"}
 	  ],
-	  "urls": [{"label": "website", "primary": true, "href": "https://old.example.com"}]
+	  "urls": [{"label": "website", "primary": true, "href": "https://old.example.com"}],
+	  "tags": ["manual"]
 	}`)
 
-	patched, id, existingURL, err := patchOPItem(current, "newpassword")
+	patched, id, existingURL, existingTags, err := patchOPItem(current, "newpassword")
 	if err != nil {
 		t.Fatalf("patchOPItem: %v", err)
 	}
@@ -32,6 +33,9 @@ func TestPatchOPItemPreservesTheRest(t *testing.T) {
 	}
 	if existingURL != "https://old.example.com" {
 		t.Errorf("existingURL = %q, want the item's own href", existingURL)
+	}
+	if len(existingTags) != 1 || existingTags[0] != "manual" {
+		t.Errorf("existingTags = %v, want the item's own tags", existingTags)
 	}
 
 	var got map[string]any
@@ -69,6 +73,24 @@ func TestPatchOPItemPreservesTheRest(t *testing.T) {
 	if _, ok := got["urls"]; ok {
 		t.Error("the patched body still carries urls")
 	}
+	if _, ok := got["tags"]; ok {
+		t.Error("the patched body still carries tags")
+	}
+}
+
+// An edit re-declares the whole tag list, so the tags someone added by
+// hand have to survive alongside the ones Echo applies.
+func TestMergeTagsKeepsTheOnesAlreadyThere(t *testing.T) {
+	got := mergeTags([]string{"manual", "echo"}, []string{"echo", "odoo", "do-mx-01"})
+	want := []string{"manual", "echo", "odoo", "do-mx-01"}
+	if len(got) != len(want) {
+		t.Fatalf("mergeTags = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("mergeTags = %v, want %v", got, want)
+		}
+	}
 }
 
 // The primary href is what gets re-declared when the instance reports no
@@ -78,7 +100,7 @@ func TestPatchOPItemReportsThePrimaryURL(t *testing.T) {
 	  "urls":[{"label":"other","href":"https://second.example.com"},
 	          {"label":"website","primary":true,"href":"https://kept.example.com"}]}`)
 
-	_, _, existingURL, err := patchOPItem(current, "new")
+	_, _, existingURL, _, err := patchOPItem(current, "new")
 	if err != nil {
 		t.Fatalf("patchOPItem: %v", err)
 	}
@@ -88,7 +110,7 @@ func TestPatchOPItemReportsThePrimaryURL(t *testing.T) {
 }
 
 func TestPatchOPItemAddsMissingPasswordField(t *testing.T) {
-	patched, _, _, err := patchOPItem([]byte(`{"id":"x","fields":[{"id":"username","value":"admin"}]}`), "new")
+	patched, _, _, _, err := patchOPItem([]byte(`{"id":"x","fields":[{"id":"username","value":"admin"}]}`), "new")
 	if err != nil {
 		t.Fatalf("patchOPItem: %v", err)
 	}
@@ -107,7 +129,7 @@ func TestPatchOPItemAddsMissingPasswordField(t *testing.T) {
 }
 
 func TestPatchOPItemRejectsAnItemWithoutID(t *testing.T) {
-	if _, _, _, err := patchOPItem([]byte(`{"fields":[]}`), "new"); err == nil {
+	if _, _, _, _, err := patchOPItem([]byte(`{"fields":[]}`), "new"); err == nil {
 		t.Error("want an error for an item with no id")
 	}
 }

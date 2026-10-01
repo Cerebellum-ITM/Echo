@@ -6,7 +6,7 @@ import "strings"
 // recognised by the REPL. The order matches the help output and
 // determines the order of the match list rendered on a double-Tab.
 var Registry = []string{
-	"init", "reset", "alias", "link",
+	"init", "reset", "alias", "link", "doctor",
 	"install", "update", "uninstall", "test", "modules", "modinfo", "modstate", "view", "compare", "lint",
 	"i18n-export", "i18n-update", "i18n-pull",
 	"db-admin", "db-backup", "db-restore", "db-pull", "db-drop", "db-neutralize", "db-list", "db-use",
@@ -22,7 +22,8 @@ var Registry = []string{
 // no known flags. Powers flag highlighting and Tab flag completion.
 var commandFlags = map[string][]string{
 	"alias":         {"--list", "--rm", "--migrate"},
-	"link":          {"--show", "--rm", "--next", "--list", "--json"},
+	"link":          {"--show", "--rm", "--next", "--list", "--add", "--json"},
+	"doctor":        {"--from", "--remote", "--json"},
 	"install":       {"--with-demo", "--level"},
 	"update":        {"--all", "--last", "--level", "--i18n", "--installed", "--from", "--remote", "-E", "--env"},
 	"uninstall":     {"--level"},
@@ -32,7 +33,7 @@ var commandFlags = map[string][]string{
 	"modstate":      {"--all", "--json"},
 	"lint":          {"--json"},
 	"view":          {"--copy", "--last", "--from", "--remote", "-E", "--env"},
-	"compare":       {"--all", "--copy", "--from", "--remote", "-E", "--env"},
+	"compare":       {"--all", "--copy", "--from", "--remote", "-E", "--env", "--targets", "--json"},
 	"i18n-export":   {"--out"},
 	"i18n-update":   {"--force"},
 	"i18n-pull":     {"--from", "--lang", "--all", "--installed", "--to-worktree"},
@@ -46,12 +47,13 @@ var commandFlags = map[string][]string{
 	"down":          {"--force", "-E", "--env"},
 	"stop":          {"--from", "--remote", "--force", "-E", "--env"},
 	"restart":       {"--from", "--remote", "--force", "-E", "--env"},
+	"ps":            {"--from", "--remote", "-E", "--env"},
 	"logs":          {"-t", "--no-follow", "-c", "--copy", "--all", "--from", "--remote", "-E", "--env"},
 	"shell":         {"--from", "--remote", "--force", "-E", "--env"},
 	"shell-run":     {"--no-copy", "--force", "--from", "--remote", "-E", "--env"},
 	"connect":       {"--all", "--force", "--fresh", "--new-window"},
 	"push":          {"--from", "--remote", "--dirty", "--dry-run", "--delete", "--force", "--dest", "--pick-dest", "--set-dest", "--mkdir", "--clean", "--all", "-E", "--env"},
-	"deploy":        {"--from", "--limit", "--dry-run", "--force", "--i18n", "--no-i18n", "--commits", "--modules", "--auto", "--push", "--no-push", "--set-push", "--test", "--no-test", "--test-toggle", "--test-modules", "--test-add", "--test-rm", "--test-clear", "--json", "--checkpoint", "--no-checkpoint", "--set-checkpoint", "--set-checkpoint-method", "--set-checkpoint-keep", "--rollback", "--consume-checkpoint", "--rollback-on-fail", "--no-rollback-on-fail", "--no-actions", "--no-git", "--no-lint", "--restore-code", "--set-code", "--keep-overlay", "--with-local", "--fetch", "--no-fetch", "--set-git-branch", "--rename"},
+	"deploy":        {"--from", "--limit", "--dry-run", "--force", "--i18n", "--no-i18n", "--commits", "--modules", "--auto", "--push", "--no-push", "--set-push", "--test", "--no-test", "--test-toggle", "--test-modules", "--test-add", "--test-rm", "--test-clear", "--json", "--checkpoint", "--no-checkpoint", "--set-checkpoint", "--set-checkpoint-method", "--set-checkpoint-keep", "--rollback", "--consume-checkpoint", "--rollback-on-fail", "--no-rollback-on-fail", "--no-actions", "--no-git", "--no-lint", "--no-dep-check", "--restore-code", "--set-code", "--keep-overlay", "--with-local", "--fetch", "--no-fetch", "--set-git-branch", "--rename", "--lock", "--at", "--save-plan", "--apply"},
 	"watch":         {"--from", "--remote", "--interval", "--force", "--no-logs", "--no-checkpoint", "--no-actions"},
 	"promote":       {"--dirty", "--commits", "--to", "--set-branch", "--show-branch", "--create-dest", "--dry-run", "--force", "--reset", "--discard", "--set-base", "--no-fetch"},
 	"checkpoint":    {"--from", "--remote", "--method", "--all", "--force", "--json", "-E", "--env"},

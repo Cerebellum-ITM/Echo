@@ -12,6 +12,13 @@ import (
 // loader will refuse in a module this run was about to deploy.
 var ErrLintBlocked = fmt.Errorf("lint found blocking problems")
 
+// lintScope is a set of modules read from one local root: the working tree,
+// or the scratch dir the modules shipping from a commit were archived into.
+type lintScope struct {
+	root    string
+	modules []string
+}
+
 // deployLintPreflight runs Unit 109's lint over the modules this deploy
 // selected and reports whether the run may continue.
 //
@@ -24,7 +31,7 @@ var ErrLintBlocked = fmt.Errorf("lint found blocking problems")
 // Scope is the selected modules, never the repo. A broken file in a module
 // this deploy does not touch is not this deploy's problem, and blocking on
 // it would just teach everyone to reach for --no-lint.
-func deployLintPreflight(opts DeployOpts, p deployArgs, modules []string) error {
+func deployLintPreflight(opts DeployOpts, p deployArgs, scopes []lintScope) error {
 	if p.noLint {
 		// A silent skip in a recorded run is how a default-on check
 		// becomes decoration, so say it out loud.
@@ -33,13 +40,32 @@ func deployLintPreflight(opts DeployOpts, p deployArgs, modules []string) error 
 		return nil
 	}
 
-	res, missing, err := LintModules(opts.Cfg, opts.Root, modules)
+	errs := 0
+	for _, scope := range scopes {
+		if len(scope.modules) > 0 {
+			errs += lintScopeReport(opts, scope)
+		}
+	}
+	if errs == 0 {
+		return nil
+	}
+	opts.log("ERROR", "lint", "pre-flight blocked the deploy", "",
+		[2]string{"errors", strconv.Itoa(errs)},
+		[2]string{"hint", "fix the files above, or deploy --no-lint"})
+	return fmt.Errorf("%w: %d file(s) the data loader would refuse (use --no-lint to override)",
+		ErrLintBlocked, errs)
+}
+
+// lintScopeReport lints one scope, logs its findings and returns how many
+// block the deploy.
+func lintScopeReport(opts DeployOpts, scope lintScope) int {
+	res, missing, err := LintModules(opts.Cfg, scope.root, scope.modules)
 	if err != nil {
 		// The lint is a guard, not the job. A validator that fails to run
 		// must not take the deploy down with it.
 		opts.log("WARNING", "lint", "pre-flight could not run", "",
 			[2]string{"err", err.Error()})
-		return nil
+		return 0
 	}
 
 	// A selection may legitimately name a module that only exists on the
@@ -67,7 +93,7 @@ func deployLintPreflight(opts DeployOpts, p deployArgs, modules []string) error 
 			level = "WARNING"
 		}
 		opts.log(level, "lint", f.Message, "",
-			[2]string{"file", RelPath(opts.Root, f.File)},
+			[2]string{"file", RelPath(scope.root, f.File)},
 			[2]string{"line", strconv.Itoa(f.Line)},
 			[2]string{"rule", f.Rule})
 	}
@@ -78,12 +104,6 @@ func deployLintPreflight(opts DeployOpts, p deployArgs, modules []string) error 
 			[2]string{"modules", strings.Join(res.Modules, ",")},
 			[2]string{"files", strconv.Itoa(res.Files)},
 			[2]string{"warnings", strconv.Itoa(res.Warnings())})
-		return nil
 	}
-
-	opts.log("ERROR", "lint", "pre-flight blocked the deploy", "",
-		[2]string{"errors", strconv.Itoa(errs)},
-		[2]string{"hint", "fix the files above, or deploy --no-lint"})
-	return fmt.Errorf("%w: %d file(s) the data loader would refuse (use --no-lint to override)",
-		ErrLintBlocked, errs)
+	return errs
 }

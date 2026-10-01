@@ -35,33 +35,94 @@ type CompareResult struct {
 	Copy               bool
 }
 
-// parseCompareArgs pulls the module positional and flags out of a `compare`
+// compareArgs is a parsed `compare` argument list. targets is set by
+// `--targets a,b`, the lock comparison of two connect targets (Unit 130).
+type compareArgs struct {
+	modules    []string
+	copy       bool
+	all        bool
+	from       string
+	remote     bool
+	targets    []string
+	hasTargets bool
+	json       bool
+}
+
+func (p compareArgs) module() string {
+	if len(p.modules) == 0 {
+		return ""
+	}
+	return p.modules[0]
+}
+
+// parseCompareArgs pulls the module positionals and flags out of a `compare`
 // argument list. The remote-mode switches (`--from <t>` / `--from=t` /
 // `--remote`) are consumed here so the value token after a bare `--from` is
 // not mistaken for the module name; any other `-`-prefixed token errors.
-func parseCompareArgs(args []string) (module string, copyFlag, all bool, from string, remote bool, err error) {
-	from, remote = remoteFlagsIn(args)
+func parseCompareArgs(args []string) (compareArgs, error) {
+	var p compareArgs
+	p.from, p.remote = remoteFlagsIn(args)
 	for i := 0; i < len(args); i++ {
 		a := args[i]
 		switch {
 		case a == "--copy":
-			copyFlag = true
+			p.copy = true
 		case a == "--all":
-			all = true
+			p.all = true
+		case a == "--json":
+			p.json = true
+		case a == "--targets":
+			if i+1 >= len(args) {
+				return compareArgs{}, fmt.Errorf("%w: --targets needs two target names: --targets <a>,<b>", ErrUsage)
+			}
+			i++
+			p.hasTargets, p.targets = true, splitTargetNames(args[i])
+		case strings.HasPrefix(a, "--targets="):
+			p.hasTargets, p.targets = true, splitTargetNames(strings.TrimPrefix(a, "--targets="))
 		case a == "--from", a == "-E", a == "--env":
 			i++ // skip the target value; captured by remoteFlagsIn
 		case strings.HasPrefix(a, "--from="), strings.HasPrefix(a, "-E="),
 			strings.HasPrefix(a, "--env="), a == "--remote":
 			// consumed by remoteFlagsIn
 		case strings.HasPrefix(a, "-"):
-			return "", false, false, "", false, fmt.Errorf("unknown flag: %s", a)
+			return compareArgs{}, fmt.Errorf("unknown flag: %s", a)
 		default:
-			if module == "" {
-				module = a
-			}
+			p.modules = append(p.modules, a)
 		}
 	}
-	return module, copyFlag, all, from, remote, nil
+	return p, p.validateTargets()
+}
+
+func splitTargetNames(value string) []string {
+	var names []string
+	for _, n := range strings.Split(value, ",") {
+		if n = strings.TrimSpace(n); n != "" {
+			names = append(names, n)
+		}
+	}
+	return names
+}
+
+// validateTargets checks the `--targets` mode against the rest of the
+// arguments; the names themselves are resolved against the config later.
+func (p compareArgs) validateTargets() error {
+	if !p.hasTargets {
+		if p.json {
+			return fmt.Errorf("%w: --json needs --targets <a>,<b>", ErrUsage)
+		}
+		return nil
+	}
+	switch {
+	case len(p.targets) != 2:
+		return fmt.Errorf("%w: --targets takes exactly two target names, got %d", ErrUsage, len(p.targets))
+	case p.targets[0] == p.targets[1]:
+		return fmt.Errorf("%w: --targets names %q twice", ErrUsage, p.targets[0])
+	case p.all:
+		return fmt.Errorf("%w: --targets cannot be combined with --all", ErrUsage)
+	case p.from != "" || p.remote:
+		return fmt.Errorf("%w: --targets cannot be combined with --from, --remote or -E/--env", ErrUsage)
+	}
+	return nil
 }
 
 // unifiedDiff renders the git-style unified diff of oldText → newText with
@@ -162,11 +223,12 @@ func localContainerRead(ctx context.Context, opts ViewOpts, module, rel string) 
 // copy: the local Odoo container by default, or a remote target's container
 // with `--from <t>` / `--remote`. Read-only on both sides — no prod gate.
 func RunCompare(ctx context.Context, opts CompareOpts) (CompareResult, error) {
-	module, copyFlag, _, from, remote, err := parseCompareArgs(opts.Args)
+	p, err := parseCompareArgs(opts.Args)
 	if err != nil {
 		return CompareResult{}, err
 	}
-	isRemote := from != "" || remote
+	module, from := p.module(), p.from
+	isRemote := from != "" || p.remote
 
 	if !isRemote && opts.Cfg.OdooContainer == "" {
 		return CompareResult{}, ErrNoOdooContainer
@@ -220,7 +282,7 @@ func RunCompare(ctx context.Context, opts CompareOpts) (CompareResult, error) {
 		Diff:               diff,
 		Identical:          diff == "",
 		MissingInContainer: !found,
-		Copy:               copyFlag,
+		Copy:               p.copy,
 	}, nil
 }
 

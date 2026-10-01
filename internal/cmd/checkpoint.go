@@ -181,13 +181,16 @@ func runCheckpointList(ctx context.Context, opts CheckpointOpts, rsc remoteShell
 			DeploySHAs: shortSHAs(e.DeploySHAs),
 		}
 		exists := false
-		if e.Method == "dump" {
+		switch e.Method {
+		case codeCheckpointMethod:
+			exists = e.CodeSnapshot == "" || remoteFileExists(ctx, rsc, codeSnapshotTarball(e.CodeSnapshot))
+		case "dump":
 			exists = remoteFileExists(ctx, rsc, e.DumpPath)
 			if exists {
 				sz, _ := remoteFileSize(ctx, rsc, e.DumpPath)
 				row.SizeBytes = sz
 			}
-		} else {
+		default:
 			exists = dbSet[e.Name]
 			if exists {
 				sz, _ := remoteDBSize(ctx, rsc, e.Name)
@@ -377,16 +380,23 @@ func renderCheckpointTable(opts CheckpointOpts, res CheckpointResult) {
 }
 
 // confirmRollback is the interactive deploy-failure gate: a red confirm asking
-// whether to restore the DB from the just-taken checkpoint.
-func confirmRollback(palette theme.Palette, db string, entry config.CheckpointEntry) bool {
+// whether to restore the previous code and, when the run took one, the DB
+// from its checkpoint.
+func confirmRollback(palette theme.Palette, db string, checkpoint *config.CheckpointEntry) bool {
 	red := lipgloss.NewStyle().Foreground(palette.Error).Bold(true).Render(db)
+	desc := "Put the previous code back? There is no database checkpoint: the database stays as the failed run left it. (declining keeps the new code for inspection)"
+	negative := "Keep new code"
+	if checkpoint != nil {
+		desc = "Roll back to checkpoint " + checkpoint.Name + " and the previous code? (declining keeps the broken DB for inspection)"
+		negative = "Keep broken DB"
+	}
 	confirmed := false
 	form := huh.NewForm(huh.NewGroup(
 		huh.NewConfirm().
 			Title("⚠  Deploy run failed on " + red).
-			Description("Roll back to checkpoint " + entry.Name + "? (declining keeps the broken DB for inspection)").
+			Description(desc).
 			Affirmative("Roll back").
-			Negative("Keep broken DB").
+			Negative(negative).
 			Value(&confirmed),
 	)).
 		WithTheme(BuildHuhTheme(palette)).
@@ -407,7 +417,12 @@ func confirmRollbackAged(palette theme.Palette, db string, entry config.Checkpoi
 	}
 	age := time.Since(entry.CreatedAt)
 	redDB := lipgloss.NewStyle().Foreground(palette.Error).Bold(true).Render(db)
+	title := "⚠  Roll back database " + redDB
 	desc := "Restoring checkpoint " + entry.Name + " discards every change since it was taken."
+	if entry.Method == codeCheckpointMethod {
+		title = "⚠  Roll back code on " + redDB
+		desc = "Restoring " + entry.Name + " puts back the module code it saved; the database is not touched."
+	}
 	if age > time.Hour {
 		redAge := lipgloss.NewStyle().Foreground(palette.Error).Bold(true).Render(humanAge(age) + " old")
 		desc += " This checkpoint is " + redAge + " — that is a lot of data to lose."
@@ -417,7 +432,7 @@ func confirmRollbackAged(palette theme.Palette, db string, entry config.Checkpoi
 	confirmed := false
 	form := huh.NewForm(huh.NewGroup(
 		huh.NewConfirm().
-			Title("⚠  Roll back database " + redDB).
+			Title(title).
 			Description(desc).
 			Affirmative("Roll back").
 			Negative("Cancel").

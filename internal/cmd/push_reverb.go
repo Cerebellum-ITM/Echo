@@ -24,8 +24,7 @@ import (
 func reverbPushDestination(ctx context.Context, rsc remoteShellContext, opts PushOpts, p pushArgs) (string, error) {
 	overlay := strings.TrimSpace(rsc.reverb.paths.Overlay)
 	if overlay == "" {
-		return "", fmt.Errorf("reverb resolved %s without paths.overlay — the daemon predates the Echo contract (unit 20)",
-			rsc.reverb.ref())
+		return "", errNoOverlay(rsc)
 	}
 	if p.pickDest || p.setDest {
 		return "", fmt.Errorf("%w: --pick-dest/--set-dest do not apply to a Reverb target — "+
@@ -53,6 +52,15 @@ func reverbPushDestination(ctx context.Context, rsc remoteShellContext, opts Pus
 			ErrUsage, resolved, source, overlay)
 	}
 	return applyResolvedDest(ctx, rsc, opts, dest, source, mkdir, p.dryRun)
+}
+
+// errNoOverlay explains a Reverb environment whose overlay directory is
+// unknown. It has two sources — the resolve payload under `-E`, the
+// profile's [push] path on a linked target — and both mean the daemon
+// predates the Echo contract.
+func errNoOverlay(rsc remoteShellContext) error {
+	return fmt.Errorf("no overlay directory for %s — neither the resolve payload nor the server profile's "+
+		"[push] path names one; the daemon predates the Echo contract (unit 20)", rsc.reverb.ref())
 }
 
 // isUnderAddons reports whether dest is the addons directory itself or
@@ -101,7 +109,7 @@ func warnOverlayShadow(ctx context.Context, rsc remoteShellContext, opts PushOpt
 	if rsc.reverb.id == 0 {
 		return
 	}
-	client, err := reverbClient(opts.Cfg)
+	client, err := reverbClientFor(opts.Cfg, rsc.reverb)
 	if err != nil {
 		return
 	}
@@ -137,7 +145,7 @@ func warnOverlayShadow(ctx context.Context, rsc remoteShellContext, opts PushOpt
 func runPushCleanReverb(ctx context.Context, opts PushOpts, p pushArgs, rsc remoteShellContext) error {
 	overlay := strings.TrimSpace(rsc.reverb.paths.Overlay)
 	if overlay == "" {
-		return fmt.Errorf("reverb resolved %s without paths.overlay", rsc.reverb.ref())
+		return errNoOverlay(rsc)
 	}
 	present, err := listRemoteDirs(ctx, rsc.sshHost, overlay)
 	if err != nil || len(present) == 0 {
@@ -194,6 +202,7 @@ func runPushCleanReverb(ctx context.Context, opts PushOpts, p pushArgs, rsc remo
 		}
 		opts.log("INFO", "clean", "removed from the overlay", rsc.prof.DBName, [2]string{"module", m})
 	}
+	updateDeployLock(ctx, rsc, opts.Log, func(l *DeployLock) { l.forget(scoped) })
 	opts.log("INFO", "clean", "overlay cleaned", rsc.prof.DBName,
 		[2]string{"modules", strconv.Itoa(len(scoped))})
 	return nil

@@ -210,7 +210,7 @@ func (sess *session) renderPrompt() string {
 // are therefore not part of this slice.
 var dispatchNames = []string{
 	"help", "clear", "copy-last", "report", "logview", "sequence",
-	"init", "reset", "alias", "link",
+	"init", "reset", "alias", "link", "doctor",
 	"up", "down", "stop", "restart", "ps", "logs", "push", "deploy", "watch", "checkpoint", "actions", "promote",
 	"install", "update", "uninstall", "test", "modules", "modinfo", "modstate", "view", "compare", "lint",
 	"i18n-export", "i18n-update", "i18n-pull",
@@ -285,6 +285,8 @@ func (sess *session) dispatchParsed(ctx context.Context, cmd string, args []stri
 		sess.runAlias(ctx, args)
 	case "link":
 		sess.runLink(ctx, args)
+	case "doctor":
+		sess.runDoctor(ctx, args)
 	case "up", "down", "stop", "restart", "ps", "logs":
 		sess.runDocker(ctx, cmd, args)
 	case "install", "update", "uninstall", "test", "modules":
@@ -345,10 +347,14 @@ func helpSections() []helpSection {
 			{"  --rm <name>", "Remove an alias"},
 			{"  --migrate", "Backfill aliases from connect targets (local paths)"},
 			{"link [<target>]", "Switch this directory's connect target (no args: picker, current marked)"},
+			{"  --add", "Register a new target (SSH host + remote project) and bind to it"},
 			{"  --next", "Switch to the next target, wrapping (the two-target toggle)"},
 			{"  --list [--json]", "List the targets, marking the current one (no SSH, no write)"},
 			{"  --show", "Show the binding, probe the remote, stream its `ps`"},
 			{"  --rm", "Remove this directory's [connect] binding"},
+			{"doctor [--from <target>]", "Check a remote target is ready for deploy, push and checkpoints (read-only)"},
+			{"  --remote", "Check this directory's linked remote"},
+			{"  --json", "One JSON report on stdout, lines on stderr"},
 		}},
 		{"Modules", []helpEntry{
 			{"install <mod...>", "Install modules in the current DB"},
@@ -387,6 +393,8 @@ func helpSections() []helpSection {
 			{"  --all", "Compare the whole module: changed/added/missing table"},
 			{"  --from <t>", "Compare against a remote target (or --remote for the link binding)"},
 			{"  --copy", "Copy the diff to the clipboard"},
+			{"  --targets <a>,<b> [<mod>]", "Compare two targets' deploy locks module by module (read-only)"},
+			{"  --json", "With --targets: emit the comparison as JSON to stdout (logs to stderr)"},
 		}},
 		{"i18n", []helpEntry{
 			{"i18n-export <mod> [lang]", "Export <mod>/i18n/<lang>.po (default es_MX)"},
@@ -404,7 +412,7 @@ func helpSections() []helpSection {
 			{"db-admin [name]", "Reset admin (uid 2) to a generated password, shown once"},
 			{"  --password <pw>", "Use this password instead of a generated one"},
 			{"  --insecure", "Set the password to admin (known credentials, dev only)"},
-			{"  --save", "Store the credential in 1Password (needs the `op` CLI)"},
+			{"  --save", "Store the credential in 1Password, tagged by server (needs the `op` CLI)"},
 			{"  --vault <name>", "Vault for --save (default: op's own default)"},
 			{"  --from <target>", "Reset the admin on a remote instance (named connect target)"},
 			{"  --remote", "Reset the admin on this directory's linked remote"},
@@ -488,11 +496,12 @@ func helpSections() []helpSection {
 			{"  --set-push[=bool]", "Set deploy to push by default and exit (no deploy)"},
 			{"  --limit <N>", "Commits offered in the picker (default 20)"},
 			{"  --dry-run", "Resolve modules and show the plan; execute nothing"},
-			{"  --force", "Skip the prod-stage confirmation prompt"},
+			{"  --force", "Skip the prod-stage and dependency-check confirmation prompts"},
 			{"  --i18n", "Force --i18n-overwrite on the update run (default: auto when i18n/ changed)"},
 			{"  --no-i18n", "Suppress --i18n-overwrite even when i18n/ changes are detected"},
 			{"  --commits <shas>", "Deploy these commits non-interactively (skips the picker)"},
-			{"  --modules <names>", "Deploy these modules non-interactively (skips the picker)"},
+			{"  --modules <names>", "Deploy these modules non-interactively (skips the picker); mod@ref ships one as committed at that ref"},
+			{"  --at <ref>", "Ship every --modules entry as committed at <ref> (branch/tag/SHA), never from the working tree"},
 			{"  --auto", "Headless: deploy pending commits (ahead of upstream) + dirty modules, no picker"},
 			{"  --json", "Emit a machine-readable deploy summary to stdout (logs to stderr)"},
 			{"  --checkpoint[=db|dump]", "Force a DB checkpoint before the run (default: auto on staging/prod)"},
@@ -508,11 +517,15 @@ func helpSections() []helpSection {
 			{"  --restore-code [<sha>]", "Move a git-deploy target's code to a hash (bare = picker over branch history) and restart Odoo (no DB)"},
 			{"  --set-code <ref>", "Re-baseline a git-deploy target's code onto ANY ref (branch/tag/SHA) and restart Odoo (no DB)"},
 			{"  --set-git-branch <name>", "Name the branch the target's code lives on and exit (no deploy); --rename moves the one already there"},
+			{"  --lock", "Print the target's deploy lock — what each module runs and where it came from (no deploy; --json raw)"},
 			{"  --keep-overlay", "With --set-code: keep the server's dirty overlay (default: clean the module paths)"},
 			{"  --with-local", "With --set-code: reset the local [promote] branch onto the same ref first"},
 			{"  --fetch/--no-fetch", "With --set-code: force / suppress the fetch of the ref's remote before resolving"},
 			{"  --no-git", "Force the legacy rsync push on a git-deploy target for this run"},
 			{"  --no-lint", "Skip the pre-flight lint of the selected modules (see lint)"},
+			{"  --no-dep-check", "Skip the check for methods, fields and XML ids the shipped modules drop while staying modules still use them"},
+			{"  --save-plan <file>", "With --dry-run: write the resolved plan (modules, shas, sources, run decisions, lock) to <file>"},
+			{"  --apply <file>", "Run a saved plan exactly, or refuse before any server write when anything changed since"},
 			{"watch [<branch>]", "Auto push+deploy when new commits land on a branch; no branch → picker (Ctrl+C to stop)"},
 			{"  --from <target>", "Use a named connect target (default: this dir's link)"},
 			{"  --remote", "Target this directory's linked remote"},
@@ -593,20 +606,19 @@ var buildHelpEntries = []helpEntry{
 	{"<cmd> --build", "Interactively compose the command (pickers + flags), then run/copy it"},
 }
 
-// reverbHelpEntries document Reverb mode (Unit 107) as one block rather
-// than repeating the same flag row under every command that accepts it.
-// Outside helpSections() for the same reason as the two above.
+// reverbHelpEntries document how a Reverb environment is targeted, as one
+// block rather than repeating the same rows under every command. Outside
+// helpSections() for the same reason as the two above.
 var reverbHelpEntries = []helpEntry{
-	{"-E <project>/<env>", "Target a Reverb environment, resolved over HTTP (no local config)"},
-	{"-E <env>", "Same, with the project inferred when the name is unambiguous"},
-	{"  works with", "shell, shell-run, logs, view, compare, update, test, push, db-pull, actions, sequence"},
-	{"  push lands in", "the environment's overlay — Reverb replaces addons on every deploy"},
+	{"link <target>", "A Reverb environment is a plain connect target — register it and link it"},
+	{"  target from", "Reverb's Overview hands out the [connect_targets.<env>] snippet"},
+	{"  free from it", "stage, db, odoo version, and push landing in the environment's overlay"},
 	{"  push --clean", "Empties the overlay (--all = every module in it)"},
-	{"  checkpoint", "list/create map to Reverb snapshots (rm is admin-scoped)"},
-	{"  up/down/stop/restart", "Go through the Reverb API so the state doesn't read as drift"},
-	{"  config", "[reverb] url + token (scope: echo) in global.toml; the token is a secret"},
-	{"  ssh_host", "Optional [reverb] ssh_host = your own ~/.ssh/config alias for the host"},
-	{"  not yet", "deploy, watch — delegating those needs the push-to-Reverb remote"},
+	{"  [reverb] token", "Optional: adds snapshots for checkpoint and API lifecycle verbs"},
+	{"  without it", "checkpoint and up/stop/restart run through compose; one line says so"},
+	{"  link --show", "Reports the environment and whether the API is reachable (api=on|off)"},
+	{"-E <project>/<env>", "Deprecated: resolves over HTTP per call, persists nothing — use link"},
+	{"  -E does not", "support deploy, watch or i18n-pull; a linked target supports all three"},
 }
 
 // runHelp shows the command reference. It opens the paginated viewer (one

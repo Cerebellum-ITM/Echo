@@ -255,15 +255,7 @@ func RunI18nPull(ctx context.Context, opts I18nPullOpts) error {
 	if err != nil {
 		return err
 	}
-	target := connectTarget{
-		remote:        true,
-		composeCmd:    prof.ComposeCmd,
-		odooContainer: prof.OdooContainer,
-		dbContainer:   prof.DBContainer,
-		dbName:        prof.DBName,
-		stage:         prof.Stage,
-		odooVersion:   prof.OdooVersion,
-	}
+	target := remoteConnectTarget(prof)
 	// The system-status line doubles as the "connected" signal: it is the
 	// first line carrying the resolved remote environment (Echo + Odoo
 	// version, project, db), emitted the moment the remote profile is read —
@@ -272,6 +264,7 @@ func RunI18nPull(ctx context.Context, opts I18nPullOpts) error {
 		statusFields(target.odooVersion, prof.Stage,
 			statusProjectName(opts.Cfg, true, remotePath, p.from),
 			prof.DBName)...)
+	warnUndeclaredStage(target, opts.log)
 	conn := odoo.Conn{DB: target.dbName, Host: target.dbContainer}
 	pg := remotePullEnv(ctx, sshHost, remotePath)
 	conn.Port = pg["POSTGRES_PORT"]
@@ -549,11 +542,6 @@ func remoteContainerCmd(remotePath string, t connectTarget, argv odoo.Cmd) strin
 	return remoteExec(remotePath, t.composeCmd, t.odooContainer, argv)
 }
 
-// remoteDBCmd runs argv in the remote Postgres container.
-func remoteDBCmd(remotePath string, t connectTarget, argv odoo.Cmd) string {
-	return remoteExec(remotePath, t.composeCmd, t.dbContainer, argv)
-}
-
 // listRemoteConfModules lists the remote project's own modules: the
 // directories with a __manifest__.py under its addons paths. The paths come
 // from the addons paths stored in the remote Echo profile when present,
@@ -611,7 +599,7 @@ func listRemoteModules(ctx context.Context, sshHost, remotePath string, t connec
 	}
 	q := "SELECT name FROM ir_module_module WHERE state = 'installed' ORDER BY name"
 	argv := odoo.Cmd{"psql", "-U", pgUser, "-d", db, "-At", "-c", q}
-	out, err := runSSH(ctx, sshHost, remoteDBCmd(remotePath, t, argv), nil)
+	out, err := runRemoteDBCmd(ctx, runSSH, sshHost, remotePath, t, argv)
 	if err != nil {
 		return nil, err
 	}

@@ -134,11 +134,11 @@ func remoteGitLines(ctx context.Context, rsc remoteShellContext, absDir string, 
 // this repo's root commit).
 func gitPreflight(ctx context.Context, rsc remoteShellContext, localRoot, absDir string) error {
 	if _, err := gitRunSSH(ctx, rsc.sshHost, "git --version", nil); err != nil {
-		return fmt.Errorf("%w: git deploy needs git on the remote host — not found: %v", ErrUsage, err)
+		return fmt.Errorf("%w: %w", ErrUsage, errRemoteGitMissing(err))
 	}
 	isWT, err := remoteGitOut(ctx, rsc, absDir, "rev-parse", "--is-inside-work-tree")
 	if err != nil || isWT != "true" {
-		return fmt.Errorf("%w: git deploy needs a git checkout at %s on the remote — it is not one", ErrUsage, absDir)
+		return fmt.Errorf("%w: %w", ErrUsage, errNotACheckout(absDir))
 	}
 	rootOut, err := gitOutput(ctx, localRoot, "rev-list", "--max-parents=0", "HEAD")
 	if err != nil {
@@ -149,10 +149,24 @@ func gitPreflight(ctx context.Context, rsc remoteShellContext, localRoot, absDir
 		return fmt.Errorf("git deploy: could not determine the local repository's root commit")
 	}
 	if _, err := gitRunSSH(ctx, rsc.sshHost, remoteGitCmd(absDir, "cat-file", "-e", root), nil); err != nil {
-		return fmt.Errorf("%w: the checkout at %s is not a clone of this repository (root commit %s absent) — refusing to git-deploy (use --no-git for the legacy rsync push)",
-			ErrUsage, absDir, shortSHA(root))
+		return fmt.Errorf("%w: %w", ErrUsage, errNotAClone(absDir, root))
 	}
 	return nil
+}
+
+// The gitPreflight failures, shared with doctor's git check.
+
+func errRemoteGitMissing(cause error) error {
+	return fmt.Errorf("git deploy needs git on the remote host — not found: %v", cause)
+}
+
+func errNotACheckout(absDir string) error {
+	return fmt.Errorf("git deploy needs a git checkout at %s on the remote — it is not one", absDir)
+}
+
+func errNotAClone(absDir, root string) error {
+	return fmt.Errorf("the checkout at %s is not a clone of this repository (root commit %s absent) — refusing to git-deploy (use --no-git for the legacy rsync push)",
+		absDir, shortSHA(root))
 }
 
 // gitBootstrap ensures the deploy branch exists and is checked out, returning
@@ -556,14 +570,15 @@ type setCodePlan struct {
 	prev string
 	// cleaned are the module-scoped overlay files the run will remove. Empty
 	// under --keep-overlay.
-	cleaned []remoteDirtyEntry
+	cleaned     []remoteDirtyEntry
+	keepOverlay bool
 }
 
 // planGitSetCode preflights the target and reads where its deploy branch
 // stands, plus the overlay a default (non --keep-overlay) run would remove. It
 // mutates nothing — `--dry-run` stops here.
 func planGitSetCode(ctx context.Context, opts DeployOpts, rsc remoteShellContext, g gitDeployConfig, keepOverlay bool) (setCodePlan, error) {
-	plan := setCodePlan{absDir: absGitDir(rsc.remotePath, g.path)}
+	plan := setCodePlan{absDir: absGitDir(rsc.remotePath, g.path), keepOverlay: keepOverlay}
 	if err := gitPreflight(ctx, rsc, opts.Root, plan.absDir); err != nil {
 		return setCodePlan{}, err
 	}
@@ -603,6 +618,9 @@ func applyGitSetCode(ctx context.Context, opts DeployOpts, rsc remoteShellContex
 		return err
 	}
 	recordDeployedRef(ctx, rsc.sshHost, plan.absDir, ref, tip, opts.Log)
+	updateDeployLock(ctx, rsc, opts.Log, func(l *DeployLock) {
+		l.rebase(LockBase{Branch: g.branch, SHA: tip, Ref: ref, At: time.Now().UTC().Format(time.RFC3339)}, plan.keepOverlay)
+	})
 	return nil
 }
 
@@ -622,6 +640,9 @@ func gitRestoreCode(ctx context.Context, rsc remoteShellContext, g gitDeployConf
 	// A restore lands on a hash, not on a ref: clearing the provenance is the
 	// only honest answer to "where did this come from?".
 	recordDeployedRef(ctx, rsc.sshHost, absDir, "", sha, log)
+	updateDeployLock(ctx, rsc, log, func(l *DeployLock) {
+		l.rebase(LockBase{Branch: g.branch, SHA: sha, At: time.Now().UTC().Format(time.RFC3339)}, true)
+	})
 	return nil
 }
 
@@ -656,6 +677,17 @@ func intersectModules(mods []string, keep map[string]bool) []string {
 	var out []string
 	for _, m := range mods {
 		if keep[m] {
+			out = append(out, m)
+		}
+	}
+	return out
+}
+
+// exceptModules keeps the modules not in drop, preserving order.
+func exceptModules(mods []string, drop map[string]bool) []string {
+	var out []string
+	for _, m := range mods {
+		if !drop[m] {
 			out = append(out, m)
 		}
 	}

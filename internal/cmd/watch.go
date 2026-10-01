@@ -327,18 +327,10 @@ func watchCycle(ctx context.Context, opts WatchOpts, rsc remoteShellContext, fro
 		[2]string{"commits", strconv.Itoa(len(commits))},
 		[2]string{"modules", strings.Join(modules, ",")})
 
-	// Push the committed content at <new>, not the working tree — the watcher
-	// may sit on a different branch/worktree. The deploy itself does the push
-	// (from this archive dir) so the push and its pre_push/post_push actions
-	// run in order inside the deploy pipeline; the watcher just supplies the
-	// source dir.
-	srcRoot, cleanup, err := archiveModules(ctx, opts.Cfg, opts.Root, new, modules)
-	if err != nil {
-		return 0, false, fmt.Errorf("archive: %w", err)
-	}
-	defer cleanup()
-
-	rolledBack, derr := deployCommitsHeadless(ctx, opts, from, noCheckpoint, noActions, shas, srcRoot)
+	// The deploy ships each module as committed, never the working tree — the
+	// watcher may sit on a different branch or worktree — and does the push
+	// itself, so it and its pre_push/post_push actions run in order.
+	rolledBack, derr := deployCommitsHeadless(ctx, opts, from, noCheckpoint, noActions, shas)
 	// Record the cycle in the local command-log history so a headless caller
 	// (an agent) can learn whether a commit auto-deployed — without re-running
 	// watch or touching SSH. Best-effort: a save failure never affects the
@@ -395,10 +387,7 @@ func saveWatchDeployRecord(opts WatchOpts, rsc remoteShellContext, from string, 
 // deployCommitsHeadless runs the Unit 78 non-interactive deploy for the given
 // SHAs against the same target, with --force (the watcher already gated prod
 // at startup). Deploy's history marks the SHAs, so re-runs never redeploy.
-// The deploy performs the push itself from srcRoot (the watcher's git-archive
-// dir), so the push and its pre_push/post_push actions run in order within the
-// deploy pipeline — the watcher no longer pushes separately.
-func deployCommitsHeadless(ctx context.Context, opts WatchOpts, from string, noCheckpoint, noActions bool, shas []string, srcRoot string) (rolledBack bool, err error) {
+func deployCommitsHeadless(ctx context.Context, opts WatchOpts, from string, noCheckpoint, noActions bool, shas []string) (rolledBack bool, err error) {
 	args := []string{"--commits", strings.Join(shas, ","), "--force", "--push"}
 	if from != "" {
 		args = append(args, "--from", from)
@@ -412,7 +401,7 @@ func deployCommitsHeadless(ctx context.Context, opts WatchOpts, from string, noC
 	res, err := RunDeploy(ctx, DeployOpts{
 		Cfg: opts.Cfg, Root: opts.Root, Args: args, Palette: opts.Palette,
 		Log: opts.Log, StreamOut: opts.StreamOut, OnSync: opts.OnSync,
-		PushSrcRoot: srcRoot,
+		Via: "watch",
 	})
 	return res.RolledBack, err
 }
@@ -479,40 +468,6 @@ func rangeCommits(ctx context.Context, root, old, new string) ([]deployCommit, e
 		commits = append(commits, deployCommit{sha: sha, subject: subject})
 	}
 	return commits, nil
-}
-
-// archiveModules extracts the given modules' trees at sha into a fresh temp
-// dir (via `git archive`), returning that dir as a push source root plus a
-// cleanup func. The committed content — not the working tree — is what ships.
-func archiveModules(ctx context.Context, cfg *config.Config, root, sha string, modules []string) (string, func(), error) {
-	var paths []string
-	for _, m := range modules {
-		sub, err := localAddonsSubpath(cfg, root, m)
-		if err != nil {
-			return "", nil, fmt.Errorf("locate module %q: %w", m, err)
-		}
-		p := m
-		if sub != "." && sub != "" {
-			p = sub + "/" + m
-		}
-		paths = append(paths, p)
-	}
-	dir, err := os.MkdirTemp("", "echo-watch-*")
-	if err != nil {
-		return "", nil, err
-	}
-	cleanup := func() { _ = os.RemoveAll(dir) }
-
-	tarBytes, err := gitOutput(ctx, root, append([]string{"archive", "--format=tar", sha, "--"}, paths...)...)
-	if err != nil {
-		cleanup()
-		return "", nil, err
-	}
-	if err := extractTar(tarBytes, dir); err != nil {
-		cleanup()
-		return "", nil, err
-	}
-	return dir, cleanup, nil
 }
 
 // extractTar unpacks a tar byte stream into dir, creating parent directories

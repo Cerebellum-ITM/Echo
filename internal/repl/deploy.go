@@ -55,7 +55,7 @@ func (sess *session) runDeploy(ctx context.Context, args []string) {
 
 	switch {
 	case errors.Is(err, cmd.ErrCancelled), errors.Is(err, huh.ErrUserAborted),
-		errors.Is(err, cmd.ErrNonInteractive), errors.Is(err, cmd.ErrUsage):
+		errors.Is(err, cmd.ErrNonInteractive), errors.Is(err, cmd.ErrUsage), errors.Is(err, cmd.ErrPlanStale):
 		sess.finalize("deploy", stats.errors, stats.warnings, err)
 		if errors.Is(err, cmd.ErrUsage) {
 			sess.exitCode = exitUsage // finalize maps a plain err to 1; usage is 2
@@ -82,6 +82,16 @@ func (sess *session) finishDeployJSON(res cmd.DeployResult, stats *runStats, err
 		default:
 			sess.exitCode = exitError
 		}
+		// A stale plan still prints its object: plan_stale says what changed.
+		if !errors.Is(err, cmd.ErrPlanStale) {
+			return
+		}
+	}
+
+	if res.Lock != nil {
+		b, _ := json.Marshal(res.Lock)
+		os.Stdout.Write(b)
+		os.Stdout.WriteString("\n")
 		return
 	}
 
@@ -95,6 +105,8 @@ func (sess *session) finishDeployJSON(res cmd.DeployResult, stats *runStats, err
 		Planned    bool                `json:"planned,omitempty"`
 		Checkpoint *cmd.CheckpointInfo `json:"checkpoint,omitempty"`
 		RolledBack bool                `json:"rolled_back,omitempty"`
+		Plan       *cmd.DeployPlan     `json:"plan,omitempty"`
+		PlanStale  []cmd.PlanChange    `json:"plan_stale,omitempty"`
 	}
 	out := deployJSON{
 		Target:     res.Target,
@@ -106,6 +118,8 @@ func (sess *session) finishDeployJSON(res cmd.DeployResult, stats *runStats, err
 		Planned:    res.Planned,
 		Checkpoint: res.Checkpoint,
 		RolledBack: res.RolledBack,
+		Plan:       res.Plan,
+		PlanStale:  res.PlanStale,
 	}
 	if out.Modules == nil {
 		out.Modules = []cmd.DeployModule{}
@@ -119,7 +133,7 @@ func (sess *session) finishDeployJSON(res cmd.DeployResult, stats *runStats, err
 	}
 	os.Stdout.Write(b)
 	os.Stdout.Write([]byte("\n"))
-	if stats.errors > 0 {
+	if err != nil || stats.errors > 0 {
 		sess.exitCode = exitError
 		return
 	}
