@@ -5,19 +5,7 @@ All notable changes to Echo are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
-
-### Deprecated
-- **`-E <project>/<env>` queda deprecado.** Resuelve el entorno por HTTP en
-  cada llamada, no persiste nada —`link --show` no tiene qué mostrar y el
-  pre-flight del skill tampoco—, exige el token en cada máquina y no soporta
-  `deploy`, `watch` ni `i18n-pull`. El camino es registrar el entorno como
-  connect target y linkearlo: Reverb escribe el mismo perfil de Echo que
-  tendría un host hecho a mano, así que un entorno linkeado es un target
-  clásico y soporta los tres comandos que `-E` niega. El flag sigue
-  funcionando y avisa una vez por invocación; se retira cuando la unidad 30
-  de Reverb esté desplegada. El README y la ayuda del REPL abren ahora por
-  el modo link.
+## [0.26.0] - 2026-10-01
 
 ### Added
 - **`deploy --dry-run --save-plan <file>` and `deploy --apply <file>`: a
@@ -136,6 +124,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   del `link` pelón ofrece la misma entrada al final de la lista, y el target
   recién dado de alta ya está visible para `--list` y `--next` sin reiniciar
   la sesión.
+- **`update --remote` delega en Reverb.** Sobre un entorno de Reverb linkeado
+  (marcador `[reverb]` en el perfil y credenciales locales), `update <mods>
+  --remote` ya no corre un `compose exec … odoo -u` al lado del Odoo vivo:
+  llama a `POST /environments/{id}/update` y transmite los eventos del job,
+  así la actualización corre con Odoo parado, las secuencias de señalización
+  reiniciadas, un checkpoint `pre_update` y rollback si falla.
+  `--no-checkpoint` lo omite; `--all` se rechaza (lista los módulos); `--i18n`
+  sigue por el camino clásico porque el job no tiene ese interruptor.
+- **Un target linkeado que es un entorno de Reverb se comporta como tal, sin
+  `-E`.** Cuando el perfil del servidor trae la tabla marcador `[reverb]` y
+  esta máquina tiene `[reverb] token`, `checkpoint` va a snapshots por la
+  API, `up`/`stop`/`restart` pasan por la API —así la UI de Reverb no lee
+  drift—, `push` avisa qué módulos quedan sombreando la copia desplegada y
+  `push --clean` vacía el overlay en vez de exigir un target git-deploy.
+  Nada de eso pide un round trip HTTP para resolver el entorno: la identidad
+  sale del marcador y el overlay del `[push] path` que el mismo perfil
+  declara. El `api_url` del marcador gana sobre el `url` local, así que
+  mover el daemon no obliga a editar cada laptop. Sin token local todo sigue
+  por compose y una línea INFO dice qué falta. `link --show` gana la línea
+  `reverb env env=<proj>/<env> id=<n> api=on|off`.
+- **`ps` acepta `--from <target>` / `--remote` / `-E`.** Era el único verbo de
+  compose sin rama remota: `up`, `stop`, `restart` y `logs` ya corrían sobre el
+  servidor y `ps` seguía mirando solo el stack local, así que "qué hay corriendo
+  en staging" pasaba por `link --show` o por un `shell`. Ahora lee
+  `compose ps --format json` por SSH y pinta **la misma tabla estilizada** que
+  el `ps` local (con la base del perfil remoto en la línea de conteo); si el
+  JSON no se puede parsear degrada al `compose ps` crudo, igual que en local.
+  Es read-only, sin gate de prod, y funciona igual en targets clásicos y de
+  Reverb. `link --show` comparte ahora el mismo lector. `ps` entra también en
+  el menú de `sequence --remote` y autocompleta sus flags.
 
 ### Changed
 - **A remote target whose stage is not declared is treated as prod.** A server
@@ -171,27 +189,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   etiquetas puestas a mano sobreviven a un update: `op item edit --tags`
   reemplaza la lista completa, así que Echo la vuelve a declarar entera.
 
-### Added
-- **`update --remote` delega en Reverb.** Sobre un entorno de Reverb linkeado
-  (marcador `[reverb]` en el perfil y credenciales locales), `update <mods>
-  --remote` ya no corre un `compose exec … odoo -u` al lado del Odoo vivo:
-  llama a `POST /environments/{id}/update` y transmite los eventos del job,
-  así la actualización corre con Odoo parado, las secuencias de señalización
-  reiniciadas, un checkpoint `pre_update` y rollback si falla.
-  `--no-checkpoint` lo omite; `--all` se rechaza (lista los módulos); `--i18n`
-  sigue por el camino clásico porque el job no tiene ese interruptor.
-- **Un target linkeado que es un entorno de Reverb se comporta como tal, sin
-  `-E`.** Cuando el perfil del servidor trae la tabla marcador `[reverb]` y
-  esta máquina tiene `[reverb] token`, `checkpoint` va a snapshots por la
-  API, `up`/`stop`/`restart` pasan por la API —así la UI de Reverb no lee
-  drift—, `push` avisa qué módulos quedan sombreando la copia desplegada y
-  `push --clean` vacía el overlay en vez de exigir un target git-deploy.
-  Nada de eso pide un round trip HTTP para resolver el entorno: la identidad
-  sale del marcador y el overlay del `[push] path` que el mismo perfil
-  declara. El `api_url` del marcador gana sobre el `url` local, así que
-  mover el daemon no obliga a editar cada laptop. Sin token local todo sigue
-  por compose y una línea INFO dice qué falta. `link --show` gana la línea
-  `reverb env env=<proj>/<env> id=<n> api=on|off`.
+### Deprecated
+- **`-E <project>/<env>` is deprecated.** It resolves the environment over
+  HTTP on every call and persists nothing (so `link --show` and the skill's
+  pre-flight have nothing to show), needs the token on every machine, and
+  does not support `deploy`, `watch` or `i18n-pull`. Register the
+  environment as a connect target and link it instead: Reverb writes the
+  same Echo profile a hand-built host would have, so a linked environment is
+  an ordinary target and supports the three commands `-E` refuses. The flag
+  still works and warns once per invocation; Reverb unit 30 has been live
+  since 2026-09-09, so its removal is next (Unit 122). The README and the
+  REPL help now lead with link mode.
 
 ### Fixed
 - **The disk check before a `dump` checkpoint measures the right disk.** The
@@ -253,18 +261,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   dejan intacto lo demás. Primera de las cuatro unidades del plan de link mode
   para entornos de Reverb: sin esto, registrar el target borra el token que el
   modo necesita.
-
-### Added
-- **`ps` acepta `--from <target>` / `--remote` / `-E`.** Era el único verbo de
-  compose sin rama remota: `up`, `stop`, `restart` y `logs` ya corrían sobre el
-  servidor y `ps` seguía mirando solo el stack local, así que "qué hay corriendo
-  en staging" pasaba por `link --show` o por un `shell`. Ahora lee
-  `compose ps --format json` por SSH y pinta **la misma tabla estilizada** que
-  el `ps` local (con la base del perfil remoto en la línea de conteo); si el
-  JSON no se puede parsear degrada al `compose ps` crudo, igual que en local.
-  Es read-only, sin gate de prod, y funciona igual en targets clásicos y de
-  Reverb. `link --show` comparte ahora el mismo lector. `ps` entra también en
-  el menú de `sequence --remote` y autocompleta sus flags.
 
 ## [0.25.0] - 2026-09-03
 
