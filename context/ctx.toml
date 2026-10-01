@@ -1,0 +1,8 @@
+name = "echo"
+storage = "repo"
+kind = "workstream"
+created = 2026-09-30
+
+[audit]
+banned = ["archiveModules", "PushSrcRoot", "PushSrcSHA", "DESIGN_TOKENS", "spec-driven-dev"]
+stale_message_days = 14
