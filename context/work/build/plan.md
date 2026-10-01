@@ -25,6 +25,8 @@ Defects read in the code (not run); each is described where its topic lives. One
 | Stale texts: the dirty-module WARNING "does not push the code" (printed even when pushing), the `RunDBBackup` comment about a host filestore, the `promote_resolve.go` comment naming a `develop` default | `internal/cmd` | [deploy](../../knowledge/deploy.md) |
 | Dead Unit 14 leftovers: the `planet`/`python`/`anchor` cases of the `logo` key | `internal/banner/header.go` | [ui](../../knowledge/ui.md) |
 | `init` does not ask for `[checkpoint]` (Unit 90 follow-up) | `internal/cmd/init.go` | [deploy](../../knowledge/deploy.md) |
+| `ResolveProjectAlias` swallows the `LoadGlobal` error: with `-C <alias>` and a `global.toml` that does not parse, Echo says "unknown project alias" instead of the Unit 127 `ERROR echo.config` line | `internal/config/project_alias.go:75` | [architecture-and-traps](../../knowledge/architecture-and-traps.md) |
+| `deploy --json` omits `code_sha` and `dependencies`: `deployJSON` leaves out `DeployResult.CodeSHA` and `.Dependencies`, which the README deploy section promises | `internal/repl/deploy.go:99` | [deploy](../../knowledge/deploy.md) |
 
 E5, E6 and E8 come from the Reverb link-mode plan (`~/Documents/Projects/dev_tools/reverb/docs/echo-link-mode-echo-units.md`); they get Echo unit numbers when their spec is written.
 
