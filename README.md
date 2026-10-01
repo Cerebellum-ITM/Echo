@@ -107,6 +107,9 @@ and every command is wired to the right containers.
 | `  --list [--json]` | List the targets, marking the current one (no SSH, no write) |
 | `  --show` | Show the binding, probe the remote, stream its `compose ps`     |
 | `  --rm`   | Remove this directory's `[connect]` binding                     |
+| `doctor [--from <target>]` | Check a remote target is ready for deploy, push and checkpoints (read-only) |
+| `  --remote` | Check this directory's linked remote                          |
+| `  --json` | One JSON report on stdout, lines on stderr                      |
 | `help`   | Print the in-REPL command list, grouped by area                    |
 | `clear`  | Clear screen and reprint the header                                |
 | `exit` / `quit` / `Ctrl+D` | Quit Echo                                        |
@@ -116,6 +119,30 @@ Aliases live in `~/.config/echo/global.toml` (`[project_aliases]`) as a
 path; a real directory of the same name always wins, so `-C <dir>` behavior is
 unchanged. `-C` also falls back to a connect target's `remote_path` when it
 points at a local directory.
+
+`doctor` answers "is this target ready" before a deploy finds out halfway. It
+reads the target over three SSH round trips and changes nothing on either
+side, then prints one `echo.doctor.<check>` line per check, in this order:
+`ssh` (reachable; a literal `user@host` warns), `profile` (the server's Echo
+profile exists, parses, names the containers and the database, declares a
+stage), `rsync` (on both ends; missing fails only when a deploy would push),
+`git` (git-deploy targets: the checkout exists and is a clone of this
+repository), `disk` (free space for the checkpoint a deploy would take: 1.2×
+the database on the data directory for `db`, 0.5× on the host under
+`remote_path` for `dump`), `lock` (absent, unreadable, corrupt, unverified
+entries, `.echo/` tracked by the server's repository), `dest` (the push
+destination exists, or the addons directory auto-detect would use) and one
+`dest.shared` line per other target on the same host whose destination is the
+same directory (WARNING when its stage differs). Every check runs even after
+one fails; any failed check exits 1, warnings alone exit 0.
+
+```
+$ echo_cli doctor --from habitta_prod
+INFO    echo.doctor: target target=habitta_prod host=habitta path=/srv/habitta
+ERROR   echo.doctor.rsync: rsync not found on the server status=failed side=remote push=on
+WARNING echo.doctor.dest.shared: push destination shared status=warn dest=/srv/.cache/all_odoo with=habitta_dev stage=dev
+INFO    echo.doctor: doctor summary target=habitta_prod ok=5 warn=1 failed=1 skipped=1
+```
 
 ### Docker
 

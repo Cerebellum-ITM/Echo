@@ -134,11 +134,11 @@ func remoteGitLines(ctx context.Context, rsc remoteShellContext, absDir string, 
 // this repo's root commit).
 func gitPreflight(ctx context.Context, rsc remoteShellContext, localRoot, absDir string) error {
 	if _, err := gitRunSSH(ctx, rsc.sshHost, "git --version", nil); err != nil {
-		return fmt.Errorf("%w: git deploy needs git on the remote host — not found: %v", ErrUsage, err)
+		return fmt.Errorf("%w: %w", ErrUsage, errRemoteGitMissing(err))
 	}
 	isWT, err := remoteGitOut(ctx, rsc, absDir, "rev-parse", "--is-inside-work-tree")
 	if err != nil || isWT != "true" {
-		return fmt.Errorf("%w: git deploy needs a git checkout at %s on the remote — it is not one", ErrUsage, absDir)
+		return fmt.Errorf("%w: %w", ErrUsage, errNotACheckout(absDir))
 	}
 	rootOut, err := gitOutput(ctx, localRoot, "rev-list", "--max-parents=0", "HEAD")
 	if err != nil {
@@ -149,10 +149,24 @@ func gitPreflight(ctx context.Context, rsc remoteShellContext, localRoot, absDir
 		return fmt.Errorf("git deploy: could not determine the local repository's root commit")
 	}
 	if _, err := gitRunSSH(ctx, rsc.sshHost, remoteGitCmd(absDir, "cat-file", "-e", root), nil); err != nil {
-		return fmt.Errorf("%w: the checkout at %s is not a clone of this repository (root commit %s absent) — refusing to git-deploy (use --no-git for the legacy rsync push)",
-			ErrUsage, absDir, shortSHA(root))
+		return fmt.Errorf("%w: %w", ErrUsage, errNotAClone(absDir, root))
 	}
 	return nil
+}
+
+// The gitPreflight failures, shared with doctor's git check.
+
+func errRemoteGitMissing(cause error) error {
+	return fmt.Errorf("git deploy needs git on the remote host — not found: %v", cause)
+}
+
+func errNotACheckout(absDir string) error {
+	return fmt.Errorf("git deploy needs a git checkout at %s on the remote — it is not one", absDir)
+}
+
+func errNotAClone(absDir, root string) error {
+	return fmt.Errorf("the checkout at %s is not a clone of this repository (root commit %s absent) — refusing to git-deploy (use --no-git for the legacy rsync push)",
+		absDir, shortSHA(root))
 }
 
 // gitBootstrap ensures the deploy branch exists and is checked out, returning

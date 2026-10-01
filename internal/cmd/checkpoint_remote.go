@@ -112,15 +112,30 @@ func remoteDataDir(ctx context.Context, rsc remoteShellContext) (string, error) 
 }
 
 // remoteDiskFreeBytes returns the available bytes on the filesystem holding
-// path, via `df -Pk` inside the remote Postgres container (POSIX output:
-// the "Available" column is field 4, in KiB).
+// path, via `df -Pk` inside the remote Postgres container.
 func remoteDiskFreeBytes(ctx context.Context, rsc remoteShellContext, path string) (int64, error) {
 	argv := odoo.Cmd{"df", "-Pk", path}
 	out, err := runRemoteDBCmd(ctx, ckptRunSSH, rsc.sshHost, rsc.remotePath, rsc.target, argv)
 	if err != nil {
 		return 0, err
 	}
-	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+	return parseDfAvailable(string(out))
+}
+
+// remoteHostDiskFreeBytes is remoteDiskFreeBytes on the host filesystem, where
+// files Echo writes under remote_path land.
+func remoteHostDiskFreeBytes(ctx context.Context, rsc remoteShellContext, path string) (int64, error) {
+	out, err := ckptRunSSH(ctx, rsc.sshHost, "df -Pk "+shellQuote(path), nil)
+	if err != nil {
+		return 0, err
+	}
+	return parseDfAvailable(string(out))
+}
+
+// parseDfAvailable reads the available bytes from POSIX `df -Pk` output: the
+// last row's fourth field, in KiB.
+func parseDfAvailable(out string) (int64, error) {
+	lines := strings.Split(strings.TrimSpace(out), "\n")
 	if len(lines) < 2 {
 		return 0, fmt.Errorf("unexpected df output")
 	}
@@ -420,32 +435,24 @@ func destroyCheckpointObject(ctx context.Context, rsc remoteShellContext, e conf
 }
 
 // checkpointPreflight aborts before any container stop when the DB is too big
-// to checkpoint safely: the "db" method needs ~1.2× the DB size free, the
-// "dump" method ~0.5×. A best-effort probe — if the size or free space can't
-// be read, it warns and lets the deploy proceed rather than blocking on a
-// measurement gap.
+// to checkpoint safely on the filesystem the method writes to (checkpointNeed).
+// A best-effort probe — if the size or free space can't be read, it warns and
+// lets the deploy proceed rather than blocking on a measurement gap.
 func checkpointPreflight(ctx context.Context, rsc remoteShellContext, method string, log logFn) error {
 	db := rsc.prof.DBName
+	skipped := func(err error) error {
+		ckptLog(log, "WARNING", "checkpoint", "disk preflight skipped", db, [2]string{"reason", err.Error()})
+		return nil
+	}
 	size, err := remoteDBSize(ctx, rsc, db)
 	if err != nil {
-		ckptLog(log, "WARNING", "checkpoint", "disk preflight skipped", db, [2]string{"reason", err.Error()})
-		return nil
+		return skipped(err)
 	}
-	dataDir, err := remoteDataDir(ctx, rsc)
+	free, err := checkpointFreeBytes(ctx, rsc, method)
 	if err != nil {
-		ckptLog(log, "WARNING", "checkpoint", "disk preflight skipped", db, [2]string{"reason", err.Error()})
-		return nil
+		return skipped(err)
 	}
-	free, err := remoteDiskFreeBytes(ctx, rsc, dataDir)
-	if err != nil {
-		ckptLog(log, "WARNING", "checkpoint", "disk preflight skipped", db, [2]string{"reason", err.Error()})
-		return nil
-	}
-	factor := 1.2
-	if method == "dump" {
-		factor = 0.5
-	}
-	need := int64(float64(size) * factor)
+	need := checkpointNeed(size, method)
 	if free < need {
 		return fmt.Errorf("%w: not enough disk for a %s checkpoint — db is %s, need ~%s free, %s available (retry with --no-checkpoint, or free space with `checkpoint rm`)",
 			ErrUsage, method, humanBytes(size), humanBytes(need), humanBytes(free))
@@ -453,6 +460,30 @@ func checkpointPreflight(ctx context.Context, rsc remoteShellContext, method str
 	ckptLog(log, "INFO", "checkpoint", "disk preflight ok", db,
 		[2]string{"db_size", humanBytes(size)}, [2]string{"free", humanBytes(free)})
 	return nil
+}
+
+// checkpointFreeBytes measures the filesystem a checkpoint lands on: a `db`
+// copy in the cluster's data directory, a `dump` on the host under remote_path
+// (remoteDumpToFile redirects pg_dump there, outside the container).
+func checkpointFreeBytes(ctx context.Context, rsc remoteShellContext, method string) (int64, error) {
+	if method == "dump" {
+		return remoteHostDiskFreeBytes(ctx, rsc, rsc.remotePath)
+	}
+	dataDir, err := remoteDataDir(ctx, rsc)
+	if err != nil {
+		return 0, err
+	}
+	return remoteDiskFreeBytes(ctx, rsc, dataDir)
+}
+
+// checkpointNeed is the free space a checkpoint of a sizeBytes database needs:
+// ~1.2× for a `db` copy, ~0.5× for a compressed `dump`.
+func checkpointNeed(sizeBytes int64, method string) int64 {
+	factor := 1.2
+	if method == "dump" {
+		factor = 0.5
+	}
+	return int64(float64(sizeBytes) * factor)
 }
 
 // pruneCheckpoints enforces the retention keep count for a target: it keeps

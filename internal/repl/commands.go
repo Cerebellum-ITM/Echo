@@ -6,7 +6,7 @@ import "strings"
 // recognised by the REPL. The order matches the help output and
 // determines the order of the match list rendered on a double-Tab.
 var Registry = []string{
-	"init", "reset", "alias", "link",
+	"init", "reset", "alias", "link", "doctor",
 	"install", "update", "uninstall", "test", "modules", "modinfo", "modstate", "view", "compare", "lint",
 	"i18n-export", "i18n-update", "i18n-pull",
 	"db-admin", "db-backup", "db-restore", "db-pull", "db-drop", "db-neutralize", "db-list", "db-use",
@@ -23,6 +23,7 @@ var Registry = []string{
 var commandFlags = map[string][]string{
 	"alias":         {"--list", "--rm", "--migrate"},
 	"link":          {"--show", "--rm", "--next", "--list", "--add", "--json"},
+	"doctor":        {"--from", "--remote", "--json"},
 	"install":       {"--with-demo", "--level"},
 	"update":        {"--all", "--last", "--level", "--i18n", "--installed", "--from", "--remote", "-E", "--env"},
 	"uninstall":     {"--level"},

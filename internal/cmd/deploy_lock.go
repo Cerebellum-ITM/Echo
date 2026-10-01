@@ -127,31 +127,99 @@ func sortedLockModules(l DeployLock) []string {
 	return names
 }
 
+// lockState tells apart the ways a lock read can end. Absent is a valid
+// state (a target nothing was shipped to yet); unreadable and corrupt are not.
+type lockState int
+
+const (
+	lockFound lockState = iota
+	lockAbsent
+	lockUnreadable
+	lockCorrupt
+)
+
+func (s lockState) String() string {
+	switch s {
+	case lockFound:
+		return "found"
+	case lockAbsent:
+		return "absent"
+	case lockUnreadable:
+		return "unreadable"
+	}
+	return "corrupt"
+}
+
+// lockAbsentMarker is what lockReadScript prints when the file does not
+// exist, so an absent lock never looks like an empty or unreadable one.
+const lockAbsentMarker = "@@absent"
+
+// lockReadScript prints the lock, or lockAbsentMarker when there is none. A
+// file that exists but cannot be read makes the second cat fail with its own
+// error.
+func lockReadScript(remotePath string) string {
+	f := shellQuote(lockFilePath(remotePath))
+	return "cat " + f + " 2>/dev/null || if [ -e " + f + " ]; then cat " + f + "; else echo " + lockAbsentMarker + "; fi"
+}
+
+// lockReadOutput classifies the output of a successful lockReadScript run.
+func lockReadOutput(out []byte) ([]byte, lockState) {
+	if strings.TrimSpace(string(out)) == lockAbsentMarker {
+		return nil, lockAbsent
+	}
+	return out, lockFound
+}
+
+// fetchDeployLock reads the raw lock bytes. state is lockAbsent when the
+// target has no lock, lockUnreadable (with err) when the read itself failed,
+// and lockFound otherwise; whether the bytes parse is parseDeployLock's call.
+func fetchDeployLock(ctx context.Context, rsc remoteShellContext) (raw []byte, state lockState, err error) {
+	if rsc.remotePath == "" {
+		return nil, lockAbsent, nil
+	}
+	out, err := lockRunSSH(ctx, rsc.sshHost, lockReadScript(rsc.remotePath), nil)
+	if err != nil {
+		return nil, lockUnreadable, err
+	}
+	raw, state = lockReadOutput(out)
+	return raw, state, nil
+}
+
+// parseDeployLock decodes raw lock bytes. Empty bytes are an absent lock; bytes
+// that are not a lock are lockCorrupt with the decode error.
+func parseDeployLock(raw []byte) (DeployLock, lockState, error) {
+	if len(bytes.TrimSpace(raw)) == 0 {
+		return DeployLock{}, lockAbsent, nil
+	}
+	var lock DeployLock
+	if err := json.Unmarshal(raw, &lock); err != nil {
+		return DeployLock{}, lockCorrupt, err
+	}
+	if lock.Modules == nil {
+		lock.Modules = map[string]LockModule{}
+	}
+	return lock, lockFound, nil
+}
+
 // readDeployLock reads the target's lock; found is false when it has none. An
 // unreadable or unparsable file warns and reads as a fresh lock, so the next
 // write replaces it instead of every deploy failing on it.
 func readDeployLock(ctx context.Context, rsc remoteShellContext, log logFn) (lock DeployLock, found bool) {
-	lock = newDeployLock(rsc.fromName)
-	if rsc.remotePath == "" {
-		return lock, false
-	}
-	out, err := lockRunSSH(ctx, rsc.sshHost, "cat "+shellQuote(lockFilePath(rsc.remotePath))+" 2>/dev/null || true", nil)
-	if err != nil {
+	fresh := newDeployLock(rsc.fromName)
+	raw, state, err := fetchDeployLock(ctx, rsc)
+	if state == lockUnreadable {
 		ckptLog(log, "WARNING", "lock", "could not read the deploy lock", rsc.prof.DBName,
 			[2]string{"reason", err.Error()})
-		return lock, false
+		return fresh, false
 	}
-	if len(bytes.TrimSpace(out)) == 0 {
-		return lock, false
-	}
-	var parsed DeployLock
-	if err := json.Unmarshal(out, &parsed); err != nil {
+	parsed, state, err := parseDeployLock(raw)
+	switch state {
+	case lockAbsent:
+		return fresh, false
+	case lockCorrupt:
 		ckptLog(log, "WARNING", "lock", "deploy lock is unreadable — the next write replaces it", rsc.prof.DBName,
 			[2]string{"reason", err.Error()})
-		return lock, false
-	}
-	if parsed.Modules == nil {
-		parsed.Modules = map[string]LockModule{}
+		return fresh, false
 	}
 	return parsed, true
 }
@@ -401,6 +469,12 @@ func reportDeployLock(ctx context.Context, opts LinkOpts, db string) {
 	if !found {
 		return
 	}
+	opts.log("INFO", "", "deploy lock", db, lockSummaryFields(lock)...)
+}
+
+// lockSummaryFields is the one-line summary of a lock: module count,
+// unverified count, the newest ship and the modules shipped over the branch.
+func lockSummaryFields(lock DeployLock) [][2]string {
 	unverified, last := 0, ""
 	var overlay []string
 	for _, name := range sortedLockModules(lock) {
@@ -425,5 +499,5 @@ func reportDeployLock(ctx context.Context, opts LinkOpts, db string) {
 	if len(overlay) > 0 {
 		fields = append(fields, [2]string{"overlay", strings.Join(overlay, ",")})
 	}
-	opts.log("INFO", "", "deploy lock", db, fields...)
+	return fields
 }

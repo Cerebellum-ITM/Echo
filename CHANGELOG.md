@@ -20,6 +20,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   el modo link.
 
 ### Added
+- **`doctor`: one read-only health report of a remote target.** `doctor
+  --from <target>` (or `--remote`, or the usual link binding / single target /
+  picker) answers "is this target ready for deploy, push and checkpoints" in
+  one go: SSH reachability (and a warning for a literal `user@host`
+  `ssh_host`), the server profile (missing, not parsing with file and line,
+  missing containers or database, undeclared stage, unknown Odoo version,
+  invalid deploy actions), rsync on both ends, the git-deploy preflight on
+  git targets, free disk for the checkpoint a deploy would take, the deploy
+  lock (absent, unreadable, corrupt, unverified entries, `.echo/` tracked by
+  the server's repository), the push destination, and every other target on
+  the same host whose destination is the same directory (WARNING when its
+  stage differs, INFO when it matches). Each check prints one
+  `echo.doctor.<check>` line and every check runs even after one fails. It
+  changes nothing on either side, runs outside a compose project, takes three
+  SSH round trips, and exits 1 when any check failed (warnings alone exit 0).
+  `--json` writes one object to stdout with the target, the checks and their
+  counts; `.env` values never appear in either stream.
 - **`deploy` warns when a shipped module drops something a staying module still
   uses.** Before shipping, the plan compares each shipped module as it is on the
   server with the tree that replaces it (methods and fields in class bodies, XML
@@ -142,6 +159,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `reverb env env=<proj>/<env> id=<n> api=on|off`.
 
 ### Fixed
+- **The disk check before a `dump` checkpoint measures the right disk.** The
+  preflight compared the database size with the free space of the Postgres
+  data directory for both checkpoint methods, but a dump is written on the
+  host under `<remote_path>/backups/checkpoints`, so a full host disk passed
+  the check and the dump failed halfway. A `dump` checkpoint (in `deploy` and
+  `checkpoint create --method dump`) now measures the host filesystem of
+  `<remote_path>`; a `db` checkpoint keeps measuring the data directory.
+- **A deploy lock that exists but cannot be read is no longer taken for no
+  lock.** The read (`cat … || true`) turned a permission error into "no lock"
+  silently; it now logs the `could not read the deploy lock` WARNING an SSH
+  failure already logged, and the deploy goes on.
 - **A config file that does not parse is never overwritten.** A syntax error
   in `global.toml` or a project profile used to load defaults silently, and
   the next save (`--set-*`, `link`, registering a target, the compose

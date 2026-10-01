@@ -152,6 +152,12 @@
 
 ## Remote targets
 
+### 2026-09-30 · `doctor` is a read-only report that resolves its target like every remote verb and never stops at the first failure
+- **Why:** Each readiness fact (server rsync, git clone, checkpoint disk, lock state, destination) used to surface only when a deploy reached the step that needs it, after the code snapshot. `doctor` runs every check in three read-only SSH batches and reports each one, so one broken profile does not hide a missing rsync. Without `--from` it takes the usual chain (link binding, one target, TTY-guarded picker), because that is what every other remote verb does; checking every target at once can come later as `--all`.
+- **Rejected:** Requiring `--from`/`--remote` (bare `doctor` as `ErrUsage`); checking every registered target by default; reusing `resolveRemoteShell` (it returns at the first profile error doctor must survive).
+- **Source:** Unit 131 (user choice 2026-09-30); `internal/cmd/doctor.go` (`RunDoctor`).
+- **Status:** active
+
 ### 2026-09-30 · An undeclared remote stage is treated as prod; a broken server profile fails the command
 - **Why:** The server profile is the only source of a remote stage, and an empty or misspelled `stage` silently disabled every remote gate. Failing closed costs a confirm on a dev box with a sloppy profile; failing open can cost production. A profile that does not parse used to read as empty (no containers, no stage, no actions), which is the same hole.
 - **Rejected:** Defaulting a remote to `dev` like the local rule (the laptop is not the risk); refusing to run on an undeclared stage (blocks every read-only verb).
@@ -261,6 +267,12 @@
 - **Status:** active
 
 ## Deploy
+
+### 2026-09-30 · A shared push destination is reported, WARNING only across stages
+- **Why:** Sharing is legal (see the declined exclusive destination below), but dev sharing a destination with prod is the shape of the 2026-09-30 incident. `doctor` prints one `dest.shared` line per target on the same `ssh_host` whose destination resolves (`readlink -f`) to the same directory: WARNING when that target declares another stage, INFO when the stage matches, so a deliberate setup does not warn on every run. Two `Host` aliases of one machine are not detected.
+- **Rejected:** Always WARNING; always INFO; blocking a deploy on it.
+- **Source:** Unit 131 (user choice 2026-09-30); `internal/cmd/doctor.go` (`evalDestShared`).
+- **Status:** active
 
 ### 2026-09-30 · Declined: an exclusive push destination per target
 - **Why:** Owner's reason: it solved one project's configuration (a destination shared between targets) rather than improving Echo for everyone. The shared-destination case is handled generally instead: the lock lives under `remote_path`, not in the destination, and per-module source plus the code snapshot make a shared destination recoverable.
@@ -377,6 +389,12 @@
 - **Status:** active
 
 ## Deploy safety
+
+### 2026-09-30 · The checkpoint disk preflight measures where each method writes, through one `checkpointNeed`
+- **Why:** The preflight measured the Postgres data directory for both methods, but a `dump` is written by `pg_dump` redirected on the host under `<remote_path>/backups/checkpoints`, so a full host disk passed the check and failed mid-dump. `dump` now measures `df -Pk <remote_path>` on the host and `db` keeps the data directory inside the DB container; the factors (1.2x for `db`, 0.5x for `dump`) live in `checkpointNeed`, which `doctor` also uses, so the report and the deploy agree.
+- **Rejected:** Leaving deploy as it was and only having `doctor` measure the host (the two would disagree).
+- **Source:** Unit 131 (user choice 2026-09-30); `internal/cmd/checkpoint_remote.go` (`checkpointPreflight`, `checkpointNeed`).
+- **Status:** active
 
 ### 2026-09-30 · The partial-deploy dependency check is a regex warning that asks on staging/prod, not a parser that refuses
 - **Why:** The 2026-09-30 incident was a method dropped by a shipped module and still called by one left on the server. A regex over the server's old tree and the new one, plus a grep of the sibling modules, catches that shape with no Python on either end; a word match can be a comment, so a finding warns on `dev` and asks (fails closed without a TTY, `--force` passes) on staging, prod and undeclared stages instead of refusing. `--no-dep-check` is per run and logged, never a config key, for the same reason as `--no-lint`. A check that cannot run warns and lets the deploy go on: it must not become a new way for deploys to fail.

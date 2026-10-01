@@ -210,7 +210,7 @@ func (sess *session) renderPrompt() string {
 // are therefore not part of this slice.
 var dispatchNames = []string{
 	"help", "clear", "copy-last", "report", "logview", "sequence",
-	"init", "reset", "alias", "link",
+	"init", "reset", "alias", "link", "doctor",
 	"up", "down", "stop", "restart", "ps", "logs", "push", "deploy", "watch", "checkpoint", "actions", "promote",
 	"install", "update", "uninstall", "test", "modules", "modinfo", "modstate", "view", "compare", "lint",
 	"i18n-export", "i18n-update", "i18n-pull",
@@ -285,6 +285,8 @@ func (sess *session) dispatchParsed(ctx context.Context, cmd string, args []stri
 		sess.runAlias(ctx, args)
 	case "link":
 		sess.runLink(ctx, args)
+	case "doctor":
+		sess.runDoctor(ctx, args)
 	case "up", "down", "stop", "restart", "ps", "logs":
 		sess.runDocker(ctx, cmd, args)
 	case "install", "update", "uninstall", "test", "modules":
@@ -350,6 +352,9 @@ func helpSections() []helpSection {
 			{"  --list [--json]", "List the targets, marking the current one (no SSH, no write)"},
 			{"  --show", "Show the binding, probe the remote, stream its `ps`"},
 			{"  --rm", "Remove this directory's [connect] binding"},
+			{"doctor [--from <target>]", "Check a remote target is ready for deploy, push and checkpoints (read-only)"},
+			{"  --remote", "Check this directory's linked remote"},
+			{"  --json", "One JSON report on stdout, lines on stderr"},
 		}},
 		{"Modules", []helpEntry{
 			{"install <mod...>", "Install modules in the current DB"},
