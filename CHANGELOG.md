@@ -20,6 +20,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   el modo link.
 
 ### Added
+- **A failed deploy puts the code back, not only the database.** Before the
+  first code write, a deploy saves on the server what it is about to
+  overwrite — every module directory it rsyncs, the overlays it reverts and
+  the deploy lock — under `backups/code/`. Any failure from then on (a broken
+  push, a failing `post_push` build, `stop`/`up -d`, the `-u` run) goes
+  through the rollback decision, and rolling back restores the deploy branch
+  and the snapshot, re-runs the push actions so an image-built target
+  rebuilds from the restored code, and restores the database when a
+  checkpoint exists. Without a checkpoint (the `dev` default) the code still
+  comes back. A green deploy keeps the snapshot with its checkpoint for
+  `deploy --rollback`; a declined rollback is recorded as a `code` checkpoint
+  restorable later; `--no-rollback-on-fail` takes no snapshot.
 - **`deploy --modules mod@ref` and `--at <ref>`: ship a module as it is at any
   commit.** The module ships as committed at the ref — branch, tag or SHA,
   resolved locally and fetched like `--set-code` — whatever the local checkout

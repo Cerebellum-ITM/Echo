@@ -389,7 +389,7 @@ the code there — that's for the tool you use to sync the working tree.
 | `  --no-checkpoint` | Skip the DB checkpoint even on `staging`/`prod`          |
 | `  --set-checkpoint[=on\|off\|auto]` | Persist the checkpoint policy for this project and exit (no deploy) |
 | `  --set-checkpoint-method=db\|dump` / `--set-checkpoint-keep=N` | Companion setters for method / retention (no deploy) |
-| `  --rollback-on-fail` / `--no-rollback-on-fail` | Fix the on-failure decision headlessly: restore, or keep the broken DB — no prompt |
+| `  --rollback-on-fail` / `--no-rollback-on-fail` | Fix the on-failure decision headlessly: restore code (and DB), or keep the broken state — no prompt |
 | `  --no-actions`   | Skip declared `[[deploy.actions]]` for this run          |
 | `  --push` / `--no-push` | Push the resolved modules before the run / skip it even when it's the default |
 | `  --set-push[=bool]` | Set `deploy` to push by default and exit (no deploy)  |
@@ -398,7 +398,7 @@ the code there — that's for the tool you use to sync the working tree.
 | `  --test-modules[=<list>]` | Pin which modules get tested: bare opens a picker, `=csv` sets, empty clears (no deploy) |
 | `  --test-add` / `--test-rm <list>` | Add/remove modules from the pinned test list (no deploy) |
 | `  --test-clear`   | Clear the pinned test modules — back to testing what's deployed (no deploy) |
-| `  --rollback`     | Restore the target's most recent checkpoint (no deploy)  |
+| `  --rollback`     | Restore the target's most recent checkpoint — DB, code, or both (no deploy) |
 | `  --consume-checkpoint` | With `--rollback`: restore a `db` checkpoint by renaming it over the live DB (cheaper on disk, but destroys the checkpoint — no restore point remains) |
 | `  --restore-code [<sha>]` | Move a git-deploy target's code back to a hash it already ran (bare = picker over the branch's history), then restart (no DB) |
 | `  --set-code <ref>` | Re-baseline a git-deploy target's code onto **any** ref — branch, tag, SHA — then restart (no DB, see below) |
@@ -651,6 +651,40 @@ stays restorable — repeat the rollback, or redeploy and roll back again. Pass
 it needs no extra disk but destroys the checkpoint, leaving no restore point.
 The on-failure auto-rollback (during a deploy) still consumes its just-made
 checkpoint, since its purpose ends the moment the failed deploy is reverted.
+
+#### The code comes back too
+
+A rollback that restores only the database leaves the new code in place, which
+is a state that never existed: the old schema under the new modules, waiting for
+the next restart or image build to turn it into a second incident. So before a
+deploy writes any code, Echo saves on the server what it is about to overwrite —
+the destination directory of every module it rsyncs (and, on a git-deploy
+target, the overlays it reverts) plus the deploy lock — as
+`backups/code/<name>.tar.gz`. A module being installed is recorded as absent.
+
+Any failure from the first code write on — a push that breaks half-way, a
+failing `post_push` build, `stop`/`up -d`, the `-u` run or its verify — goes
+through the usual rollback decision (`--rollback-on-fail` /
+`--no-rollback-on-fail`, `--force`, the prompt, the headless default). Rolling
+back now:
+
+1. stops the app, when the run had touched it;
+2. restores the database, when there is a checkpoint (on `dev`, where
+   checkpoints are off by default, **the code still comes back**; the log says
+   the database was not restored);
+3. moves a git-deploy branch back and extracts the snapshot — files the failed
+   run added are gone, a module it was installing disappears;
+4. re-runs the `pre_push`/`post_push` actions, so an image-built target rebuilds
+   from the restored code (`--no-actions` skips them);
+5. starts the app.
+
+A green deploy keeps the snapshot with its checkpoint, so a later `deploy
+--rollback` restores database and code together; without a checkpoint it is
+deleted. A declined rollback is recorded as a checkpoint — a `code` one when
+there was no database copy — that `deploy --rollback` can restore later.
+`--no-rollback-on-fail` takes no snapshot at all. If the snapshot cannot be
+taken, the deploy stops before writing anything. `backups/code/` ignores itself
+the same way `.echo/` does.
 
 The `checkpoint` command inspects and cleans them:
 

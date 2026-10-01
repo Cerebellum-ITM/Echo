@@ -245,14 +245,9 @@ func pushModuleSet(ctx context.Context, rsc remoteShellContext, opts PushOpts, m
 		if err != nil {
 			return total, dests, fmt.Errorf("module %q: %w", m, err)
 		}
-		var destDir string
-		if destBase != "" {
-			destDir = path.Join(destBase, m)
-		} else {
-			destDir, err = pushDest(ctx, rv, opts, m)
-			if err != nil {
-				return total, dests, err
-			}
+		destDir, err := moduleDestDir(ctx, rv, opts, destBase, m)
+		if err != nil {
+			return total, dests, err
 		}
 		opts.log("INFO", "module", "syncing", rsc.prof.DBName,
 			[2]string{"module", m}, [2]string{"dest", destDir})
@@ -273,6 +268,15 @@ func pushModuleSet(ctx context.Context, rsc remoteShellContext, opts PushOpts, m
 		opts.log("INFO", "module", "synced", rsc.prof.DBName, fields...)
 	}
 	return total, dests, nil
+}
+
+// moduleDestDir is the remote directory a module syncs into: under destBase
+// when one was resolved, else wherever auto-detection finds it.
+func moduleDestDir(ctx context.Context, rv remoteView, opts PushOpts, destBase, module string) (string, error) {
+	if destBase != "" {
+		return path.Join(destBase, module), nil
+	}
+	return pushDest(ctx, rv, opts, module)
 }
 
 // countChanges tallies a change slice by operation.

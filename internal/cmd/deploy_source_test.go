@@ -210,7 +210,11 @@ func newFakeRemote(t *testing.T) *fakeRemote {
 	}
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	f := &fakeRemote{dir: filepath.Join(t.TempDir(), "srv"), logPath: filepath.Join(home, "compose.log")}
+	base, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	f := &fakeRemote{dir: filepath.Join(base, "srv"), logPath: filepath.Join(home, "compose.log")}
 	mustWrite(t, filepath.Join(home, ".config/echo/projects", config.ProjectKey(f.dir)+".toml"),
 		"stage = \"dev\"\ndb_name = \"stg\"\nodoo_version = \"18\"\n")
 	bin := t.TempDir()
@@ -220,6 +224,7 @@ shift
 cmd="$*"
 case "$cmd" in
   *psql*) printf 'sale|installed|18.0.1.0\nstock|installed|18.0.1.0\n' ;;
+  *stop-after-init*) printf '%s\n' "$cmd" >> "`+f.logPath+`"; [ -z "$FAKE_FAIL_RUN" ] ;;
   *compose*) printf '%s\n' "$cmd" >> "`+f.logPath+`" ;;
   *) exec sh -c "$cmd" ;;
 esac

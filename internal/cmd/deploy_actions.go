@@ -59,6 +59,30 @@ func resolveDeployActions(prof config.RemoteProfile, cfg *config.Config, noActio
 	return actions, source, nil
 }
 
+// rerunPushActions runs a target's pre_push and post_push actions outside a
+// deploy, so an image-built target rebuilds from code a rollback restored.
+func rerunPushActions(ctx context.Context, opts DeployOpts, rsc remoteShellContext, noActions bool, modules []string) error {
+	actions, _, err := resolveDeployActions(rsc.prof, opts.Cfg, noActions)
+	if err != nil {
+		return err
+	}
+	env := actionEnv{
+		stage:      rsc.target.stage,
+		db:         rsc.prof.DBName,
+		remotePath: rsc.remotePath,
+		modules:    strings.Join(modules, " "),
+	}
+	for _, phase := range []string{config.PhasePrePush, config.PhasePostPush} {
+		if len(actionsForPhase(actions, phase)) == 0 {
+			continue
+		}
+		if err := runDeployActions(ctx, rsc, opts, actions, phase, env); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // actionsForPhase filters an action list to one phase, preserving order.
 func actionsForPhase(actions []config.DeployAction, phase string) []config.DeployAction {
 	var out []config.DeployAction

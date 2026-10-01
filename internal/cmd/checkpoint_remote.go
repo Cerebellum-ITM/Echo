@@ -401,10 +401,19 @@ func restoreCheckpoint(ctx context.Context, rsc remoteShellContext, entry config
 	return false, nil
 }
 
-// destroyCheckpointObject removes a checkpoint's remote artifact (its copy DB
-// or its dump file), used by retention pruning and `checkpoint rm`.
+// destroyCheckpointObject removes a checkpoint's remote artifacts (its copy DB
+// or its dump file, and its code snapshot), used by retention pruning and
+// `checkpoint rm`.
 func destroyCheckpointObject(ctx context.Context, rsc remoteShellContext, e config.CheckpointEntry) error {
-	if e.Method == "dump" {
+	if e.CodeSnapshot != "" {
+		if err := destroyCodeSnapshot(ctx, rsc, e.CodeSnapshot); err != nil {
+			return err
+		}
+	}
+	switch e.Method {
+	case codeCheckpointMethod:
+		return nil
+	case "dump":
 		return remoteRemoveFile(ctx, rsc, e.DumpPath)
 	}
 	return remoteDropDB(ctx, rsc, e.Name)

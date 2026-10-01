@@ -1427,10 +1427,74 @@ func RunDeploy(ctx context.Context, opts DeployOpts) (DeployResult, error) {
 	// modules' local code to the remote addons dir before the run. In dry-run
 	// it prints the rsync itemization; on a real run a push failure aborts
 	// before anything restarts.
+	// The code rollback (Unit 126): before the first write, the run saves on
+	// the server what it is about to overwrite, so any later failure can put
+	// it back. --no-rollback-on-fail skips it: nobody would restore it.
+	takeSnapshot := p.rollbackOnFail == nil || *p.rollbackOnFail
+	var snap *codeSnapshot
+	codeWritten := false
+
+	// --push shares the deploy's already-resolved target: sync the resolved
+	// modules' local code to the remote addons dir before the run. In dry-run
+	// it prints the rsync itemization; on a real run a push failure aborts
+	// before anything restarts.
 	runPush := func(dryRun bool) error {
 		if !p.push {
 			return nil
 		}
+		archivedMods := make([]string, 0, len(archived))
+		for m := range archived {
+			archivedMods = append(archivedMods, m)
+		}
+		sort.Strings(archivedMods)
+		pushOpts := PushOpts{
+			Cfg: opts.Cfg, Root: opts.Root, Palette: opts.Palette,
+			Log: opts.Log, StreamOut: opts.StreamOut, OnSync: opts.OnSync,
+		}
+		// Resolve an explicit destination (server/local [push], no picker in
+		// a headless deploy). Empty → per-module auto-detect.
+		destBase := ""
+		if len(worktreeMods) > 0 || len(archivedMods) > 0 {
+			if err := requireRsync(); err != nil {
+				return err
+			}
+			if dest, source, mkdir := resolvePushDest(pushArgs{}, prof, opts.Cfg); dest != "" {
+				resolved, derr := applyResolvedDest(ctx, rsc, pushOpts, dest, source, mkdir, dryRun)
+				if derr != nil {
+					return derr
+				}
+				destBase = resolved
+			}
+		}
+
+		// Everything the run writes outside the deploy branch: the modules it
+		// rsyncs and, on a git target, the pinned overlays it reverts.
+		snapMods := append(append([]string(nil), worktreeMods...), archivedMods...)
+		if gitActive {
+			snapMods = append(snapMods, exceptModules(releasing, toStringSet(snapMods))...)
+		}
+		if takeSnapshot && len(snapMods) > 0 {
+			if dryRun {
+				opts.log("INFO", "plan", "code snapshot", prof.DBName,
+					[2]string{"modules", strings.Join(snapMods, ",")})
+			} else {
+				dests := make(map[string]string, len(snapMods))
+				for _, m := range snapMods {
+					d, derr := moduleDestDir(ctx, remoteView{rsc: rsc}, pushOpts, destBase, m)
+					if derr != nil {
+						return derr
+					}
+					dests[m] = d
+				}
+				s, serr := createCodeSnapshot(ctx, rsc, dests, opts.Log)
+				if serr != nil {
+					return serr
+				}
+				snap = &s
+			}
+		}
+		codeWritten = !dryRun
+
 		for _, m := range releasing {
 			opts.log("INFO", "push", "pin released", prof.DBName,
 				[2]string{"module", m}, [2]string{"was", current.Modules[m].label()})
@@ -1444,35 +1508,11 @@ func RunDeploy(ctx context.Context, opts DeployOpts) (DeployResult, error) {
 		}
 		// Git-deploy: the committed content advances the deploy branch with
 		// identical SHAs (real object transfer). The pre-advance branch HEAD is
-		// captured for the checkpoint's CodeSHA.
+		// captured so a rollback can move it back.
 		if gitActive && gitTip != "" {
 			if err := gitDeployCommitted(ctx, opts, rsc, gitCfg, gitTip, dryRun, &gitPreCodeSHA); err != nil {
 				return err
 			}
-		}
-		if len(worktreeMods) == 0 && len(archived) == 0 {
-			return nil
-		}
-		if err := requireRsync(); err != nil {
-			return err
-		}
-		pushRSC := remoteShellContext{
-			sshHost: sshHost, remotePath: remotePath, fromName: fromName,
-			target: target, prof: prof, conn: conn,
-		}
-		pushOpts := PushOpts{
-			Cfg: opts.Cfg, Root: opts.Root, Palette: opts.Palette,
-			Log: opts.Log, StreamOut: opts.StreamOut, OnSync: opts.OnSync,
-		}
-		// Resolve an explicit destination (server/local [push], no picker in
-		// a headless deploy). Empty → per-module auto-detect.
-		destBase := ""
-		if dest, source, mkdir := resolvePushDest(pushArgs{}, prof, opts.Cfg); dest != "" {
-			resolved, derr := applyResolvedDest(ctx, pushRSC, pushOpts, dest, source, mkdir, dryRun)
-			if derr != nil {
-				return derr
-			}
-			destBase = resolved
 		}
 		push := func(mods []string, srcRoot string, del bool) error {
 			if len(mods) == 0 {
@@ -1480,7 +1520,7 @@ func RunDeploy(ctx context.Context, opts DeployOpts) (DeployResult, error) {
 			}
 			opts.log("INFO", "push", "syncing modules to remote", prof.DBName,
 				[2]string{"modules", strings.Join(mods, ",")})
-			_, dests, perr := pushModuleSet(ctx, pushRSC, pushOpts, mods, srcRoot, destBase, dryRun, del)
+			_, dests, perr := pushModuleSet(ctx, rsc, pushOpts, mods, srcRoot, destBase, dryRun, del)
 			setLockDests(shipped, dests)
 			return perr
 		}
@@ -1502,11 +1542,6 @@ func RunDeploy(ctx context.Context, opts DeployOpts) (DeployResult, error) {
 			return err
 		}
 		// A commit's tree ships exactly: --delete removes what it deleted.
-		archivedMods := make([]string, 0, len(archived))
-		for m := range archived {
-			archivedMods = append(archivedMods, m)
-		}
-		sort.Strings(archivedMods)
 		return push(archivedMods, archiveDir, true)
 	}
 
@@ -1532,8 +1567,31 @@ func RunDeploy(ctx context.Context, opts DeployOpts) (DeployResult, error) {
 	if err := runActions(config.PhasePrePush); err != nil {
 		return DeployResult{}, err
 	}
+
+	// Every failure from the first code write on goes through fail, which
+	// offers to put back the code (and the DB, once a checkpoint exists).
+	var ckptEntry *config.CheckpointEntry
+	appTouched := false
+	fail := func(failErr error) (DeployResult, error) {
+		if !codeWritten && ckptEntry == nil {
+			return DeployResult{}, failErr
+		}
+		return handleDeployFailure(ctx, opts, rsc, p, deployFailure{
+			checkpoint: ckptEntry,
+			snapshot:   snap,
+			codeSHA:    gitPreCodeSHA,
+			appTouched: appTouched,
+			rerunPush: func() error {
+				if err := runActions(config.PhasePrePush); err != nil {
+					return err
+				}
+				return runActions(config.PhasePostPush)
+			},
+		}, result, projectKey, targetKey, failErr)
+	}
+
 	if err := runPush(false); err != nil {
-		return DeployResult{}, fmt.Errorf("push failed: %w", err)
+		return fail(fmt.Errorf("push failed: %w", err))
 	}
 	if p.push {
 		updateDeployLock(ctx, rsc, opts.Log, func(l *DeployLock) {
@@ -1544,7 +1602,7 @@ func RunDeploy(ctx context.Context, opts DeployOpts) (DeployResult, error) {
 		})
 	}
 	if err := runActions(config.PhasePostPush); err != nil {
-		return DeployResult{}, err
+		return fail(err)
 	}
 
 	// Disk preflight runs before any container stop, so a doomed deploy never
@@ -1552,7 +1610,7 @@ func RunDeploy(ctx context.Context, opts DeployOpts) (DeployResult, error) {
 	// abort now with both numbers named.
 	if ckptEnabled {
 		if err := checkpointPreflight(ctx, rsc, ckptMethod, opts.Log); err != nil {
-			return DeployResult{}, err
+			return fail(err)
 		}
 	}
 
@@ -1568,7 +1626,7 @@ func RunDeploy(ctx context.Context, opts DeployOpts) (DeployResult, error) {
 	// pre_deploy runs right before the containers are touched — the last
 	// hook while the service is still up (maintenance page, job drain).
 	if err := runActions(config.PhasePreDeploy); err != nil {
-		return DeployResult{}, err
+		return fail(err)
 	}
 
 	// Stop before the run. With a checkpoint we stop ONLY the Odoo app service
@@ -1580,30 +1638,25 @@ func RunDeploy(ctx context.Context, opts DeployOpts) (DeployResult, error) {
 	if ckptEnabled {
 		stopCmd = remoteStopApp(rsc)
 	}
+	appTouched = true
 	if err := step("stop", stopCmd); err != nil {
-		return DeployResult{}, err
+		return fail(err)
 	}
 
 	// Checkpoint the DB with the app stopped (no sessions on the source) but the
 	// DB container still up. A creation failure aborts before the run so nothing
 	// is half-migrated.
-	var ckptEntry config.CheckpointEntry
 	if ckptEnabled {
 		entry, info, cerr := createCheckpoint(ctx, rsc, ckptMethod, deployedShas, opts.StreamOut, opts.Log)
 		if cerr != nil {
-			return DeployResult{}, cerr
+			return fail(cerr)
 		}
-		ckptEntry = entry
-		// Record the pre-deploy code hash so a rollback restores DB + code
-		// together (git-deploy runs only).
-		if gitActive && gitPreCodeSHA != "" {
-			ckptEntry.CodeSHA = gitPreCodeSHA
-		}
+		ckptEntry = &entry
 		result.Checkpoint = &info
 	}
 
 	if err := step("up -d", remoteComposeCmd(remotePath, target.composeCmd, "up", "-d")); err != nil {
-		return DeployResult{}, err
+		return fail(err)
 	}
 	// Name the modules and the effective i18n flag right at the Odoo run, so
 	// the execution line mirrors `update`'s start line.
@@ -1635,10 +1688,7 @@ func RunDeploy(ctx context.Context, opts DeployOpts) (DeployResult, error) {
 			opts.log("ERROR", "verify", "run reported errors — treating as failed", prof.DBName,
 				[2]string{"hits", strconv.Itoa(scanner.hits)})
 		}
-		if ckptEnabled {
-			return handleDeployFailure(ctx, opts, rsc, p, ckptEntry, result, projectKey, targetKey, runErr)
-		}
-		return DeployResult{}, deployRunError(runErr)
+		return fail(deployRunError(runErr))
 	}
 	// The remote run landed: every resolved module deployed OK.
 	for i := range result.Modules {
@@ -1661,9 +1711,20 @@ func RunDeploy(ctx context.Context, opts DeployOpts) (DeployResult, error) {
 
 	// Record the checkpoint (kept for a later deploy --rollback) and prune the
 	// tail to the retention keep count.
-	if ckptEnabled {
-		if err := config.AddCheckpoint(projectKey, targetKey, ckptEntry); err == nil {
+	// The code snapshot rides along with it so a later --rollback restores
+	// DB and code together; without a checkpoint nothing will ever use it.
+	if ckptEntry != nil {
+		ckptEntry.CodeSHA = gitPreCodeSHA
+		if snap != nil {
+			ckptEntry.CodeSnapshot = snap.Name
+		}
+		if err := config.AddCheckpoint(projectKey, targetKey, *ckptEntry); err == nil {
 			pruneCheckpoints(ctx, rsc, projectKey, targetKey, ckptPolicy.keep, opts.Log)
+		}
+	} else if snap != nil {
+		if err := destroyCodeSnapshot(ctx, rsc, snap.Name); err != nil {
+			opts.log("WARNING", "snapshot", "could not remove the code snapshot", prof.DBName,
+				[2]string{"name", snap.Name}, [2]string{"err", err.Error()})
 		}
 	}
 
@@ -1722,77 +1783,143 @@ func rollbackDecision(p deployArgs, tty bool) (decided, doRollback bool) {
 	}
 }
 
-// handleDeployFailure is the checkpoint-on failure path. In an interactive
-// session it asks before restoring (so the operator can inspect the broken
-// DB); headless (--force or no TTY) it rolls back automatically, and an
-// explicit --rollback-on-fail/--no-rollback-on-fail fixes the choice either
-// way without a prompt. Either way the deploy's commits are never marked
-// deployed. It returns the populated result (RolledBack set when restored)
-// alongside the deploy error, so a headless caller like watch can read the
-// outcome.
-func handleDeployFailure(ctx context.Context, opts DeployOpts, rsc remoteShellContext, p deployArgs, entry config.CheckpointEntry, result DeployResult, projectKey, targetKey string, runErr error) (DeployResult, error) {
-	// Decide whether to roll back. An explicit --rollback-on-fail /
-	// --no-rollback-on-fail wins outright (deterministic for agents/CI);
-	// otherwise fall back to the interactive confirm on a TTY, or the headless
-	// default (roll back). A decline / --no-rollback-on-fail keeps the broken DB
-	// and the checkpoint (recorded so `deploy --rollback` finds it).
+// deployFailure is what a failed deploy leaves to undo.
+type deployFailure struct {
+	checkpoint *config.CheckpointEntry // the DB copy the run took; nil when none
+	snapshot   *codeSnapshot           // the module directories it overwrote; nil when none
+	codeSHA    string                  // the deploy branch before it moved; "" when it did not
+	appTouched bool                    // the run stopped or restarted the app
+	rerunPush  func() error            // the push actions, to rebuild from restored code
+}
+
+// restorePoint is the checkpoint entry that keeps what was not restored
+// restorable with `deploy --rollback`: the DB copy, the code, or both.
+func (f deployFailure) restorePoint(withDB, withCode bool) (config.CheckpointEntry, bool) {
+	var entry config.CheckpointEntry
+	switch {
+	case withDB && f.checkpoint != nil:
+		entry = *f.checkpoint
+	case withCode && (f.snapshot != nil || f.codeSHA != ""):
+		entry = config.CheckpointEntry{Method: codeCheckpointMethod, CreatedAt: time.Now()}
+		if f.snapshot != nil {
+			entry.Name = f.snapshot.Name
+		} else {
+			entry.Name = "code_" + shortSHA(f.codeSHA)
+		}
+	default:
+		return config.CheckpointEntry{}, false
+	}
+	if withCode {
+		entry.CodeSHA = f.codeSHA
+		if f.snapshot != nil {
+			entry.CodeSnapshot = f.snapshot.Name
+		}
+	}
+	return entry, true
+}
+
+// handleDeployFailure undoes a deploy that failed after it wrote code or took
+// a checkpoint. In an interactive session it asks first (so the operator can
+// inspect the broken state); headless (--force or no TTY) it rolls back, and
+// --rollback-on-fail / --no-rollback-on-fail fix the choice either way.
+//
+// A rollback stops the app when the run had touched it, restores the DB from
+// the checkpoint when there is one, puts the code back (the deploy branch, then
+// the snapshot of every module directory the run overwrote), re-runs the push
+// actions so an image-built target rebuilds from the restored code, and
+// starts the app again. Whatever is not restored is recorded as a checkpoint
+// so `deploy --rollback` can finish the job. The deploy's commits are never
+// marked deployed. It returns the result (RolledBack set when restored) with
+// failErr, so a headless caller like watch can read the outcome.
+func handleDeployFailure(ctx context.Context, opts DeployOpts, rsc remoteShellContext, p deployArgs, f deployFailure, result DeployResult, projectKey, targetKey string, failErr error) (DeployResult, error) {
+	db := rsc.prof.DBName
+	if f.checkpoint == nil && f.snapshot == nil && f.codeSHA == "" {
+		return result, failErr
+	}
 	decided, doRollback := rollbackDecision(p, stdinIsTTY())
 	if !decided {
-		doRollback = confirmRollback(opts.Palette, rsc.prof.DBName, entry)
+		doRollback = confirmRollback(opts.Palette, db, f.checkpoint)
 	}
 	if !doRollback {
-		_ = config.AddCheckpoint(projectKey, targetKey, entry)
-		opts.log("WARNING", "rollback", "skipped — restore later with deploy --rollback", rsc.prof.DBName,
-			[2]string{"checkpoint", entry.Name})
-		return result, deployRunError(runErr)
+		if entry, ok := f.restorePoint(true, true); ok {
+			_ = config.AddCheckpoint(projectKey, targetKey, entry)
+			opts.log("WARNING", "rollback", "skipped — restore later with deploy --rollback", db,
+				[2]string{"checkpoint", entry.Name})
+		}
+		return result, failErr
 	}
 
-	// Stop the app for a clean restore (the run left it up), keeping the DB
-	// container up so the restore's psql/pg_restore can run.
-	opts.log("INFO", "rollback", "stopping app before restore", rsc.prof.DBName)
-	_ = runSSHStream(ctx, rsc.sshHost, remoteStopApp(rsc), nil, opts.StreamOut)
-
-	// On-failure auto-rollback keeps consuming the just-made checkpoint (its
-	// purpose is served the moment the failed deploy is reverted). The
-	// keep-a-restore-point behavior is opt-in via `deploy --rollback`.
-	consumed, rerr := restoreCheckpoint(ctx, rsc, entry, true, opts.StreamOut, opts.Log)
-	if rerr != nil {
-		// The rollback itself failed: keep the checkpoint recorded for a manual
-		// retry and surface both failures.
-		_ = config.AddCheckpoint(projectKey, targetKey, entry)
-		opts.log("ERROR", "rollback", "rollback failed — checkpoint preserved", rsc.prof.DBName,
-			[2]string{"checkpoint", entry.Name}, [2]string{"err", rerr.Error()})
-		return result, fmt.Errorf("odoo run failed and rollback failed: %v (run error: %w)", rerr, runErrOrSynthetic(runErr))
+	if f.appTouched || f.checkpoint != nil {
+		// The restore's psql/pg_restore needs the DB container up: stop only
+		// the app.
+		opts.log("INFO", "rollback", "stopping app before restore", db)
+		_ = runSSHStream(ctx, rsc.sshHost, remoteStopApp(rsc), nil, opts.StreamOut)
 	}
-	// Restore the code alongside the DB when the checkpoint carries a pre-deploy
-	// hash (git-deploy targets). Best-effort: a failure here is logged but the
-	// DB is already restored, so it must not mask the run error.
-	if entry.CodeSHA != "" {
-		g := resolveGitDeploy(opts.Cfg, rsc.fromName, rsc.sshHost, rsc.remotePath)
-		if cerr := gitRestoreCode(ctx, rsc, g, entry.CodeSHA, opts.Log); cerr != nil {
-			opts.log("ERROR", "rollback", "database restored but code restore failed", rsc.prof.DBName,
-				[2]string{"sha", shortSHA(entry.CodeSHA)}, [2]string{"err", cerr.Error()})
+
+	consumed := false
+	if f.checkpoint != nil {
+		// On-failure auto-rollback keeps consuming the just-made checkpoint
+		// (its purpose is served the moment the failed deploy is reverted).
+		c, rerr := restoreCheckpoint(ctx, rsc, *f.checkpoint, true, opts.StreamOut, opts.Log)
+		if rerr != nil {
+			entry, _ := f.restorePoint(true, true)
+			_ = config.AddCheckpoint(projectKey, targetKey, entry)
+			opts.log("ERROR", "rollback", "rollback failed — checkpoint preserved", db,
+				[2]string{"checkpoint", entry.Name}, [2]string{"err", rerr.Error()})
+			return result, fmt.Errorf("deploy failed and rollback failed: %v (deploy error: %w)", rerr, failErr)
+		}
+		consumed = c
+	} else {
+		opts.log("WARNING", "rollback", "no database checkpoint — restoring the code only", db)
+	}
+
+	codeRestored := restoreDeployedCode(ctx, opts, rsc, f.codeSHA, f.snapshot)
+	if f.snapshot != nil || f.codeSHA != "" {
+		if err := f.rerunPush(); err != nil {
+			opts.log("ERROR", "rollback", "push actions failed on the restored code", db,
+				[2]string{"err", err.Error()})
 		}
 	}
 	_ = runSSHStream(ctx, rsc.sshHost, remoteComposeCmd(rsc.remotePath, rsc.target.composeCmd, "up", "-d"), nil, opts.StreamOut)
 
-	// A dump survives its own restore, so keep it recorded for a possible
-	// re-rollback; a db-method copy was consumed by the rename.
-	if !consumed {
+	// A dump survives its own restore, so it stays recorded for a possible
+	// re-rollback; a db-method copy was consumed by the rename. Code that did
+	// not come back stays restorable too.
+	if entry, ok := f.restorePoint(!consumed, !codeRestored); ok {
 		_ = config.AddCheckpoint(projectKey, targetKey, entry)
 	}
+	if f.snapshot != nil && codeRestored {
+		_ = destroyCodeSnapshot(ctx, rsc, f.snapshot.Name)
+	}
 	result.RolledBack = true
-	opts.log("INFO", "rollback", "rolled back — commits not marked deployed", rsc.prof.DBName)
-	return result, deployRunError(runErr)
+	opts.log("INFO", "rollback", "rolled back — commits not marked deployed", db,
+		[2]string{"database", strconv.FormatBool(f.checkpoint != nil)},
+		[2]string{"code", strconv.FormatBool(codeRestored)})
+	return result, failErr
 }
 
-// runErrOrSynthetic returns runErr, or a synthetic "reported errors" error
-// when the run exited 0 but its stream flagged a failure.
-func runErrOrSynthetic(runErr error) error {
-	if runErr != nil {
-		return runErr
+// restoreDeployedCode moves the deploy branch back to codeSHA (git targets)
+// and extracts the snapshot over the module directories, reporting whether
+// all of it came back. Failures are logged, never returned: the caller is
+// already handling a failed deploy and must not lose that error.
+func restoreDeployedCode(ctx context.Context, opts DeployOpts, rsc remoteShellContext, codeSHA string, snap *codeSnapshot) bool {
+	ok := true
+	if codeSHA != "" {
+		g := resolveGitDeploy(opts.Cfg, rsc.fromName, rsc.sshHost, rsc.remotePath)
+		if err := gitRestoreCode(ctx, rsc, g, codeSHA, opts.Log); err != nil {
+			opts.log("ERROR", "rollback", "deploy branch restore failed", rsc.prof.DBName,
+				[2]string{"sha", shortSHA(codeSHA)}, [2]string{"err", err.Error()})
+			ok = false
+		}
 	}
-	return fmt.Errorf("run reported errors in its output")
+	if snap != nil {
+		if err := restoreCodeSnapshot(ctx, rsc, *snap, opts.Log); err != nil {
+			opts.log("ERROR", "rollback", "code snapshot restore failed", rsc.prof.DBName,
+				[2]string{"snapshot", snap.Name}, [2]string{"err", err.Error()})
+			ok = false
+		}
+	}
+	return ok
 }
 
 // runDeployRollback restores a target's checkpoint outside a deploy
@@ -1841,18 +1968,41 @@ func runDeployRollback(ctx context.Context, opts DeployOpts, p deployArgs) (Depl
 	}
 	// Keep the checkpoint by default (restore leaves it intact, so the point
 	// stays restorable); --consume-checkpoint opts into the cheaper rename that
-	// destroys it. The "dump" method preserves its file regardless.
-	consumed, rerr := restoreCheckpoint(ctx, rsc, chosen, p.consumeCheckpoint, opts.StreamOut, opts.Log)
-	if rerr != nil {
-		return DeployResult{}, fmt.Errorf("restore failed: %w", rerr)
+	// destroys it. The "dump" method preserves its file regardless. A "code"
+	// entry has no database part.
+	consumed := false
+	if chosen.Method != codeCheckpointMethod {
+		c, rerr := restoreCheckpoint(ctx, rsc, chosen, p.consumeCheckpoint, opts.StreamOut, opts.Log)
+		if rerr != nil {
+			return DeployResult{}, fmt.Errorf("restore failed: %w", rerr)
+		}
+		consumed = c
 	}
-	// Restore the code to the checkpoint's pre-deploy hash when recorded
-	// (git-deploy targets), so a post-hoc rollback returns DB + code together.
-	if chosen.CodeSHA != "" {
-		g := resolveGitDeploy(opts.Cfg, rsc.fromName, rsc.sshHost, rsc.remotePath)
-		if cerr := gitRestoreCode(ctx, rsc, g, chosen.CodeSHA, opts.Log); cerr != nil {
-			opts.log("ERROR", "rollback", "database restored but code restore failed", rsc.prof.DBName,
-				[2]string{"sha", shortSHA(chosen.CodeSHA)}, [2]string{"err", cerr.Error()})
+	// Put back the code the checkpoint recorded — the deploy branch's
+	// pre-deploy hash and the snapshot of the module directories — so a
+	// post-hoc rollback returns DB and code together.
+	var snap *codeSnapshot
+	if chosen.CodeSnapshot != "" {
+		s, serr := readCodeSnapshot(ctx, rsc, chosen.CodeSnapshot)
+		if serr != nil {
+			opts.log("ERROR", "rollback", "code snapshot unreadable — code not restored", rsc.prof.DBName,
+				[2]string{"snapshot", chosen.CodeSnapshot}, [2]string{"err", serr.Error()})
+		} else {
+			snap = &s
+		}
+	}
+	if chosen.CodeSHA != "" || snap != nil {
+		restoreDeployedCode(ctx, opts, rsc, chosen.CodeSHA, snap)
+		var modules []string
+		if snap != nil {
+			for m := range snap.Dests {
+				modules = append(modules, m)
+			}
+			sort.Strings(modules)
+		}
+		if err := rerunPushActions(ctx, opts, rsc, p.noActions, modules); err != nil {
+			opts.log("ERROR", "rollback", "push actions failed on the restored code", rsc.prof.DBName,
+				[2]string{"err", err.Error()})
 		}
 	}
 	if err := runSSHStream(ctx, rsc.sshHost, remoteComposeCmd(rsc.remotePath, rsc.target.composeCmd, "up", "-d"), nil, opts.StreamOut); err != nil {
@@ -1867,6 +2017,9 @@ func runDeployRollback(ctx context.Context, opts DeployOpts, p deployArgs) (Depl
 	disposition := "preserved"
 	if consumed {
 		_ = config.RemoveCheckpoint(projectKey, targetKey, chosen.Name)
+		if chosen.CodeSnapshot != "" {
+			_ = destroyCodeSnapshot(ctx, rsc, chosen.CodeSnapshot)
+		}
 		disposition = "consumed"
 	}
 	opts.log("INFO", "", "rollback complete", rsc.prof.DBName,
