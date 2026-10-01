@@ -669,17 +669,6 @@ func intersectModules(mods []string, keep map[string]bool) []string {
 	return out
 }
 
-// exceptModules keeps the modules not in drop, preserving order.
-func exceptModules(mods []string, drop map[string]bool) []string {
-	var out []string
-	for _, m := range mods {
-		if !drop[m] {
-			out = append(out, m)
-		}
-	}
-	return out
-}
-
 // firstLine returns the first non-empty line of s, trimmed.
 func firstLine(s string) string {
 	for _, l := range strings.Split(s, "\n") {

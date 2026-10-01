@@ -20,6 +20,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   el modo link.
 
 ### Added
+- **`deploy --modules mod@ref` and `--at <ref>`: ship a module as it is at any
+  commit.** The module ships as committed at the ref — branch, tag or SHA,
+  resolved locally and fetched like `--set-code` — whatever the local checkout
+  is on and whatever is uncommitted in it, and its server folder ends up
+  identical to `git archive <ref> -- <module>`. The module is located in the
+  ref's own tree, so it does not need to exist on disk. On a git-deploy target
+  it ships as overlay and the deploy branch does not move. The plan shows the
+  version at the ref next to the one installed, i18n changes are detected
+  against the commit the lock records, and only the pinned modules run `-u`.
+  The next ship of a pinned module replaces it whole: with `--delete` on an
+  rsync target, by reverting its overlay before the branch moves on a
+  git-deploy one.
 - **Deploy lock: every target records the code it runs.** `deploy`,
   `watch-deploy`, `push`, `push --clean`, `deploy --set-code` and
   `--restore-code` now write `<remote_path>/.echo/lock.json` on the target:
@@ -45,6 +57,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   la sesión.
 
 ### Changed
+- **Selecting commits ships those commits, not the disk.** On a target without
+  git-deploy, a module resolved from selected commits used to rsync the working
+  tree, carrying later commits and uncommitted edits along. It now ships the
+  module's tree at its newest selected commit; a module selected as dirty still
+  ships the working tree. The pre-flight lint reads the tree that ships, and
+  `watch-deploy` no longer archives on its own.
 - **Code shipped from a commit is synced exactly.** When a deploy pushes from a
   `git archive` (today, `watch-deploy`), rsync runs with `--delete` scoped to
   each module directory, so files the commit deleted no longer linger on the

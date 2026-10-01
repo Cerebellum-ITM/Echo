@@ -233,7 +233,9 @@ func TestLockEntries(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	dir, cleanup, err := archiveModules(ctx, cfg, root, sha, []string{"sale"})
+	dir, cleanup, err := archiveModuleSources(ctx, root, map[string]moduleSource{
+		"sale": {kind: lockSourceCommit, sha: sha, path: "addons/sale"},
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -257,9 +259,9 @@ func TestLogCodePlan(t *testing.T) {
 		"sale":  {Source: lockSourceCommit, SHA: "99f2109bbbb", Version: "1.1"},
 		"stock": {Source: lockSourceWorktree, SHA: "99f2109bbbb", Dirty: true},
 	}
-	logCodePlan(rec.log, "db", shipped, current)
+	logCodePlan(rec.log, "db", shipped, current, map[string]string{"sale": "1.0"})
 	want := []string{
-		"INFO plan code module=sale ship=commit@99f2109 version=1.1 locked=worktree@0b6fc41 locked_version=1.0",
+		"INFO plan code module=sale ship=commit@99f2109 version=1.1 installed=1.0 locked=worktree@0b6fc41 locked_version=1.0",
 		"INFO plan code module=stock ship=worktree@99f2109+dirty locked=none",
 	}
 	if strings.Join(rec.lines, "\n") != strings.Join(want, "\n") {

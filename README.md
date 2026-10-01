@@ -383,7 +383,8 @@ the code there — that's for the tool you use to sync the working tree.
 | `  --dry-run`      | Resolve modules and show the plan; execute nothing       |
 | `  --force`        | Skip the prod-stage confirmation                         |
 | `  --commits <shas>` | Deploy these commits non-interactively (skips the picker) |
-| `  --modules <names>` | Deploy these (dirty) modules non-interactively (skips the picker) |
+| `  --modules <names>` | Deploy these (dirty) modules non-interactively (skips the picker); `mod@ref` ships a module as committed at `ref` |
+| `  --at <ref>`     | Ship every `--modules` entry as committed at `<ref>` — branch, tag or SHA — never from the working tree (see below) |
 | `  --checkpoint[=db\|dump]` | Force a DB checkpoint before the run (default: auto on `staging`/`prod`) |
 | `  --no-checkpoint` | Skip the DB checkpoint even on `staging`/`prod`          |
 | `  --set-checkpoint[=on\|off\|auto]` | Persist the checkpoint policy for this project and exit (no deploy) |
@@ -410,7 +411,7 @@ code, make `--push` the default instead of typing it every time: `deploy
 --set-push` writes `[deploy] push = true` to the local profile (headless, no
 deploy), or declare it in the server profile (server wins, local falls back).
 Then `deploy` pushes on its own; `deploy --no-push` skips it for one run.
-`watch` always pushes from its own git archive, so the default never
+`watch` always pushes each module as committed, so the default never
 double-pushes there.
 
 #### Re-baseline the deploy line (`--set-code`)
@@ -503,9 +504,10 @@ version of this module is running, and where did it come from?":
 ```
 
 `source` is `worktree` (rsync from your working tree; `sha` is the local HEAD
-and `dirty` says whether uncommitted edits went along), `commit` (rsync from a
-`git archive`, as `watch-deploy` does) or `branch` (the module rode a git-deploy
-target's branch, which the lock also records as `base`). `verified` turns true
+and `dirty` says whether uncommitted edits went along), `commit` (rsync of the
+module's tree at the selected commit), `ref` (a module pinned with `mod@ref` /
+`--at`) or `branch` (the module rode a git-deploy target's branch, which the
+lock also records as `base`). `verified` turns true
 once Odoo ran `-u` on that code successfully; a failed run leaves it false.
 
 ```
@@ -523,10 +525,46 @@ repository itself is not modified. If that repository already *tracks* files
 under `.echo/`, Echo warns with the fix (`git rm --cached -r .echo`). A lock
 read or write that fails is a warning, never a failed deploy.
 
-Content shipped from a commit (the `watch-deploy` archive) is synced **exactly**:
-rsync runs with `--delete` scoped to each module directory, so a file the commit
-deleted is removed from the server too. Pushes from the working tree keep
-`push`'s opt-in `--delete`.
+Content shipped from a commit is synced **exactly**: rsync runs with
+`--delete` scoped to each module directory, so a file the commit deleted is
+removed from the server too. Pushes from the working tree keep `push`'s opt-in
+`--delete`.
+
+#### Where each module's code comes from
+
+Every module in a deploy first resolves **what** ships, and the target's
+transport then decides **how**:
+
+| Source | rsync target | git-deploy target |
+|---|---|---|
+| working tree — a dirty module (picker, `--auto`, `--modules` without `@`) | rsync from disk | rsync overlay |
+| a selected commit | rsync of the module's tree at its newest selected commit | rides the deploy branch |
+| a ref — `--modules mod@ref` or `--at <ref>` | rsync of the module's tree at the ref | rsync overlay of that tree; the branch does not move |
+
+Selecting commits ships those commits: not later ones, not uncommitted edits
+that happen to be on disk. To ship one module exactly as it is at some commit,
+whatever your checkout is on:
+
+```
+deploy --modules sale_custom@99f2109 --from staging --dry-run
+deploy --modules sale_custom@99f2109 --from staging
+deploy --modules sale_custom,stock_custom --at origin/release/1.4 --from staging
+```
+
+The ref resolves **locally** (a `<remote>/<branch>` ref fetches that remote
+first; `--fetch` forces it, `--no-fetch` skips it), the module is located in the
+ref's own tree (it does not need to exist on disk), and its folder on the server
+ends up identical to `git archive <ref> -- <module>`. Uncommitted edits to that
+module are ignored with a warning. The plan shows, per module, the source, the
+manifest version at it, the version installed in the database and what the lock
+holds; only the pinned modules run `-u`. A pinned module must ship, so it cannot
+combine with `--no-push`.
+
+**The last ship wins.** The next deploy of a pinned module, from any source,
+replaces it whole: on an rsync target with `--delete`, on a git-deploy target by
+reverting the module's overlay before the branch moves (`pin released` in the
+log). `push --clean` and `deploy --set-code` (without `--keep-overlay`) also
+drop pins.
 
 #### Deploy + test in one command
 

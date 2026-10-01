@@ -262,27 +262,38 @@ func lockEntries(ctx context.Context, cfg *config.Config, root string, src shipS
 }
 
 // deployShipEntries describes the code a deploy ships: the modules riding the
-// git deploy branch (which also becomes the lock base) and the ones the push
-// rsyncs, from the watcher's archive or from the working tree.
-func deployShipEntries(ctx context.Context, opts DeployOpts, g gitDeployConfig, gitTip string, branchMods, pushMods []string) (map[string]LockModule, *LockBase) {
+// git deploy branch (which also becomes the lock base), the ones rsynced from
+// the working tree, and the ones shipped from a commit's tree in archiveDir.
+func deployShipEntries(ctx context.Context, opts DeployOpts, g gitDeployConfig, gitTip string, branchMods, worktreeMods []string, archived map[string]moduleSource, archiveDir string) (map[string]LockModule, *LockBase) {
 	via := opts.Via
 	if via == "" {
 		via = "deploy"
 	}
 	shipped := map[string]LockModule{}
+	add := func(entries map[string]LockModule) {
+		for name, e := range entries {
+			shipped[name] = e
+		}
+	}
 	var base *LockBase
 	if gitTip != "" {
 		ref := localBranchName(ctx, opts.Root)
-		shipped = lockEntries(ctx, opts.Cfg, opts.Root,
-			shipSource{kind: lockSourceBranch, sha: gitTip, ref: ref, via: via}, branchMods)
+		add(lockEntries(ctx, opts.Cfg, opts.Root,
+			shipSource{kind: lockSourceBranch, sha: gitTip, ref: ref, via: via}, branchMods))
 		base = &LockBase{Branch: g.branch, SHA: gitTip, Ref: ref, At: time.Now().UTC().Format(time.RFC3339)}
 	}
-	src := shipSource{kind: lockSourceWorktree, srcRoot: opts.Root, via: via}
-	if opts.PushSrcRoot != "" {
-		src = shipSource{kind: lockSourceCommit, sha: opts.PushSrcSHA, srcRoot: opts.PushSrcRoot, via: via}
+	add(lockEntries(ctx, opts.Cfg, opts.Root,
+		shipSource{kind: lockSourceWorktree, srcRoot: opts.Root, via: via}, worktreeMods))
+
+	type origin struct{ kind, sha, ref string }
+	byOrigin := map[origin][]string{}
+	for name, src := range archived {
+		key := origin{src.kind, src.sha, src.ref}
+		byOrigin[key] = append(byOrigin[key], name)
 	}
-	for name, e := range lockEntries(ctx, opts.Cfg, opts.Root, src, pushMods) {
-		shipped[name] = e
+	for key, names := range byOrigin {
+		add(lockEntries(ctx, opts.Cfg, opts.Root,
+			shipSource{kind: key.kind, sha: key.sha, ref: key.ref, srcRoot: archiveDir, via: via}, names))
 	}
 	return shipped, base
 }
@@ -319,9 +330,9 @@ func moduleRepoPath(cfg *config.Config, root, module string) (string, error) {
 	return sub + "/" + module, nil
 }
 
-// logCodePlan prints, per module about to ship, what ships next to what the
-// lock says the target holds now.
-func logCodePlan(log logFn, db string, shipped map[string]LockModule, current DeployLock) {
+// logCodePlan prints, per module about to ship, what ships next to the version
+// installed in the database and what the lock says the target holds now.
+func logCodePlan(log logFn, db string, shipped map[string]LockModule, current DeployLock, installed map[string]string) {
 	names := make([]string, 0, len(shipped))
 	for name := range shipped {
 		names = append(names, name)
@@ -332,6 +343,9 @@ func logCodePlan(log logFn, db string, shipped map[string]LockModule, current De
 		fields := [][2]string{{"module", name}, {"ship", e.label()}}
 		if e.Version != "" {
 			fields = append(fields, [2]string{"version", e.Version})
+		}
+		if v := installed[name]; v != "" {
+			fields = append(fields, [2]string{"installed", v})
 		}
 		if prev, ok := current.Modules[name]; ok {
 			fields = append(fields, [2]string{"locked", prev.label()})

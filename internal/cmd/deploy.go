@@ -5,9 +5,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -32,15 +34,6 @@ type DeployOpts struct {
 	// OnSync, when set, receives each --push module's file changes so the
 	// caller can render the change tree (same as the standalone `push`).
 	OnSync func(changes []FileChange)
-	// PushSrcRoot overrides the local directory --push reads module files
-	// from (default: Root). `watch` sets it to its git-archive scratch dir so
-	// the deploy pushes the committed content at the target ref — and so the
-	// push and its pre_push/post_push actions run in order inside the deploy
-	// pipeline instead of being done separately by the watcher.
-	PushSrcRoot string
-	// PushSrcSHA is the commit PushSrcRoot was archived at; the deploy lock
-	// records it as the shipped content's origin.
-	PushSrcSHA string
 	// Via names the caller in the deploy lock ("deploy" when empty).
 	Via string
 }
@@ -70,6 +63,11 @@ type deployArgs struct {
 	// opens its interactive picker as before.
 	commits []string
 	modules []string
+	// moduleRefs pins modules to a ref (`--modules mod@ref`, or every
+	// unpinned --modules entry under `--at <ref>`): they ship as committed at
+	// that ref, never from the working tree (Unit 125).
+	moduleRefs map[string]string
+	at         string
 	// auto auto-selects the pending work (commits ahead of upstream, minus
 	// already-deployed, plus every dirty module) and skips the picker — the
 	// headless counterpart of the default selection. Mutually exclusive with
@@ -376,6 +374,17 @@ func parseDeployArgs(args []string) (deployArgs, error) {
 			out.rename = true
 		case a == "--lock":
 			out.lock = true
+		case a == "--at":
+			if i+1 >= len(args) || strings.HasPrefix(args[i+1], "-") {
+				return out, fmt.Errorf("%w: --at needs a ref (branch, tag or SHA)", ErrUsage)
+			}
+			out.at = args[i+1]
+			i++
+		case strings.HasPrefix(a, "--at="):
+			out.at = strings.TrimPrefix(a, "--at=")
+			if strings.TrimSpace(out.at) == "" {
+				return out, fmt.Errorf("%w: --at needs a ref (branch, tag or SHA)", ErrUsage)
+			}
 		case a == "--fetch":
 			out.fetch = true
 		case a == "--no-fetch":
@@ -439,6 +448,16 @@ func parseDeployArgs(args []string) (deployArgs, error) {
 	if out.i18n && out.noI18n {
 		return out, fmt.Errorf("%w: --i18n and --no-i18n are mutually exclusive", ErrUsage)
 	}
+	if out.at != "" && (len(out.modules) == 0 || len(out.commits) > 0) {
+		return out, fmt.Errorf("%w: --at pins the --modules entries to a ref; it needs --modules and cannot combine with --commits", ErrUsage)
+	}
+	var err error
+	if out.modules, out.moduleRefs, err = splitModuleRefs(out.modules, out.at); err != nil {
+		return out, err
+	}
+	if len(out.moduleRefs) > 0 && out.noPush {
+		return out, fmt.Errorf("%w: a module pinned to a ref must ship — --no-push would run -u on whatever the server has", ErrUsage)
+	}
 	if out.auto && (len(out.commits) > 0 || len(out.modules) > 0) {
 		return out, fmt.Errorf("%w: --auto cannot be combined with --commits/--modules", ErrUsage)
 	}
@@ -474,8 +493,11 @@ func parseDeployArgs(args []string) (deployArgs, error) {
 	if out.fetch && out.noFetch {
 		return out, fmt.Errorf("%w: --fetch and --no-fetch are mutually exclusive", ErrUsage)
 	}
-	if !out.setCodeSet && (out.fetch || out.noFetch || out.keepOverlay || out.withLocal) {
-		return out, fmt.Errorf("%w: --fetch/--no-fetch/--keep-overlay/--with-local only apply to --set-code", ErrUsage)
+	if !out.setCodeSet && (out.keepOverlay || out.withLocal) {
+		return out, fmt.Errorf("%w: --keep-overlay/--with-local only apply to --set-code", ErrUsage)
+	}
+	if !out.setCodeSet && len(out.moduleRefs) == 0 && (out.fetch || out.noFetch) {
+		return out, fmt.Errorf("%w: --fetch/--no-fetch only apply to --set-code and to modules pinned to a ref", ErrUsage)
 	}
 	if out.setGitBranch != "" && (out.setCodeSet || out.restoreCodeSet || out.rollback || out.auto || out.push ||
 		len(out.commits) > 0 || len(out.modules) > 0 || out.isTestManage() || out.isCheckpointManage()) {
@@ -950,12 +972,23 @@ func RunDeploy(ctx context.Context, opts DeployOpts) (DeployResult, error) {
 	// Validate an explicit --modules list against the local repo before any
 	// remote work: a name that isn't an addon here (no __manifest__.py) is a
 	// usage error, caught early so we never touch the server for a typo.
-	for i, m := range p.modules {
+	// A module pinned to a ref is validated in that ref's tree instead: it
+	// may not exist on disk at all.
+	var plainModules []string
+	for _, m := range p.modules {
+		if _, pinned := p.moduleRefs[m]; pinned {
+			continue
+		}
 		_, name, rerr := resolveAddon(opts.Cfg, opts.Root, m)
 		if rerr != nil {
 			return DeployResult{}, addonError(opts.Root, m, rerr)
 		}
-		p.modules[i] = name
+		plainModules = append(plainModules, name)
+	}
+	p.modules = plainModules
+	refSources, err := resolveModuleRefs(ctx, opts, p)
+	if err != nil {
+		return DeployResult{}, err
 	}
 
 	sshHost, remotePath, fromName, err := resolveDeployRemote(opts, p.from)
@@ -1002,11 +1035,11 @@ func RunDeploy(ctx context.Context, opts DeployOpts) (DeployResult, error) {
 				[2]string{"reason", "no pending commits or dirty modules"})
 			return DeployResult{Target: fromName, JSON: p.jsonOut}, nil
 		}
-	case len(p.commits) > 0 || len(p.modules) > 0:
+	case len(p.commits) > 0 || len(p.modules) > 0 || len(refSources) > 0:
 		// Non-interactive selection (deploy builder / sequence / --last):
 		// resolve the SHAs and module names straight from the flags, no picker.
 		selected, selectedDirty = deploySelectionFromFlags(ctx, opts, p, dirty)
-		if len(selected) == 0 && len(selectedDirty) == 0 {
+		if len(selected) == 0 && len(selectedDirty) == 0 && len(refSources) == 0 {
 			return DeployResult{}, fmt.Errorf("%w: no deployable items: --commits/--modules resolved to nothing", ErrUsage)
 		}
 	default:
@@ -1051,6 +1084,7 @@ func RunDeploy(ctx context.Context, opts DeployOpts) (DeployResult, error) {
 	i18nTouched := map[string]bool{}
 	var modules []string
 	var deployedShas []string // selected commits that resolved → recorded on success
+	commitsByModule := map[string][]string{}
 	var skipped int
 
 	// Selected dirty modules resolve straight to their name (via=dirty) and
@@ -1088,6 +1122,7 @@ func RunDeploy(ctx context.Context, opts DeployOpts) (DeployResult, error) {
 		opts.log("INFO", "", "resolved", "",
 			[2]string{"commit", c.short()}, [2]string{"module", mod}, [2]string{"via", via})
 		deployedShas = append(deployedShas, c.sha)
+		commitsByModule[mod] = append(commitsByModule[mod], c.sha)
 		if !seen[mod] {
 			seen[mod] = true
 			modules = append(modules, mod)
@@ -1110,10 +1145,68 @@ func RunDeploy(ctx context.Context, opts DeployOpts) (DeployResult, error) {
 				[2]string{"commit", c.short()}, [2]string{"module", mod})
 		}
 	}
+	for mod := range refSources {
+		if _, viaCommit := commitsByModule[mod]; viaCommit {
+			return DeployResult{}, fmt.Errorf("%w: %s is both in the selected commits and pinned to %s — pick one source",
+				ErrUsage, mod, p.moduleRefs[mod])
+		}
+		seen[mod] = true
+		modules = append(modules, mod)
+	}
 	if len(modules) == 0 {
 		return DeployResult{}, fmt.Errorf("no deployable modules: every selected commit was skipped")
 	}
 	sort.Strings(modules)
+
+	// Git-deploy topology (Unit 102): when the target opts in (and --no-git
+	// isn't set), a run's COMMITTED content advances a deploy branch on the
+	// server with identical SHAs instead of an rsync overlay; the dirty overlay
+	// still rsyncs.
+	gitCfg := resolveGitDeploy(opts.Cfg, fromName, sshHost, remotePath)
+	gitActive := gitCfg.enabled && !p.noGit
+	dirtyNameSet := map[string]bool{}
+	for _, dm := range selectedDirty {
+		dirtyNameSet[dm.name] = true
+	}
+
+	// What each module ships (Unit 125): a pinned ref, or — on a target
+	// without a deploy branch — the module's newest selected commit. Both
+	// come from `git archive`, so the working tree never leaks into them; a
+	// module selected as dirty keeps shipping the working tree.
+	sources := maps.Clone(refSources)
+	if !gitActive {
+		for mod, shas := range commitsByModule {
+			if dirtyNameSet[mod] {
+				opts.log("INFO", "", "selected as dirty and by commits — shipping the working tree", "",
+					[2]string{"module", mod})
+				continue
+			}
+			tip, terr := resolveGitTip(ctx, opts.Root, shas)
+			if terr != nil {
+				return DeployResult{}, fmt.Errorf("module %s: %w", mod, terr)
+			}
+			dir, lerr := locateModuleAt(ctx, opts.Cfg, opts.Root, tip, mod)
+			if lerr != nil {
+				return DeployResult{}, lerr
+			}
+			sources[mod] = moduleSource{kind: lockSourceCommit, sha: tip, path: dir}
+		}
+	}
+	for _, dm := range dirty {
+		if src, ok := sources[dm.name]; ok {
+			opts.log("WARNING", "", "module has uncommitted changes — ignored", "",
+				[2]string{"module", dm.name}, [2]string{"shipping", shortSHA(src.sha)})
+		}
+	}
+	archiveDir := ""
+	if len(sources) > 0 {
+		dir, cleanup, aerr := archiveModuleSources(ctx, opts.Root, sources)
+		if aerr != nil {
+			return DeployResult{}, aerr
+		}
+		defer cleanup()
+		archiveDir = dir
+	}
 
 	// Pre-flight lint (Unit 110): the selected modules are checked against
 	// the data loader's own rules here — after the selection, which is what
@@ -1121,7 +1214,15 @@ func RunDeploy(ctx context.Context, opts DeployOpts) (DeployResult, error) {
 	// this point costs nothing: no push, no checkpoint, no `-u`, nothing to
 	// roll back. It blocks on manifest-listed defects only, so it can never
 	// be stricter than the server (see deployLintPreflight).
-	if lerr := deployLintPreflight(opts, p, modules); lerr != nil {
+	lintScopes := []lintScope{{root: opts.Root}, {root: archiveDir}}
+	for _, m := range modules {
+		if _, archived := sources[m]; archived {
+			lintScopes[1].modules = append(lintScopes[1].modules, m)
+		} else {
+			lintScopes[0].modules = append(lintScopes[0].modules, m)
+		}
+	}
+	if lerr := deployLintPreflight(opts, p, lintScopes); lerr != nil {
 		return DeployResult{}, lerr
 	}
 
@@ -1144,6 +1245,9 @@ func RunDeploy(ctx context.Context, opts DeployOpts) (DeployResult, error) {
 	// the server [deploy] push, then the local one, then off. Setting p.push
 	// here lets every downstream check read it unchanged.
 	p.push = resolveDeployPush(p, prof, opts.Cfg)
+	if len(refSources) > 0 && !p.push {
+		return DeployResult{}, fmt.Errorf("%w: a module pinned to a ref must ship, and this target does not push by default — add --push", ErrUsage)
+	}
 
 	conn := odoo.Conn{DB: target.dbName, Host: target.dbContainer}
 	pg := remotePullEnv(ctx, sshHost, remotePath)
@@ -1159,14 +1263,13 @@ func RunDeploy(ctx context.Context, opts DeployOpts) (DeployResult, error) {
 	}
 	ckptPolicy := resolveCheckpointPolicy(prof, opts.Cfg)
 	ckptEnabled, ckptMethod := resolveCheckpointMode(p, ckptPolicy, target.stage)
+	var current DeployLock
+	if p.push {
+		current, _ = readDeployLock(ctx, rsc, opts.Log)
+	}
 
-	// Git-deploy topology (Unit 102): when the target opts in (and --no-git
-	// isn't set), a run's COMMITTED content advances a deploy branch on the
-	// server with identical SHAs instead of an rsync overlay; the dirty overlay
-	// still rsyncs. gitTip is the single hash the branch advances to; a
-	// non-linear commit selection errors here, before any remote change.
-	gitCfg := resolveGitDeploy(opts.Cfg, fromName, sshHost, remotePath)
-	gitActive := gitCfg.enabled && !p.noGit
+	// gitTip is the single hash a git-deploy branch advances to; a non-linear
+	// commit selection errors here, before any remote change.
 	var gitTip, gitPreCodeSHA string
 	if gitActive && len(deployedShas) > 0 {
 		tip, terr := resolveGitTip(ctx, opts.Root, deployedShas)
@@ -1175,14 +1278,10 @@ func RunDeploy(ctx context.Context, opts DeployOpts) (DeployResult, error) {
 		}
 		gitTip = tip
 	}
-	dirtyNameSet := map[string]bool{}
-	for _, dm := range selectedDirty {
-		dirtyNameSet[dm.name] = true
-	}
 
 	// Install vs update, decided by the remote instance's module states.
 	opts.log("INFO", "remote", "querying installed modules", prof.DBName)
-	states, err := remoteModuleStates(ctx, sshHost, remotePath, target, conn.User, target.dbName)
+	states, installedVersions, err := remoteModuleStates(ctx, sshHost, remotePath, target, conn.User, target.dbName)
 	if err != nil {
 		return DeployResult{}, fmt.Errorf("query remote module states: %w", err)
 	}
@@ -1211,6 +1310,21 @@ func RunDeploy(ctx context.Context, opts DeployOpts) (DeployResult, error) {
 	}
 	for _, m := range install {
 		result.Modules = append(result.Modules, DeployModule{Name: m, Action: "install"})
+	}
+
+	// A pinned module has no commit diff to scan: its i18n/ tree is compared
+	// with the one at the commit the lock says the target runs.
+	for mod, src := range refSources {
+		prev, hasPrev := current.Modules[mod]
+		switch touched, known := refTouchesI18n(ctx, opts.Root, prev, hasPrev, src.sha, src.path); {
+		case touched:
+			i18nTouched[mod] = true
+			opts.log("INFO", "i18n", "i18n changes detected", "",
+				[2]string{"module", mod}, [2]string{"ref", src.ref})
+		case !known:
+			opts.log("INFO", "i18n", "i18n changes unknown for a pinned module — pass --i18n to overwrite its terms", "",
+				[2]string{"module", mod})
+		}
 	}
 
 	// --i18n-overwrite decision. Only update-set modules count: a fresh
@@ -1272,28 +1386,41 @@ func RunDeploy(ctx context.Context, opts DeployOpts) (DeployResult, error) {
 		return runDeployActions(ctx, rsc, opts, actions, phase, actEnv)
 	}
 
-	// The rsync overlay: every module on a non-git target, only the dirty
-	// modules on a git target (their committed peers ride the branch).
-	deployedMods := append(append([]string(nil), update...), install...)
-	pushMods := deployedMods
-	var branchMods []string
-	if gitActive {
-		pushMods = intersectModules(deployedMods, dirtyNameSet)
-		if gitTip != "" {
-			branchMods = exceptModules(deployedMods, dirtyNameSet)
+	// How each module travels: from a commit's tree (archived), on the git
+	// deploy branch, or rsynced from the working tree — the only path on a
+	// target without git for anything not archived, and the dirty overlay on
+	// one with it.
+	var worktreeMods, branchMods []string
+	archived := map[string]moduleSource{}
+	for _, m := range append(append([]string(nil), update...), install...) {
+		switch src, ok := sources[m]; {
+		case ok:
+			archived[m] = src
+		case gitActive && !dirtyNameSet[m]:
+			branchMods = append(branchMods, m)
+		default:
+			worktreeMods = append(worktreeMods, m)
 		}
 	}
 	var shipped map[string]LockModule
 	var shippedBase *LockBase
+	var releasing []string
 	if p.push {
-		shipped, shippedBase = deployShipEntries(ctx, opts, gitCfg, gitTip, branchMods, pushMods)
-		current, _ := readDeployLock(ctx, rsc, opts.Log)
-		logCodePlan(opts.Log, prof.DBName, shipped, current)
+		shipped, shippedBase = deployShipEntries(ctx, opts, gitCfg, gitTip, branchMods, worktreeMods, archived, archiveDir)
+		logCodePlan(opts.Log, prof.DBName, shipped, current, installedVersions)
 		for i, m := range result.Modules {
 			if e, ok := shipped[m.Name]; ok {
 				result.Modules[i].Source, result.Modules[i].SHA, result.Modules[i].Version = e.Source, e.SHA, e.Version
 			}
 		}
+		// A module the lock pins to a ref that now ships from anything else
+		// must not keep files of the pinned tree: the last ship wins whole.
+		for name, e := range shipped {
+			if prev, ok := current.Modules[name]; ok && prev.Source == lockSourceRef && e.Source != lockSourceRef {
+				releasing = append(releasing, name)
+			}
+		}
+		sort.Strings(releasing)
 	}
 
 	// --push shares the deploy's already-resolved target: sync the resolved
@@ -1304,6 +1431,17 @@ func RunDeploy(ctx context.Context, opts DeployOpts) (DeployResult, error) {
 		if !p.push {
 			return nil
 		}
+		for _, m := range releasing {
+			opts.log("INFO", "push", "pin released", prof.DBName,
+				[2]string{"module", m}, [2]string{"was", current.Modules[m].label()})
+		}
+		if gitActive && len(releasing) > 0 && !dryRun {
+			absDir := absGitDir(remotePath, gitCfg.path)
+			pinned := filterDirtyByModules(remoteDirtyEntries(ctx, rsc, absDir), releasing)
+			if err := runRemoteClean(ctx, rsc, absDir, pinned); err != nil {
+				return err
+			}
+		}
 		// Git-deploy: the committed content advances the deploy branch with
 		// identical SHAs (real object transfer). The pre-advance branch HEAD is
 		// captured for the checkpoint's CodeSHA.
@@ -1312,7 +1450,7 @@ func RunDeploy(ctx context.Context, opts DeployOpts) (DeployResult, error) {
 				return err
 			}
 		}
-		if len(pushMods) == 0 {
+		if len(worktreeMods) == 0 && len(archived) == 0 {
 			return nil
 		}
 		if err := requireRsync(); err != nil {
@@ -1336,17 +1474,40 @@ func RunDeploy(ctx context.Context, opts DeployOpts) (DeployResult, error) {
 			}
 			destBase = resolved
 		}
-		srcRoot := opts.Root
-		if opts.PushSrcRoot != "" {
-			srcRoot = opts.PushSrcRoot
+		push := func(mods []string, srcRoot string, del bool) error {
+			if len(mods) == 0 {
+				return nil
+			}
+			opts.log("INFO", "push", "syncing modules to remote", prof.DBName,
+				[2]string{"modules", strings.Join(mods, ",")})
+			_, dests, perr := pushModuleSet(ctx, pushRSC, pushOpts, mods, srcRoot, destBase, dryRun, del)
+			setLockDests(shipped, dests)
+			return perr
 		}
-		opts.log("INFO", "push", "syncing modules to remote", prof.DBName,
-			[2]string{"modules", strings.Join(pushMods, ",")})
-		// Content from an archive is a commit's exact tree: --delete removes
-		// what the commit deleted. The working tree keeps push's opt-in.
-		_, dests, perr := pushModuleSet(ctx, pushRSC, pushOpts, pushMods, srcRoot, destBase, dryRun, opts.PushSrcRoot != "")
-		setLockDests(shipped, dests)
-		return perr
+		// The working tree keeps push's opt-in --delete, except over a module
+		// pinned to a ref on a target without git, where the delete is what
+		// drops the pinned tree's files.
+		var plain, replacing []string
+		for _, m := range worktreeMods {
+			if !gitActive && slices.Contains(releasing, m) {
+				replacing = append(replacing, m)
+			} else {
+				plain = append(plain, m)
+			}
+		}
+		if err := push(plain, opts.Root, false); err != nil {
+			return err
+		}
+		if err := push(replacing, opts.Root, true); err != nil {
+			return err
+		}
+		// A commit's tree ships exactly: --delete removes what it deleted.
+		archivedMods := make([]string, 0, len(archived))
+		for m := range archived {
+			archivedMods = append(archivedMods, m)
+		}
+		sort.Strings(archivedMods)
+		return push(archivedMods, archiveDir, true)
 	}
 
 	if p.dryRun {
@@ -2075,25 +2236,28 @@ func splitInstallUpdate(modules []string, states map[string]string) (install, up
 // remoteModuleStates queries every module's state from the remote
 // database (`ir_module_module`), over SSH inside the remote Postgres
 // container. Read-only.
-func remoteModuleStates(ctx context.Context, sshHost, remotePath string, t connectTarget, pgUser, db string) (map[string]string, error) {
+func remoteModuleStates(ctx context.Context, sshHost, remotePath string, t connectTarget, pgUser, db string) (states, versions map[string]string, err error) {
 	if pgUser == "" {
 		pgUser = "odoo"
 	}
-	q := "SELECT name, state FROM ir_module_module"
+	q := "SELECT name, state, COALESCE(latest_version, '') FROM ir_module_module"
 	argv := odoo.Cmd{"psql", "-U", pgUser, "-d", db, "-At", "-c", q}
 	out, err := runRemoteDBCmd(ctx, runSSH, sshHost, remotePath, t, argv)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	states := map[string]string{}
+	states, versions = map[string]string{}, map[string]string{}
 	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
-		name, state, ok := strings.Cut(strings.TrimSpace(line), "|")
-		if !ok || name == "" {
+		parts := strings.SplitN(strings.TrimSpace(line), "|", 3)
+		if len(parts) < 2 || parts[0] == "" {
 			continue
 		}
-		states[name] = state
+		states[parts[0]] = parts[1]
+		if len(parts) == 3 && parts[2] != "" {
+			versions[parts[0]] = parts[2]
+		}
 	}
-	return states, nil
+	return states, versions, nil
 }
 
 // gitRecentCommits lists the last n commits of the repo's current branch,

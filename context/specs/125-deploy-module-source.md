@@ -143,7 +143,7 @@ which is not the ref.
 |---|---|
 | `internal/cmd/deploy.go` | Parse `mod@ref` in `--modules` and `--at`; exclusivity rules; a `moduleSource` per resolved module (kind, sha, path); per-module tips for `commit` sources on rsync targets; archive dir built for every non-worktree source and passed as push source; plan lines; `ref` modules excluded from `MarkDeployed` |
 | `internal/cmd/deploy_source.go` (new) | `parseModuleRefs`, `locateModuleAt(ctx, root, sha, mod)`, `moduleTipFor(commits, mod)`, `archiveVersion` (manifest version at a sha), i18n subtree comparison |
-| `internal/cmd/watch.go` | `archiveModules` takes resolved paths; lint over the archive |
+| `internal/cmd/watch.go` | Stops archiving on its own: `RunDeploy` now ships each commit-resolved module from its tree, so `PushSrcRoot` and `archiveModules` go away |
 | `internal/cmd/deploy_lint.go` | Lint root is the shipped source dir |
 | `internal/cmd/deploy_git.go`, `push_clean.go` | Scoped overlay revert before a branch advance for modules locked as `ref` |
 | `internal/cmd/deploy.go` (`remoteModuleStates`) | Also return `latest_version` |
