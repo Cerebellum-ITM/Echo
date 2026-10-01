@@ -378,6 +378,12 @@
 
 ## Deploy safety
 
+### 2026-09-30 · The partial-deploy dependency check is a regex warning that asks on staging/prod, not a parser that refuses
+- **Why:** The 2026-09-30 incident was a method dropped by a shipped module and still called by one left on the server. A regex over the server's old tree and the new one, plus a grep of the sibling modules, catches that shape with no Python on either end; a word match can be a comment, so a finding warns on `dev` and asks (fails closed without a TTY, `--force` passes) on staging, prod and undeclared stages instead of refusing. `--no-dep-check` is per run and logged, never a config key, for the same reason as `--no-lint`. A check that cannot run warns and lets the deploy go on: it must not become a new way for deploys to fail.
+- **Rejected:** A Python AST or registry-backed analysis (needs an interpreter or a running Odoo per target); blocking outright on findings (false positives would teach `--no-dep-check`); a config opt-out; counting a moved xml id as kept (its qualified name changes, so callers still break).
+- **Source:** Unit 128; `internal/depcheck/depcheck.go`, `internal/cmd/deploy_depcheck.go`.
+- **Status:** active
+
 ### 2026-09-30 · Every failure after the first code write restores the code, with or without a DB checkpoint
 - **Why:** A rollback that restored only the database left rsync targets running new code over the old schema. The decision order stays `rollbackDecision`; scope widens: DB and code with a checkpoint, code only without one (the confirm and log line say the DB is not restored). A rollback the user declines is kept as a `code` checkpoint entry so `deploy --rollback` can apply it later. `--no-rollback-on-fail` takes no snapshot. `post_deploy` failures never roll back.
 - **Rejected:** Restoring code only on git-deploy targets, and only the deploy branch (the old behaviour).

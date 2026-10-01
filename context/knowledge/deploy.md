@@ -18,8 +18,8 @@ Code authority: `internal/cmd/deploy.go` (`RunDeploy`), `deploy_source.go`, `dep
 - **`--modules foo` (no ref) is a dirty-style selection**, not "foo as committed": it ships the working tree (source `worktree`), even if the module is clean (`deploySelectionFromFlags` builds a bare `dirtyModule`). Use `mod@ref` to ship committed content.
 - Picker marks: `ctrl+d` toggles "already deployed" on a commit row, `ctrl+a` marks or unmarks every visible commit (`internal/cmd/picker.go:182`). Toggles are written once, on Enter, before the prod gate, as a net delta (`config.UpdateDeployedMarks`); esc discards. Dirty rows are never markable. Build mode (`sequence`) opens the picker read-only: it mutes by history but cannot mark.
 - The WARNING "selected modules have uncommitted changes — deploy updates them on the server but does not push the code" is printed even when push is on and the working tree is in fact shipped; the log line is stale, behavior is in [Module sources](#module-sources).
-- Per-run flags that shape the run: `--i18n` / `--no-i18n` (mutually exclusive): `--i18n-overwrite` is auto-on when a selected commit (or dirty path) touches `<module>/i18n/` of an *update-set* module; it is process-global in the single Odoo run, so one trigger overwrites translations of ALL updated modules, and the plan line says so (`i18n=on|off|forced|suppressed`). Install-set modules never trigger it. `--no-lint`: see below. `--dry-run`: still performs the reads and the plan (`code`, `modules resolved`), runs the push in dry mode (rsync `-n`, git preflight, no snapshot, no lock write) and stops before the prod gate.
-- `--json`: logs and stream go to stderr, one `DeployResult` object to stdout (modules with `source/sha/version`, `skipped`, `planned`, `checkpoint`, `rolled_back`, `code_sha`); the rsync change tree is suppressed so stdout stays parseable.
+- Per-run flags that shape the run: `--i18n` / `--no-i18n` (mutually exclusive): `--i18n-overwrite` is auto-on when a selected commit (or dirty path) touches `<module>/i18n/` of an *update-set* module; it is process-global in the single Odoo run, so one trigger overwrites translations of ALL updated modules, and the plan line says so (`i18n=on|off|forced|suppressed`). Install-set modules never trigger it. `--no-lint`: see below. `--dry-run`: still performs the reads and the plan (`code`, `modules resolved`, the dependency check), runs the push in dry mode (rsync `-n`, git preflight, no snapshot, no lock write) and stops before the prod gate.
+- `--json`: logs and stream go to stderr, one `DeployResult` object to stdout (modules with `source/sha/version`, `skipped`, `planned`, `checkpoint`, `rolled_back`, `code_sha`, `dependencies`); the rsync change tree is suppressed so stdout stays parseable.
 
 ## Module sources
 
@@ -32,7 +32,7 @@ Code authority: `internal/cmd/deploy.go` (`RunDeploy`), `deploy_source.go`, `dep
 Source: `RunDeploy` (`sources`, `archived`, `branchMods`, `worktreeMods`), `deploy_source.go`.
 
 - On rsync targets a commit selection ships the **tree at the commit**, not the disk: later commits and uncommitted edits to that module do not travel (a WARNING says a dirty edit is ignored). Origin: Unit 125, commit `1d29ccb`.
-- **On git targets the branch advances as a whole** (`gitAdvance` does `reset --keep <tip>`), so every module in that commit's tree changes on disk, but only the selected modules get `-u`. There is no per-module partial on the branch path. See the dependency gap in [deploy-safety.md](deploy-safety.md#known-gaps).
+- **On git targets the branch advances as a whole** (`gitAdvance` does `reset --keep <tip>`), so every module in that commit's tree changes on disk, but only the selected modules get `-u` and only they go through the [dependency check](deploy-safety.md#dependency-check). There is no per-module partial on the branch path.
 - A module is located in the REF's tree (`locateModuleAt`): same relative path as on disk if it holds the module there, else a unique `__manifest__.py` directory at depth 1-2; several matches = `ErrUsage`. The module need not exist on disk.
 - `ref` rules: refs resolve locally (`resolveLocalRef`); a `<remote>/<branch>` ref is fetched first, `--fetch` forces and `--no-fetch` suppresses it (failure = WARNING); `--at` needs `--modules` and rejects `--commits`; `ref` + `--no-push` is `ErrUsage`; a module both in the commit selection and pinned is `ErrUsage`. A `ref` deploy marks NO commit in deploy history.
 - Non-linear commits: for one module on rsync, or for the whole selection on git, is `ErrUsage` (`resolveGitTip`); escape for git is `--no-git`.
@@ -46,8 +46,8 @@ Source: `RunDeploy` (`sources`, `archived`, `branchMods`, `worktreeMods`), `depl
 
 0. Standalone modes return first, before selection: `--set-push`, `--test-*`, `--set-checkpoint*`, `--rollback`, `--restore-code`, `--lock`, `--set-git-branch`, `--set-code`.
 1. Local planning: validate `--modules`, resolve `mod@ref` pins, resolve the target (no connection), load deploy history, detect dirty modules, select, resolve commits to modules, decide sources, extract commit trees to a scratch dir, **lint**.
-2. First SSH: read the remote profile (stage, db, containers, server-side settings) and DB credentials; resolve push, checkpoint policy and tests; read the lock (when pushing); query module states; i18n decision; print the plan; resolve and validate actions. `--dry-run` ends here (after a dry push).
-3. Gates: `--test` on a prod target needs `--force`; prod confirmation (`confirmProd`, remote stage; `--force` skips).
+2. First SSH: read the remote profile (stage, db, containers, server-side settings) and DB credentials; resolve push, checkpoint policy and tests; read the lock (when pushing); query module states; i18n decision; print the plan; resolve and validate actions; when pushing, the `code` lines and the [dependency check](deploy-safety.md#dependency-check) (two more SSH reads; `--no-dep-check` skips it). `--dry-run` ends here (after a dry push).
+3. Gates: dependency findings on a non-`dev` stage ask (fail closed without a TTY; `--force` skips); `--test` on a prod target needs `--force`; prod confirmation (`confirmProd`, remote stage; `--force` skips).
 4. `pre_push` actions (push only). Failure aborts; nothing to undo.
 5. Push (`runPush`), in order: resolve explicit destination; **code snapshot** (first-write boundary, `codeWritten = true`); release pins; git: preflight, bootstrap, push objects, FF gate, advance; rsync worktree modules, then archived modules (`--delete`).
 6. Lock write (`record(shipped)`, `verified=false`).
@@ -135,6 +135,7 @@ Each "layer" below is itself project profile over `global.toml` (the server's la
 | push destination (`[push] path/mkdir`) | `--dest` › `--pick-dest` (push only) › server path › local path › auto-detect | path: first set wins; `mkdir` comes from the winning side OR `--mkdir` |
 | rollback on failure | `--rollback-on-fail`/`--no-rollback-on-fail` › `--force` › TTY ask › headless: roll back | no config key |
 | lint | `--no-lint` | no config key |
+| dependency check | `--no-dep-check` | no config key |
 | git topology (`git_deploy/_branch/_path`) | named target › physical match › `[connect]` | local only, no server layer |
 | `[promote] branch/base` | flag/positional › project › global, each field independently | local only |
 

@@ -384,7 +384,7 @@ the code there — that's for the tool you use to sync the working tree.
 | `  --from <target>`| Use a named connect target (default: this directory's `link`) |
 | `  --limit <N>`    | Commits offered in the picker (default `20`)             |
 | `  --dry-run`      | Resolve modules and show the plan; execute nothing       |
-| `  --force`        | Skip the prod-stage confirmation                         |
+| `  --force`        | Skip the prod-stage and dependency-check confirmations   |
 | `  --commits <shas>` | Deploy these commits non-interactively (skips the picker) |
 | `  --modules <names>` | Deploy these (dirty) modules non-interactively (skips the picker); `mod@ref` ships a module as committed at `ref` |
 | `  --at <ref>`     | Ship every `--modules` entry as committed at `<ref>` — branch, tag or SHA — never from the working tree (see below) |
@@ -394,6 +394,7 @@ the code there — that's for the tool you use to sync the working tree.
 | `  --set-checkpoint-method=db\|dump` / `--set-checkpoint-keep=N` | Companion setters for method / retention (no deploy) |
 | `  --rollback-on-fail` / `--no-rollback-on-fail` | Fix the on-failure decision headlessly: restore code (and DB), or keep the broken state — no prompt |
 | `  --no-actions`   | Skip declared `[[deploy.actions]]` for this run          |
+| `  --no-dep-check` | Skip the dependency check of the shipped modules for this run (see below) |
 | `  --push` / `--no-push` | Push the resolved modules before the run / skip it even when it's the default |
 | `  --set-push[=bool]` | Set `deploy` to push by default and exit (no deploy)  |
 | `  --test` / `--no-test` | Run the deployed modules' tests this run / skip them even when it's the default |
@@ -568,6 +569,42 @@ replaces it whole: on an rsync target with `--delete`, on a git-deploy target by
 reverting the module's overlay before the branch moves (`pin released` in the
 log). `push --clean` and `deploy --set-code` (without `--keep-overlay`) also
 drop pins.
+
+#### Modules that stay behind (dependency check)
+
+A partial deploy replaces some modules and leaves the rest as they are. When a
+shipped module drops a method, a field or an XML id that a module left on the
+server still uses, the `-u` passes and the next request that reaches the old
+caller breaks. Before shipping, `deploy` compares each shipped module as it is on
+the server with the tree that replaces it, and greps the modules next to it on
+the server (same addons directory or build context, not shipped in this run) for
+what disappears:
+
+```
+WARNING echo.deploy.plan: dependency removed=_get_promotion_from_sale_order kind=method from=ccima_crm_reassign used_by=ccima_flow_mail at=ccima_flow_mail/models/mail_flow.py:212
+INFO    echo.deploy.plan: dependency check clean modules=4 removed=0
+```
+
+- It looks for `def <name>(` and `<name> = fields.<Type>(` in a class body and
+  `id="<id>"` on `record`, `template`, `menuitem`, `act_window` and `report`
+  (ignoring `tests/` and `migrations/`); a use is the word `<name>`, or
+  `<module>.<id>` for an XML id, in a `.py` or `.xml` file. A name another
+  module of the same run now defines was moved, not removed; the ORM methods
+  modules override all the time (`create`, `write`, `search`, …) are never
+  reported, and neither is a staying module that defines the name itself.
+- On `dev` it only warns. On `staging` and `prod` (and a target whose stage is
+  undeclared) a real run with findings asks `Deploy anyway?`; without a TTY it
+  fails closed (exit 2) unless `--force`. `--dry-run` never blocks, and `watch`
+  is never blocked (it deploys with `--force`) but logs the warnings.
+- `--json` lists the findings under `dependencies`. `--no-dep-check` skips the
+  check for one run and says so in the log; it is deliberately not a config key.
+  If the check itself cannot run, it warns `dependency check skipped` and the
+  deploy goes on.
+- It is a regex check, not a parser: it knows no classes (a method removed from
+  one model but kept on another of the same module counts as present), no
+  signatures, no JS/OWL and no QWeb `t-call` by short name; a word match can be a
+  comment, which is why it asks instead of refusing. Only modules visible on the
+  server's filesystem are searched.
 
 #### Deploy + test in one command
 

@@ -5,7 +5,6 @@ Order: unblocked first; a unit gets a spec (`/ctx spec build <NN-name>`) before 
 
 | # | Unit | Builds | Depends on | Status |
 |---|---|---|---|---|
-| 128 | [partial-deploy-dependency-check](128-partial-deploy-dependency-check.md) | `deploy` warns (and asks on staging/prod) when shipped modules drop a method, field or xml id that a staying module still uses. | 127, 124-126 | spec written, awaiting approval |
 | 122 | remove-env-flag | Delete `-E`/`--env`: the parser cases, the `env:` prefix, `resolveReverbShell`, `reverbDeferred`/`requireNoReverb`, the `[reverb] compose_cmd`/`ssh_host` overrides. The HTTP client stays (Unit 120 uses it). Script in [spec 121](../../archive/2026-09-30-original/specs/121-reverb-link-mode-docs.md). | Reverb unit 30 (live since 2026-09-09) | pending, needs spec |
 | E8 | reverb-update-verdict | Delegated `update --remote` on a Reverb env takes its verdict from the job status, not from the ERROR-line scanner. Bug found in the live acceptance of 2026-09-10. | Unit 123 | pending, needs spec |
 | E5 | link-reverb | `link --reverb`: find the Reverb env of the current branch, register it as a connect target and bind the directory. | Reverb units 30, 31 | pending, needs spec |

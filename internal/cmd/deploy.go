@@ -143,6 +143,9 @@ type deployArgs struct {
 	// set once by whoever hit a false positive and then stay off forever on
 	// the machine that needed the check most.
 	noLint bool
+	// noDepCheck skips the dependency check of the shipped modules for one
+	// run (Unit 128); per-run and logged for the same reason as noLint.
+	noDepCheck bool
 	// restoreCode / restoreCodeSet drive the standalone code-only restore of a
 	// git-deploy target (deploy --restore-code [<sha>]) — no DB, no checkpoint.
 	// restoreCodeSet is true whenever the flag is present; restoreCode holds the
@@ -329,6 +332,8 @@ func parseDeployArgs(args []string) (deployArgs, error) {
 			out.noGit = true
 		case a == "--no-lint":
 			out.noLint = true
+		case a == "--no-dep-check":
+			out.noDepCheck = true
 		case a == "--restore-code":
 			// The SHA is optional: a following non-flag token is the target
 			// hash; a bare --restore-code opens the interactive picker.
@@ -861,6 +866,9 @@ type DeployResult struct {
 	Cleaned         int    `json:"cleaned,omitempty"`
 	// Lock is the target's deploy lock, set only by `deploy --lock`.
 	Lock *DeployLock `json:"lock,omitempty"`
+	// Dependencies lists the uses, in modules staying on the server, of the
+	// symbols the shipped modules no longer define (Unit 128).
+	Dependencies []DependencyFinding `json:"dependencies,omitempty"`
 	// JSON echoes whether the caller asked for --json, so the REPL wrapper can
 	// route output without re-parsing the args.
 	JSON bool `json:"-"`
@@ -1409,6 +1417,12 @@ func RunDeploy(ctx context.Context, opts DeployOpts) (DeployResult, error) {
 	if p.push {
 		shipped, shippedBase = deployShipEntries(ctx, opts, gitCfg, gitTip, branchMods, worktreeMods, archived, archiveDir)
 		logCodePlan(opts.Log, prof.DBName, shipped, current, installedVersions)
+		if p.noDepCheck {
+			opts.log("WARNING", "plan", "dependency check skipped", prof.DBName,
+				[2]string{"flag", "--no-dep-check"})
+		} else {
+			result.Dependencies = checkDeployDependencies(ctx, opts, rsc, gitCfg, gitTip, branchMods, worktreeMods, archived, archiveDir)
+		}
 		for i, m := range result.Modules {
 			if e, ok := shipped[m.Name]; ok {
 				result.Modules[i].Source, result.Modules[i].SHA, result.Modules[i].Version = e.Source, e.SHA, e.Version
@@ -1555,6 +1569,11 @@ func RunDeploy(ctx context.Context, opts DeployOpts) (DeployResult, error) {
 		}
 		opts.log("INFO", "", "dry-run — nothing executed", prof.DBName)
 		return result, nil
+	}
+	if len(result.Dependencies) > 0 && target.stage != "dev" && !p.force {
+		if err := confirmDependencyRisk(opts.Palette, target.dbName, removedInUse(result.Dependencies)); err != nil {
+			return DeployResult{}, err
+		}
 	}
 	if runTests && strings.EqualFold(target.stage, "prod") && !p.force {
 		return DeployResult{}, fmt.Errorf(

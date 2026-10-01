@@ -20,6 +20,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   el modo link.
 
 ### Added
+- **`deploy` warns when a shipped module drops something a staying module still
+  uses.** Before shipping, the plan compares each shipped module as it is on the
+  server with the tree that replaces it (methods and fields in class bodies, XML
+  ids of records, templates, menus, actions and reports; `tests/` and
+  `migrations/` ignored) and greps the modules next to it on the server that
+  this run does not ship. Each use found is one `WARNING
+  echo.deploy.plan: dependency removed=… kind=… from=… used_by=… at=…` line
+  (five locations at most, then `more=N`), and `--json` lists them under
+  `dependencies`. A name another module of the same run now defines counts as
+  moved, and common ORM overrides (`create`, `write`, `search`, …) are never
+  reported. On `dev` it only warns; on `staging`, `prod` or an undeclared stage
+  a real run with findings asks `Deploy anyway?`, and without a TTY fails
+  closed (exit 2) unless `--force`. `--dry-run` never blocks and `watch` is
+  never blocked. `--no-dep-check` skips it for one run and logs that it did;
+  a check that cannot run warns and the deploy goes on. It is a regex check:
+  no class awareness, no signatures, no JS, and only modules on the server's
+  filesystem are searched.
 - **A failed deploy puts the code back, not only the database.** Before the
   first code write, a deploy saves on the server what it is about to
   overwrite — every module directory it rsyncs, the overlays it reverts and
