@@ -33,7 +33,7 @@ var commandFlags = map[string][]string{
 	"modstate":      {"--all", "--json"},
 	"lint":          {"--json"},
 	"view":          {"--copy", "--last", "--from", "--remote", "-E", "--env"},
-	"compare":       {"--all", "--copy", "--from", "--remote", "-E", "--env"},
+	"compare":       {"--all", "--copy", "--from", "--remote", "-E", "--env", "--targets", "--json"},
 	"i18n-export":   {"--out"},
 	"i18n-update":   {"--force"},
 	"i18n-pull":     {"--from", "--lang", "--all", "--installed", "--to-worktree"},

@@ -10,7 +10,6 @@ Order: unblocked first; a unit gets a spec (`/ctx spec build <NN-name>`) before 
 | E5 | link-reverb | `link --reverb`: find the Reverb env of the current branch, register it as a connect target and bind the directory. | Reverb units 30, 31 | pending, needs spec |
 | E6 | refresh-remote | `refresh --remote`: trigger `POST /environments/{id}/refresh` on the linked Reverb env. | Reverb unit 32 (done) | pending, needs spec |
 | 129 | [deploy-saved-plan](129-deploy-saved-plan.md) | `deploy --dry-run --save-plan plan.json` and `deploy --apply plan.json`: the run executes exactly the reviewed modules, shas, sources and actions, or refuses when anything changed since the plan (a ref moved, the disk changed, the lock on the target differs). | 124-126 | spec written, awaiting approval |
-| 130 | [compare-targets](130-compare-targets.md) | `compare --targets a,b`: per module, the version, source and sha each target's deploy lock records, side by side, answering "what does dev have that staging does not" before a partial deploy. Read-only. | 124 | spec written, awaiting approval |
 | — | i18n-live-stream | Stream the output of the i18n commands live instead of at the end. | — | agreed, not scheduled |
 | — | i18n-conf-debug | A debug flag that prints the ephemeral `odoo.conf` Echo generates for Odoo 19 i18n. | — | agreed, not scheduled |
 

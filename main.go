@@ -250,8 +250,21 @@ func projectlessOneShot(name string, args []string) bool {
 	switch name {
 	case "help", "lint", "i18n-pull", "link", "doctor", "deploy", "push", "watch", "checkpoint", "actions", "promote", "logview", "report", "db-pull", "modules":
 		return true
-	case "shell", "shell-run", "up", "down", "stop", "restart", "ps", "logs", "sequence", "update", "test", "view", "compare", "db-admin":
+	case "shell", "shell-run", "up", "down", "stop", "restart", "ps", "logs", "sequence", "update", "test", "view", "db-admin":
 		return hasRemoteFlag(args)
+	case "compare":
+		return hasRemoteFlag(args) || hasTargetsFlag(args)
+	}
+	return false
+}
+
+// hasTargetsFlag reports whether compare's args select the lock comparison
+// of two connect targets (Unit 130), which reads both over SSH only.
+func hasTargetsFlag(args []string) bool {
+	for _, a := range args {
+		if a == "--targets" || strings.HasPrefix(a, "--targets=") {
+			return true
+		}
 	}
 	return false
 }

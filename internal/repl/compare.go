@@ -2,8 +2,10 @@ package repl
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"strconv"
 	"strings"
 
@@ -13,12 +15,17 @@ import (
 	"github.com/pascualchavez/echo/internal/cmd"
 )
 
-// runCompare implements `compare [<mod>] [--from <t>|--remote] [--copy]`:
+// runCompare implements `compare [<mod>] [--from <t>|--remote] [--copy]`
+// (and routes `--targets` to runCompareTargets):
 // pick a local module file and diff it against its copy inside Docker (the
 // local container, or a remote target's). Identical contents print a single
 // line; a real diff is shown through bat (--language=diff) with an internal
 // plain fallback. With --copy the raw unified diff goes to the clipboard.
 func (sess *session) runCompare(ctx context.Context, args []string) {
+	if compareWantsTargets(args) {
+		sess.runCompareTargets(ctx, args)
+		return
+	}
 	if compareWantsAll(args) {
 		sess.runCompareAll(ctx, args)
 		return
@@ -39,6 +46,9 @@ func (sess *session) runCompare(ctx context.Context, args []string) {
 			sess.finalize("compare", 0, 0, err)
 		default:
 			sess.finalize("compare", 1, 0, err)
+		}
+		if errors.Is(err, cmd.ErrUsage) {
+			sess.exitCode = exitUsage
 		}
 		return
 	}
@@ -113,6 +123,150 @@ func compareWantsAll(args []string) bool {
 	return false
 }
 
+// compareWantsTargets reports whether `--targets` selects the lock
+// comparison of two connect targets.
+func compareWantsTargets(args []string) bool {
+	for _, a := range args {
+		if a == "--targets" || strings.HasPrefix(a, "--targets=") {
+			return true
+		}
+	}
+	return false
+}
+
+// runCompareTargets implements `compare --targets <a>,<b> [<mod>...]`: one
+// line per side's lock, a table of the modules whose content differs (or
+// cannot be told apart), and a closing count line. Exit 0 whatever the
+// differences, 1 when a lock could not be read or parsed. With --json the
+// lines go to stderr and one object to stdout.
+func (sess *session) runCompareTargets(ctx context.Context, args []string) {
+	wantJSON := seqHasFlag(args, "--json")
+	logFn := sess.cmdOdooLogger("compare")
+	if wantJSON {
+		logFn = sess.stderrOdooLogger("compare")
+	}
+	res, err := cmd.RunCompareTargets(ctx, cmd.CompareTargetsOpts{
+		Cfg:  sess.cfg,
+		Root: sess.projectDir,
+		Args: args,
+		Log:  logFn,
+	})
+	if err != nil {
+		if wantJSON {
+			logFn("ERROR", "targets", "compare failed", "", [2]string{"err", err.Error()})
+			sess.exitCode = scriptExitCode(err, 0)
+		} else {
+			sess.finalize("compare", 0, 0, err)
+		}
+		if errors.Is(err, cmd.ErrUsage) {
+			sess.exitCode = exitUsage
+		}
+		return
+	}
+	sess.exitCode = exitOK
+	if res.Failed() {
+		sess.exitCode = exitError
+	}
+	if res.JSON {
+		b, merr := json.Marshal(res)
+		if merr != nil {
+			logFn("ERROR", "targets", "encode failed", "", [2]string{"err", merr.Error()})
+			sess.exitCode = exitError
+			return
+		}
+		os.Stdout.Write(append(b, '\n'))
+		return
+	}
+	if res.A.Failed() && res.B.Failed() {
+		return
+	}
+	sess.renderCompareTargets(res, logFn)
+}
+
+// renderCompareTargets prints the table and closing line of a target
+// comparison, or with --copy puts their plain form on the clipboard.
+func (sess *session) renderCompareTargets(res cmd.CompareTargetsResult, logFn func(level, sub, msg, db string, fields ...[2]string)) {
+	type cells struct {
+		row  cmd.TargetRow
+		a, b string
+	}
+	var shown []cells
+	widths := []int{len("module"), len("status"), len(res.A.Name), len(res.B.Name)}
+	for _, r := range res.Modules {
+		if r.Status == "same" && !r.Named {
+			continue
+		}
+		c := cells{r, cmd.TargetCell(res.A, r.A), cmd.TargetCell(res.B, r.B)}
+		for i, s := range []string{r.Name, r.StatusLabel(), c.a} {
+			widths[i] = max(widths[i], len(s))
+		}
+		shown = append(shown, c)
+	}
+
+	var plain strings.Builder
+	if len(shown) > 0 {
+		accent := lipgloss.NewStyle().Bold(true).Foreground(sess.palette.Accent)
+		heads := []string{"module", "status", res.A.Name, res.B.Name}
+		styled := "  "
+		for i, h := range heads {
+			styled += accent.Render(pad(h, widths[i])) + "  "
+			plain.WriteString(pad(h, widths[i]) + "  ")
+		}
+		plain.WriteString("\n")
+		if !res.Copy {
+			sess.print(Line{Kind: "table", Text: strings.TrimRight(styled, " ")})
+		}
+		for _, c := range shown {
+			status := pad(c.row.StatusLabel(), widths[1])
+			line := "  " + sess.styles.Out.Render(pad(c.row.Name, widths[0])) + "  " +
+				sess.compareTargetStatusStyled(c.row.Status, status) + "  " +
+				sess.styles.Out.Render(pad(c.a, widths[2])) + "  " + sess.styles.Out.Render(c.b)
+			if !res.Copy {
+				sess.print(Line{Kind: "table", Text: line})
+			}
+			plain.WriteString(pad(c.row.Name, widths[0]) + "  " + status + "  " + pad(c.a, widths[2]) + "  " + c.b + "\n")
+		}
+	}
+
+	counts := [][2]string{
+		{"a", res.A.Name}, {"b", res.B.Name},
+		{"same", strconv.Itoa(res.Counts.Same)},
+		{"differs", strconv.Itoa(res.Counts.Differs)},
+		{"unknown", strconv.Itoa(res.Counts.Unknown)},
+		{"only_" + res.A.Name, strconv.Itoa(res.Counts.OnlyA)},
+		{"only_" + res.B.Name, strconv.Itoa(res.Counts.OnlyB)},
+	}
+	if !res.Copy {
+		logFn("INFO", "targets", "targets compared", "", counts...)
+		return
+	}
+	plain.WriteString("\ntargets compared")
+	for _, f := range counts {
+		plain.WriteString(" " + f[0] + "=" + f[1])
+	}
+	plain.WriteString("\n")
+	if err := clipboard.WriteAll(plain.String()); err != nil {
+		logFn("ERROR", "targets", "copy failed: "+err.Error(), "")
+		sess.exitCode = exitError
+		return
+	}
+	logFn("INFO", "targets", "copied table to clipboard", "", counts...)
+}
+
+// compareTargetStatusStyled colors a padded status cell: differs warn, only
+// info, unknown faint.
+func (sess *session) compareTargetStatusStyled(status, cell string) string {
+	switch status {
+	case "differs":
+		return sess.styles.Warn.Render(cell)
+	case "only":
+		return sess.styles.Info.Render(cell)
+	case "unknown":
+		return sess.styles.Faint.Render(cell)
+	}
+	return sess.styles.Out.Render(cell)
+}
+
 // runCompareAll implements `compare <mod> --all`: a whole-module sync-status
 // table (changed/added/missing/equal) closed by a verdict frame, then — on a
 // TTY without --copy — an interactive drill-down into each differing file's
@@ -133,6 +287,9 @@ func (sess *session) runCompareAll(ctx context.Context, args []string) {
 			sess.finalize("compare", 0, 0, err)
 		default:
 			sess.finalize("compare", 1, 0, err)
+		}
+		if errors.Is(err, cmd.ErrUsage) {
+			sess.exitCode = exitUsage
 		}
 		return
 	}

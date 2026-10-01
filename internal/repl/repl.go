@@ -393,6 +393,8 @@ func helpSections() []helpSection {
 			{"  --all", "Compare the whole module: changed/added/missing table"},
 			{"  --from <t>", "Compare against a remote target (or --remote for the link binding)"},
 			{"  --copy", "Copy the diff to the clipboard"},
+			{"  --targets <a>,<b> [<mod>]", "Compare two targets' deploy locks module by module (read-only)"},
+			{"  --json", "With --targets: emit the comparison as JSON to stdout (logs to stderr)"},
 		}},
 		{"i18n", []helpEntry{
 			{"i18n-export <mod> [lang]", "Export <mod>/i18n/<lang>.po (default es_MX)"},

@@ -33,10 +33,15 @@ var buildFlagAliases = map[string][]string{"logs": {"-c"}}
 // declared wherever the mode is supported, so only the long form is offered.
 var buildGlobalAliases = []string{"-E"}
 
+// buildOmittedFlags are modes build mode does not compose: compare's
+// `--targets` takes two target names it has no picker for, and `--json`
+// only exists with it.
+var buildOmittedFlags = map[string][]string{"compare": {"--targets", "--json"}}
+
 // buildFlags returns the command's user-facing flags with aliased
-// duplicates removed, preserving commandFlags (help) order.
+// duplicates and omitted modes removed, preserving commandFlags (help) order.
 func buildFlags(command string) []string {
-	drop := append(append([]string(nil), buildFlagAliases[command]...), buildGlobalAliases...)
+	drop := append(append(append([]string(nil), buildFlagAliases[command]...), buildOmittedFlags[command]...), buildGlobalAliases...)
 	out := make([]string, 0, len(commandFlags[command]))
 	for _, f := range commandFlags[command] {
 		aliased := false

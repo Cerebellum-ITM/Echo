@@ -31,7 +31,7 @@ Echo is a work in progress; below is what currently ships in `main`.
 | i18n      | `i18n-export`, `i18n-update`, `i18n-pull` (from a remote)                | —                               |
 | Connect   | `connect` — open Chrome logged in as any user, no password              | —                               |
 | Deploy    | `link` — bind a local repo to a remote target; `deploy` — commit- and dirty-module-driven remote update/install over SSH, with a DB checkpoint + auto-rollback on failure; `checkpoint` — list/create/remove those checkpoints | — |
-| Sync      | `push` — rsync local modules to the remote addons dir; `watch` — auto push+deploy on new commits; `compare` — diff a module against its Docker copy (`--all` for a whole-module status table) | — |
+| Sync      | `push` — rsync local modules to the remote addons dir; `watch` — auto push+deploy on new commits; `compare` — diff a module against its Docker copy (`--all` for a whole-module status table, `--targets a,b` for two targets' deploy locks) | — |
 | Build     | `<cmd> --build` / `-b` — compose any command interactively, then run/copy | —                             |
 | Scripting | `echo <cmd>` one-shot, `echo run <file>` recipes, `sequence` (interactive multi-command), `report`, `logview` (interactive log history) | —              |
 | REPL UX   | ↑↓ history, fzf picker, level-colored logs, ✓/✗ result, Tab + flag autocomplete, live command/flag highlighting | Full ASCII banners |
@@ -1107,12 +1107,34 @@ the differing files then feed an interactive drill-down: pick one, read its
 diff, go back, until `esc`. Comparison is by checksum (one hashing command per
 side), not file-by-file reads.
 
+`compare --targets <a>,<b>` answers a different question: what one target has
+that the other does not, before a partial deploy. It reads the deploy lock of
+both connect targets (one SSH read each, nothing written, no stage gate, no
+compose project needed) and lists, per module, what each recorded shipping:
+
+```
+INFO    echo.compare.targets: lock target=dev modules=14 unverified=1 last=2026-09-30T18:02:11Z overlay=ccima_crm_reassign,ccima_flow_mail base=echo/deploy@3f2a9c1
+INFO    echo.compare.targets: lock target=staging modules=12 unverified=0 last=2026-09-29T21:40:03Z
+  module              status    dev                                staging
+  ccima_crm_reassign  only dev  worktree@0b6fc41+dirty 1.2.0 unv.  none
+  ccima_flow_mail     differs   ref@99f2109 1.4.0                  commit@a1c4e02 1.3.0
+INFO    echo.compare.targets: targets compared a=dev b=staging same=11 differs=1 unknown=0 only_dev=1 only_staging=0
+```
+
+Modules are compared by content (the module's git tree), not by sha:
+`differs`, `only <target>` (never shipped there by Echo), `unknown` (a dirty
+entry, a sha not in your local repository, or an unreadable lock) and `same`,
+which is hidden unless you name the module. It exits 0 whatever the
+differences and 1 when a lock cannot be read or parsed.
+
 | Command                          | Description                                                       |
 |----------------------------------|-------------------------------------------------------------------|
 | `compare [<mod>]`                | Diff a local module file against its Docker copy                  |
 | `  --all`                        | Compare the whole module: `changed`/`added`/`missing` status table + drill-down |
 | `  --from <target>` / `--remote` | Compare against a remote target instead of the local container   |
-| `  --copy`                       | Copy the diff (or the `--all` table) to the clipboard            |
+| `  --copy`                       | Copy the diff (or the `--all` or `--targets` table) to the clipboard |
+| `  --targets <a>,<b> [<mod>...]` | Compare two targets' deploy locks module by module (read-only)   |
+| `  --json`                       | With `--targets`: one JSON object on stdout, logs on stderr       |
 
 <p align="center"><img src="demo/gifs/compare.gif" alt="echo compare sale_extra --all — status table, verdict, and per-file diff drill-down" width="860"></p>
 

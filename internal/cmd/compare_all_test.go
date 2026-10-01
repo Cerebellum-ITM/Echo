@@ -97,11 +97,11 @@ func TestLocalModuleHashes(t *testing.T) {
 }
 
 func TestParseCompareArgsAll(t *testing.T) {
-	module, copyFlag, all, from, remote, err := parseCompareArgs([]string{"sale", "--all", "--from", "prod", "--copy"})
+	p, err := parseCompareArgs([]string{"sale", "--all", "--from", "prod", "--copy"})
 	if err != nil {
 		t.Fatalf("err = %v", err)
 	}
-	if module != "sale" || !all || !copyFlag || from != "prod" || remote {
-		t.Fatalf("parse = (%q, copy=%v, all=%v, from=%q, remote=%v)", module, copyFlag, all, from, remote)
+	if p.module() != "sale" || !p.all || !p.copy || p.from != "prod" || p.remote {
+		t.Fatalf("parse = (%q, copy=%v, all=%v, from=%q, remote=%v)", p.module(), p.copy, p.all, p.from, p.remote)
 	}
 }

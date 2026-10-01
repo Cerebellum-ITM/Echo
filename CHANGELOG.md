@@ -20,6 +20,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   el modo link.
 
 ### Added
+- **`compare --targets <a>,<b>`: what one target has that the other does
+  not, from their deploy locks.** Per module it shows the source, sha and
+  version each target's `.echo/lock.json` records, side by side, with a
+  status: `differs` (different content), `only <target>` (Echo never
+  recorded shipping it to the other one), `unknown` (a `dirty` entry, a sha
+  not in the local repository, or a lock that could not be read) and `same`.
+  Content is compared by the module's git tree, not the sha, so the same code
+  shipped as `worktree@X` to dev and `ref@Y` to staging reads `same`; a
+  git-deploy target's modules without an entry are read from its lock base.
+  Only rows that are not `same` print, plus any module named as a positional
+  (`compare --targets dev,staging ccima_flow_mail`); `newer=` names the side
+  with the higher manifest version. It reads one lock per target over SSH
+  (no server profile, nothing written, no stage gate), runs outside a compose
+  project, exits 0 whatever the differences and 1 when a lock is unreadable
+  or corrupt (the other side is still shown). `--copy` puts the table on the
+  clipboard; `--json` writes one object to stdout. `--targets` takes exactly
+  two connect targets and refuses `--all`, `--from`, `--remote` and `-E`.
 - **`doctor`: one read-only health report of a remote target.** `doctor
   --from <target>` (or `--remote`, or the usual link binding / single target /
   picker) answers "is this target ready for deploy, push and checkpoints" in

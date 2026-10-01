@@ -47,11 +47,12 @@ type CompareAllResult struct {
 // both sides — no prod gate. The interactive drill-down over the differing
 // files lives in the REPL layer.
 func RunCompareAll(ctx context.Context, opts CompareOpts) (CompareAllResult, error) {
-	module, copyFlag, _, from, remote, err := parseCompareArgs(opts.Args)
+	p, err := parseCompareArgs(opts.Args)
 	if err != nil {
 		return CompareAllResult{}, err
 	}
-	isRemote := from != "" || remote
+	module, from := p.module(), p.from
+	isRemote := from != "" || p.remote
 
 	if !isRemote && opts.Cfg.OdooContainer == "" {
 		return CompareAllResult{}, ErrNoOdooContainer
@@ -103,7 +104,7 @@ func RunCompareAll(ctx context.Context, opts CompareOpts) (CompareAllResult, err
 		From:   fromLabel,
 		Rows:   rows,
 		Equal:  equal,
-		Copy:   copyFlag,
+		Copy:   p.copy,
 	}, nil
 }
 
@@ -112,11 +113,12 @@ func RunCompareAll(ctx context.Context, opts CompareOpts) (CompareAllResult, err
 // absent locally (a `missing` row) diffs an empty local side; one absent in
 // the container (`added`) diffs an empty container side.
 func CompareModuleFile(ctx context.Context, opts CompareOpts, module, rel string) (CompareResult, error) {
-	_, _, _, from, remote, err := parseCompareArgs(opts.Args)
+	p, err := parseCompareArgs(opts.Args)
 	if err != nil {
 		return CompareResult{}, err
 	}
-	isRemote := from != "" || remote
+	from := p.from
+	isRemote := from != "" || p.remote
 
 	vopts := ViewOpts{Cfg: opts.Cfg, Root: opts.Root, Args: opts.Args, Palette: opts.Palette}
 	addonsDir, err := resolveModuleDir(opts.Cfg, opts.Root, module)

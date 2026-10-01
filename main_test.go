@@ -42,6 +42,10 @@ func TestProjectlessOneShot(t *testing.T) {
 		{"logview local is projectless", "logview", nil, true},
 		{"report local is projectless", "report", nil, true},
 
+		{"compare --targets", "compare", []string{"--targets", "dev,staging"}, true},
+		{"compare --targets=", "compare", []string{"--targets=dev,staging", "sale"}, true},
+		{"compare local needs a project", "compare", []string{"sale"}, false},
+
 		// Local-only commands never qualify.
 		{"install never projectless", "install", []string{"--remote"}, false},
 		{"ps local", "ps", nil, false},

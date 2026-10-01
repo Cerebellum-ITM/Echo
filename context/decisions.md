@@ -390,6 +390,12 @@
 
 ## Deploy safety
 
+### 2026-09-30 · `compare --targets` compares exactly two deploy locks by content identity and exits 0 whatever they differ in
+- **Why:** "What does dev have that staging does not" is a pairwise question asked before a partial deploy; the answer lives in each target's lock, so one `cat` per target answers it without a server profile. Rows compare the module's git tree, not the sha, so the same content shipped as `worktree@X` and `ref@Y` reads `same`; a dirty entry is `unknown`. The command is a viewer like `compare`: exit 0 when both locks were read, 1 only when one could not be read or parsed, so "dev is ahead" never reads as a failure. The local working tree is not a side: `deploy --dry-run` already prints `ship=` vs `locked=` per module.
+- **Rejected:** Exit 1 on any `differs`/`only` row (an opt-in `--exit-code` can come when a CI asks); `.` or a reserved name `local` as a side (the name can collide with a target); 2 to 4 columns with the status relative to the first (does not fit a terminal).
+- **Source:** Unit 130 (user choice 2026-09-30); `internal/cmd/compare_targets.go` (`RunCompareTargets`, `diffLocks`).
+- **Status:** active
+
 ### 2026-09-30 · The checkpoint disk preflight measures where each method writes, through one `checkpointNeed`
 - **Why:** The preflight measured the Postgres data directory for both methods, but a `dump` is written by `pg_dump` redirected on the host under `<remote_path>/backups/checkpoints`, so a full host disk passed the check and failed mid-dump. `dump` now measures `df -Pk <remote_path>` on the host and `db` keeps the data directory inside the DB container; the factors (1.2x for `db`, 0.5x for `dump`) live in `checkpointNeed`, which `doctor` also uses, so the report and the deploy agree.
 - **Rejected:** Leaving deploy as it was and only having `doctor` measure the host (the two would disagree).

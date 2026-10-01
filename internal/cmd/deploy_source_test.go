@@ -222,6 +222,7 @@ func newFakeRemote(t *testing.T) *fakeRemote {
 while [ "$1" = "-o" ]; do shift 2; done
 shift
 cmd="$*"
+printf '%s\n' "$cmd" >> "`+f.sshLogPath()+`"
 case "$cmd" in
   *psql*) printf 'sale|installed|18.0.1.0\nstock|installed|18.0.1.0\n' ;;
   *stop-after-init*) printf '%s\n' "$cmd" >> "`+f.logPath+`"; [ -z "$FAKE_FAIL_RUN" ] ;;
@@ -234,6 +235,16 @@ esac
 	}
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 	return f
+}
+
+// sshLogPath records every command the fake ssh received, one per line.
+func (f *fakeRemote) sshLogPath() string {
+	return filepath.Join(filepath.Dir(f.logPath), "ssh.log")
+}
+
+func (f *fakeRemote) sshLog() string {
+	b, _ := os.ReadFile(f.sshLogPath())
+	return string(b)
 }
 
 func (f *fakeRemote) composeLog() string {
