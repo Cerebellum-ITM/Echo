@@ -202,6 +202,7 @@ func runPushCleanReverb(ctx context.Context, opts PushOpts, p pushArgs, rsc remo
 		}
 		opts.log("INFO", "clean", "removed from the overlay", rsc.prof.DBName, [2]string{"module", m})
 	}
+	updateDeployLock(ctx, rsc, opts.Log, func(l *DeployLock) { l.forget(scoped) })
 	opts.log("INFO", "clean", "overlay cleaned", rsc.prof.DBName,
 		[2]string{"modules", strconv.Itoa(len(scoped))})
 	return nil

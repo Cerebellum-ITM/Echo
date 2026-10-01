@@ -338,7 +338,7 @@ func watchCycle(ctx context.Context, opts WatchOpts, rsc remoteShellContext, fro
 	}
 	defer cleanup()
 
-	rolledBack, derr := deployCommitsHeadless(ctx, opts, from, noCheckpoint, noActions, shas, srcRoot)
+	rolledBack, derr := deployCommitsHeadless(ctx, opts, from, noCheckpoint, noActions, shas, srcRoot, new)
 	// Record the cycle in the local command-log history so a headless caller
 	// (an agent) can learn whether a commit auto-deployed — without re-running
 	// watch or touching SSH. Best-effort: a save failure never affects the
@@ -398,7 +398,7 @@ func saveWatchDeployRecord(opts WatchOpts, rsc remoteShellContext, from string, 
 // The deploy performs the push itself from srcRoot (the watcher's git-archive
 // dir), so the push and its pre_push/post_push actions run in order within the
 // deploy pipeline — the watcher no longer pushes separately.
-func deployCommitsHeadless(ctx context.Context, opts WatchOpts, from string, noCheckpoint, noActions bool, shas []string, srcRoot string) (rolledBack bool, err error) {
+func deployCommitsHeadless(ctx context.Context, opts WatchOpts, from string, noCheckpoint, noActions bool, shas []string, srcRoot, srcSHA string) (rolledBack bool, err error) {
 	args := []string{"--commits", strings.Join(shas, ","), "--force", "--push"}
 	if from != "" {
 		args = append(args, "--from", from)
@@ -412,7 +412,7 @@ func deployCommitsHeadless(ctx context.Context, opts WatchOpts, from string, noC
 	res, err := RunDeploy(ctx, DeployOpts{
 		Cfg: opts.Cfg, Root: opts.Root, Args: args, Palette: opts.Palette,
 		Log: opts.Log, StreamOut: opts.StreamOut, OnSync: opts.OnSync,
-		PushSrcRoot: srcRoot,
+		PushSrcRoot: srcRoot, PushSrcSHA: srcSHA, Via: "watch",
 	})
 	return res.RolledBack, err
 }
@@ -487,13 +487,9 @@ func rangeCommits(ctx context.Context, root, old, new string) ([]deployCommit, e
 func archiveModules(ctx context.Context, cfg *config.Config, root, sha string, modules []string) (string, func(), error) {
 	var paths []string
 	for _, m := range modules {
-		sub, err := localAddonsSubpath(cfg, root, m)
+		p, err := moduleRepoPath(cfg, root, m)
 		if err != nil {
 			return "", nil, fmt.Errorf("locate module %q: %w", m, err)
-		}
-		p := m
-		if sub != "." && sub != "" {
-			p = sub + "/" + m
 		}
 		paths = append(paths, p)
 	}

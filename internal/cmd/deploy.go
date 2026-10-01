@@ -38,6 +38,11 @@ type DeployOpts struct {
 	// push and its pre_push/post_push actions run in order inside the deploy
 	// pipeline instead of being done separately by the watcher.
 	PushSrcRoot string
+	// PushSrcSHA is the commit PushSrcRoot was archived at; the deploy lock
+	// records it as the shipped content's origin.
+	PushSrcSHA string
+	// Via names the caller in the deploy lock ("deploy" when empty).
+	Via string
 }
 
 // log emits a progress line when a logger is set; a no-op otherwise.
@@ -164,6 +169,8 @@ type deployArgs struct {
 	// is already on the server.
 	setGitBranch string
 	rename       bool
+	// lock prints the target's deploy lock and exits (Unit 124).
+	lock bool
 }
 
 // isTestManage reports whether the args carry a config-only test-management
@@ -367,6 +374,8 @@ func parseDeployArgs(args []string) (deployArgs, error) {
 			}
 		case a == "--rename":
 			out.rename = true
+		case a == "--lock":
+			out.lock = true
 		case a == "--fetch":
 			out.fetch = true
 		case a == "--no-fetch":
@@ -471,6 +480,11 @@ func parseDeployArgs(args []string) (deployArgs, error) {
 	if out.setGitBranch != "" && (out.setCodeSet || out.restoreCodeSet || out.rollback || out.auto || out.push ||
 		len(out.commits) > 0 || len(out.modules) > 0 || out.isTestManage() || out.isCheckpointManage()) {
 		return out, fmt.Errorf("%w: --set-git-branch names the deploy branch and exits (no deploy selection)", ErrUsage)
+	}
+	if out.lock && (out.setGitBranch != "" || out.setCodeSet || out.restoreCodeSet || out.rollback || out.auto ||
+		out.push || out.dryRun || len(out.commits) > 0 || len(out.modules) > 0 || out.setPush != nil ||
+		out.isTestManage() || out.isCheckpointManage()) {
+		return out, fmt.Errorf("%w: --lock prints the target's deploy lock and exits (no deploy selection)", ErrUsage)
 	}
 	if out.rename && out.setGitBranch == "" {
 		return out, fmt.Errorf("%w: --rename only applies to --set-git-branch", ErrUsage)
@@ -791,6 +805,11 @@ type DeployModule struct {
 	Name   string `json:"name"`
 	Action string `json:"action"`
 	OK     bool   `json:"ok"`
+	// Source, SHA and Version describe the code the run shipped for the
+	// module (empty when the deploy did not push).
+	Source  string `json:"source,omitempty"`
+	SHA     string `json:"sha,omitempty"`
+	Version string `json:"version,omitempty"`
 }
 
 // DeployResult is the machine-readable summary of a deploy, emitted as JSON
@@ -818,6 +837,8 @@ type DeployResult struct {
 	Ref             string `json:"ref,omitempty"`
 	PreviousCodeSHA string `json:"previous_sha,omitempty"`
 	Cleaned         int    `json:"cleaned,omitempty"`
+	// Lock is the target's deploy lock, set only by `deploy --lock`.
+	Lock *DeployLock `json:"lock,omitempty"`
 	// JSON echoes whether the caller asked for --json, so the REPL wrapper can
 	// route output without re-parsing the args.
 	JSON bool `json:"-"`
@@ -908,6 +929,10 @@ func RunDeploy(ctx context.Context, opts DeployOpts) (DeployResult, error) {
 	// deploy branch to a hash and restart Odoo, without touching the DB.
 	if p.restoreCodeSet {
 		return runDeployRestoreCode(ctx, opts, p)
+	}
+
+	if p.lock {
+		return runDeployLockShow(ctx, opts, p)
 	}
 
 	// deploy --set-git-branch names the target's deploy branch: config-only
@@ -1247,6 +1272,30 @@ func RunDeploy(ctx context.Context, opts DeployOpts) (DeployResult, error) {
 		return runDeployActions(ctx, rsc, opts, actions, phase, actEnv)
 	}
 
+	// The rsync overlay: every module on a non-git target, only the dirty
+	// modules on a git target (their committed peers ride the branch).
+	deployedMods := append(append([]string(nil), update...), install...)
+	pushMods := deployedMods
+	var branchMods []string
+	if gitActive {
+		pushMods = intersectModules(deployedMods, dirtyNameSet)
+		if gitTip != "" {
+			branchMods = exceptModules(deployedMods, dirtyNameSet)
+		}
+	}
+	var shipped map[string]LockModule
+	var shippedBase *LockBase
+	if p.push {
+		shipped, shippedBase = deployShipEntries(ctx, opts, gitCfg, gitTip, branchMods, pushMods)
+		current, _ := readDeployLock(ctx, rsc, opts.Log)
+		logCodePlan(opts.Log, prof.DBName, shipped, current)
+		for i, m := range result.Modules {
+			if e, ok := shipped[m.Name]; ok {
+				result.Modules[i].Source, result.Modules[i].SHA, result.Modules[i].Version = e.Source, e.SHA, e.Version
+			}
+		}
+	}
+
 	// --push shares the deploy's already-resolved target: sync the resolved
 	// modules' local code to the remote addons dir before the run. In dry-run
 	// it prints the rsync itemization; on a real run a push failure aborts
@@ -1262,12 +1311,6 @@ func RunDeploy(ctx context.Context, opts DeployOpts) (DeployResult, error) {
 			if err := gitDeployCommitted(ctx, opts, rsc, gitCfg, gitTip, dryRun, &gitPreCodeSHA); err != nil {
 				return err
 			}
-		}
-		// The rsync overlay: every module on a non-git target, only the dirty
-		// modules on a git target (their committed peers rode the branch).
-		pushMods := append(append([]string(nil), update...), install...)
-		if gitActive {
-			pushMods = intersectModules(pushMods, dirtyNameSet)
 		}
 		if len(pushMods) == 0 {
 			return nil
@@ -1299,7 +1342,10 @@ func RunDeploy(ctx context.Context, opts DeployOpts) (DeployResult, error) {
 		}
 		opts.log("INFO", "push", "syncing modules to remote", prof.DBName,
 			[2]string{"modules", strings.Join(pushMods, ",")})
-		_, perr := pushModuleSet(ctx, pushRSC, pushOpts, pushMods, srcRoot, destBase, dryRun, false)
+		// Content from an archive is a commit's exact tree: --delete removes
+		// what the commit deleted. The working tree keeps push's opt-in.
+		_, dests, perr := pushModuleSet(ctx, pushRSC, pushOpts, pushMods, srcRoot, destBase, dryRun, opts.PushSrcRoot != "")
+		setLockDests(shipped, dests)
 		return perr
 	}
 
@@ -1327,6 +1373,14 @@ func RunDeploy(ctx context.Context, opts DeployOpts) (DeployResult, error) {
 	}
 	if err := runPush(false); err != nil {
 		return DeployResult{}, fmt.Errorf("push failed: %w", err)
+	}
+	if p.push {
+		updateDeployLock(ctx, rsc, opts.Log, func(l *DeployLock) {
+			if shippedBase != nil {
+				l.Base = shippedBase
+			}
+			l.record(shipped)
+		})
 	}
 	if err := runActions(config.PhasePostPush); err != nil {
 		return DeployResult{}, err
@@ -1428,6 +1482,9 @@ func RunDeploy(ctx context.Context, opts DeployOpts) (DeployResult, error) {
 	// The remote run landed: every resolved module deployed OK.
 	for i := range result.Modules {
 		result.Modules[i].OK = true
+	}
+	if p.push {
+		updateDeployLock(ctx, rsc, opts.Log, func(l *DeployLock) { l.markVerified(shipped) })
 	}
 	if gitActive && gitTip != "" {
 		result.CodeSHA = gitTip

@@ -556,14 +556,15 @@ type setCodePlan struct {
 	prev string
 	// cleaned are the module-scoped overlay files the run will remove. Empty
 	// under --keep-overlay.
-	cleaned []remoteDirtyEntry
+	cleaned     []remoteDirtyEntry
+	keepOverlay bool
 }
 
 // planGitSetCode preflights the target and reads where its deploy branch
 // stands, plus the overlay a default (non --keep-overlay) run would remove. It
 // mutates nothing — `--dry-run` stops here.
 func planGitSetCode(ctx context.Context, opts DeployOpts, rsc remoteShellContext, g gitDeployConfig, keepOverlay bool) (setCodePlan, error) {
-	plan := setCodePlan{absDir: absGitDir(rsc.remotePath, g.path)}
+	plan := setCodePlan{absDir: absGitDir(rsc.remotePath, g.path), keepOverlay: keepOverlay}
 	if err := gitPreflight(ctx, rsc, opts.Root, plan.absDir); err != nil {
 		return setCodePlan{}, err
 	}
@@ -603,6 +604,9 @@ func applyGitSetCode(ctx context.Context, opts DeployOpts, rsc remoteShellContex
 		return err
 	}
 	recordDeployedRef(ctx, rsc.sshHost, plan.absDir, ref, tip, opts.Log)
+	updateDeployLock(ctx, rsc, opts.Log, func(l *DeployLock) {
+		l.rebase(LockBase{Branch: g.branch, SHA: tip, Ref: ref, At: time.Now().UTC().Format(time.RFC3339)}, plan.keepOverlay)
+	})
 	return nil
 }
 
@@ -622,6 +626,9 @@ func gitRestoreCode(ctx context.Context, rsc remoteShellContext, g gitDeployConf
 	// A restore lands on a hash, not on a ref: clearing the provenance is the
 	// only honest answer to "where did this come from?".
 	recordDeployedRef(ctx, rsc.sshHost, absDir, "", sha, log)
+	updateDeployLock(ctx, rsc, log, func(l *DeployLock) {
+		l.rebase(LockBase{Branch: g.branch, SHA: sha, At: time.Now().UTC().Format(time.RFC3339)}, true)
+	})
 	return nil
 }
 
@@ -656,6 +663,17 @@ func intersectModules(mods []string, keep map[string]bool) []string {
 	var out []string
 	for _, m := range mods {
 		if keep[m] {
+			out = append(out, m)
+		}
+	}
+	return out
+}
+
+// exceptModules keeps the modules not in drop, preserving order.
+func exceptModules(mods []string, drop map[string]bool) []string {
+	var out []string
+	for _, m := range mods {
+		if !drop[m] {
 			out = append(out, m)
 		}
 	}

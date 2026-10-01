@@ -85,6 +85,13 @@ func (sess *session) finishDeployJSON(res cmd.DeployResult, stats *runStats, err
 		return
 	}
 
+	if res.Lock != nil {
+		b, _ := json.Marshal(res.Lock)
+		os.Stdout.Write(b)
+		os.Stdout.WriteString("\n")
+		return
+	}
+
 	type deployJSON struct {
 		Target     string              `json:"target"`
 		DB         string              `json:"db"`

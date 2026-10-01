@@ -20,6 +20,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   el modo link.
 
 ### Added
+- **Deploy lock: every target records the code it runs.** `deploy`,
+  `watch-deploy`, `push`, `push --clean`, `deploy --set-code` and
+  `--restore-code` now write `<remote_path>/.echo/lock.json` on the target:
+  per module, where its content came from (`worktree`, `commit` or `branch`,
+  with the SHA, the git tree id and whether uncommitted edits went along), the
+  manifest version as shipped, the destination, who shipped it and whether
+  Odoo has since run `-u` on it successfully. `deploy --lock [--json]` prints
+  it, the `--dry-run` plan shows per module what ships next to what the lock
+  holds, `link --show` adds a summary line, and the `deploy --json` modules
+  carry `source`/`sha`/`version`. `.echo/` ignores itself (a `.gitignore` with
+  `*` inside it), so a repository containing it is never modified; a
+  repository that already tracks it gets a warning with the fix. Lock reads
+  and writes never fail a deploy.
 - **`link --add` registra un sistema nuevo sin pasar por `connect`.** Hasta
   ahora el asistente que da de alta un connect target vivía solo detrás de
   `connect --add`, así que para que un servidor apareciera en `link` había
@@ -32,6 +45,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   la sesión.
 
 ### Changed
+- **Code shipped from a commit is synced exactly.** When a deploy pushes from a
+  `git archive` (today, `watch-deploy`), rsync runs with `--delete` scoped to
+  each module directory, so files the commit deleted no longer linger on the
+  server or in an image built from it. Pushes from the working tree keep
+  `push`'s opt-in `--delete`.
 - **El ítem que `db-admin --save` escribe en 1Password ahora empieza por el
   proyecto y trae el servidor como etiqueta.** El título pasa de
   `Odoo <proyecto> (<db>)` a `<proyecto> (<db>)`, así la búsqueda de la

@@ -199,9 +199,15 @@ func RunPush(ctx context.Context, opts PushOpts) error {
 		warnOverlayShadow(ctx, rsc, opts, modules)
 	}
 
-	files, err := pushModuleSet(ctx, rsc, opts, modules, opts.Root, destBase, p.dryRun, p.del)
+	files, dests, err := pushModuleSet(ctx, rsc, opts, modules, opts.Root, destBase, p.dryRun, p.del)
 	if err != nil {
 		return err
+	}
+	if !p.dryRun {
+		entries := lockEntries(ctx, opts.Cfg, opts.Root,
+			shipSource{kind: lockSourceWorktree, srcRoot: opts.Root, via: "push"}, modules)
+		setLockDests(entries, dests)
+		updateDeployLock(ctx, rsc, opts.Log, func(l *DeployLock) { l.record(entries) })
 	}
 	verb := "push complete"
 	if p.dryRun {
@@ -222,20 +228,22 @@ type FileChange struct {
 
 // pushModuleSet syncs each module to the remote target, reading the source
 // files from srcRoot (the project root for a manual push, the archive
-// scratch dir for the watcher). Returns the total number of changed files.
+// scratch dir for the watcher). Returns the total number of changed files and
+// the remote directory each synced module landed in.
 // Shared by `push`, `deploy --push`, and `watch`. A greppable syncing/synced
 // log frame brackets each module; opts.OnSync (when set) receives the file
 // list so the caller can render the change tree between them.
 // destBase, when non-empty, is the resolved remote directory every module
 // lands under (<destBase>/<module>) — the explicit-destination path (Unit
 // 91). Empty destBase keeps the per-module auto-detect (`pushDest`).
-func pushModuleSet(ctx context.Context, rsc remoteShellContext, opts PushOpts, modules []string, srcRoot, destBase string, dryRun, del bool) (int, error) {
+func pushModuleSet(ctx context.Context, rsc remoteShellContext, opts PushOpts, modules []string, srcRoot, destBase string, dryRun, del bool) (int, map[string]string, error) {
 	rv := remoteView{rsc: rsc}
 	total := 0
+	dests := make(map[string]string, len(modules))
 	for _, m := range modules {
 		srcDir, err := moduleSrcDir(opts.Cfg, srcRoot, m)
 		if err != nil {
-			return total, fmt.Errorf("module %q: %w", m, err)
+			return total, dests, fmt.Errorf("module %q: %w", m, err)
 		}
 		var destDir string
 		if destBase != "" {
@@ -243,15 +251,16 @@ func pushModuleSet(ctx context.Context, rsc remoteShellContext, opts PushOpts, m
 		} else {
 			destDir, err = pushDest(ctx, rv, opts, m)
 			if err != nil {
-				return total, err
+				return total, dests, err
 			}
 		}
 		opts.log("INFO", "module", "syncing", rsc.prof.DBName,
 			[2]string{"module", m}, [2]string{"dest", destDir})
 		changes, err := rsyncModule(ctx, srcDir, rsc.sshHost, destDir, dryRun, del)
 		if err != nil {
-			return total, fmt.Errorf("rsync %q: %w", m, err)
+			return total, dests, fmt.Errorf("rsync %q: %w", m, err)
 		}
+		dests[m] = destDir
 		if opts.OnSync != nil {
 			opts.OnSync(changes)
 		}
@@ -263,7 +272,7 @@ func pushModuleSet(ctx context.Context, rsc remoteShellContext, opts PushOpts, m
 		}
 		opts.log("INFO", "module", "synced", rsc.prof.DBName, fields...)
 	}
-	return total, nil
+	return total, dests, nil
 }
 
 // countChanges tallies a change slice by operation.

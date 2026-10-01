@@ -403,6 +403,7 @@ the code there — that's for the tool you use to sync the working tree.
 | `  --set-code <ref>` | Re-baseline a git-deploy target's code onto **any** ref — branch, tag, SHA — then restart (no DB, see below) |
 | `  --keep-overlay` / `--with-local` / `--fetch` / `--no-fetch` | `--set-code` modifiers (overlay, local branch, remote refresh) |
 | `  --set-git-branch <name>` | Name the branch the target's code lives on and exit (no deploy); `--rename` also moves the one already on the server |
+| `  --lock`         | Print the target's deploy lock: what each module runs and where it came from (no deploy; `--json` prints the raw file) |
 
 **Push by default.** For an image-built remote where a deploy always ships
 code, make `--push` the default instead of typing it every time: `deploy
@@ -477,6 +478,55 @@ git config --get echo.deployed-at
 `link --show` reports the same thing (`deploy code branch=… sha=… ref=… at=…`).
 A `--restore-code` clears the ref, since a rollback lands on a hash and not on a
 line.
+
+#### The deploy lock
+
+Every command that moves code on a target (`deploy`, `watch-deploy`, `push`,
+`push --clean`, `deploy --set-code`, `--restore-code`) also records **what it
+shipped** in a lock file on the target itself, `<remote_path>/.echo/lock.json`,
+so any machine that deploys there — or anyone over SSH — can answer "which
+version of this module is running, and where did it come from?":
+
+```json
+{
+  "schema": 1,
+  "target": "staging",
+  "modules": {
+    "sale_custom": {
+      "source": "worktree", "sha": "0b6fc41…", "dirty": false,
+      "version": "18.0.1.31.0", "dest": "/srv/odoo/addons/sale_custom",
+      "via": "deploy", "at": "2026-09-30T09:20:00Z",
+      "by": "dev@example.com", "verified": true
+    }
+  }
+}
+```
+
+`source` is `worktree` (rsync from your working tree; `sha` is the local HEAD
+and `dirty` says whether uncommitted edits went along), `commit` (rsync from a
+`git archive`, as `watch-deploy` does) or `branch` (the module rode a git-deploy
+target's branch, which the lock also records as `base`). `verified` turns true
+once Odoo ran `-u` on that code successfully; a failed run leaves it false.
+
+```
+deploy --lock --from staging          # one line per module
+deploy --lock --from staging --json   # the file as is
+```
+
+`deploy --dry-run` prints, per module about to ship, what ships next to what the
+lock holds (`code module=… ship=worktree@3c1d2e0 version=… locked=…`), and
+`link --show` adds a summary (`deploy lock modules=14 unverified=0 last=…`).
+
+`.echo/` **ignores itself**: Echo writes a `.gitignore` containing `*` inside
+it, so it never shows in `git status` of a repository that contains it and the
+repository itself is not modified. If that repository already *tracks* files
+under `.echo/`, Echo warns with the fix (`git rm --cached -r .echo`). A lock
+read or write that fails is a warning, never a failed deploy.
+
+Content shipped from a commit (the `watch-deploy` archive) is synced **exactly**:
+rsync runs with `--delete` scoped to each module directory, so a file the commit
+deleted is removed from the server too. Pushes from the working tree keep
+`push`'s opt-in `--delete`.
 
 #### Deploy + test in one command
 

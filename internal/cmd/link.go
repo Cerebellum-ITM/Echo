@@ -282,6 +282,7 @@ func runLinkShow(ctx context.Context, opts LinkOpts) error {
 		return nil
 	}
 	reportDeployedCode(ctx, opts, name, prof.DBName)
+	reportDeployLock(ctx, opts, prof.DBName)
 	reportReverbEnv(opts, prof)
 	opts.log("INFO", "remote", "remote containers", prof.DBName)
 	if opts.OnPS == nil {
