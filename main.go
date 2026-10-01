@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/user"
@@ -71,6 +72,7 @@ func main() {
 	// docker-compose.yml, so it runs before the project-root check.
 	if len(args) > 0 && args[0] == "connect" {
 		if err := cmd.RunDirectConnect(context.Background(), args[1:]); err != nil {
+			exitOnConfigError(err)
 			log.Fatal("connect", "err", err)
 		}
 		return
@@ -110,6 +112,7 @@ func main() {
 
 	cfg, err := config.Load(root)
 	if err != nil {
+		exitOnConfigError(err)
 		log.Warn("could not load config, using defaults", "err", err)
 		defaults := config.Defaults
 		cfg = &defaults
@@ -163,6 +166,16 @@ func main() {
 	}
 
 	repl.Start(styles, palette, cfg.Logo, "01", stage, cfg.OdooVersion, cfg.Theme, username, root, cfg)
+}
+
+// exitOnConfigError stops Echo with exit 2 when err is a config file that
+// does not parse: running on defaults would let the next save overwrite it.
+func exitOnConfigError(err error) {
+	var perr *config.ParseError
+	if errors.As(err, &perr) {
+		repl.PrintConfigError(perr)
+		os.Exit(exitUsage)
+	}
 }
 
 // extractProjectDir pulls a leading `-C <dir>` / `--project-dir <dir>`

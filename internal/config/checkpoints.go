@@ -91,6 +91,9 @@ func SaveCheckpoints(projectKey, targetKey string, entries []CheckpointEntry) er
 	if err := toml.NewEncoder(&buf).Encode(f); err != nil {
 		return err
 	}
+	if err := preserveCorrupt(path, &checkpointStoreFile{}); err != nil {
+		return err
+	}
 	return writeAtomic(path, buf.Bytes())
 }
 

@@ -147,9 +147,12 @@ Odoo log style (`docker.container: started name=…`).
 `--remote` to use this directory's `link` binding (so you don't retype the
 name). All ride the shared SSH transport. Remote `restart`/`stop` with no
 service target the remote profile's Odoo container and ask for a red
-confirmation when the remote stage is `prod` (`--force` skips it); remote `up`
-is non-destructive so it doesn't confirm. Remote `logs` keeps follow-by-default,
-streaming over SSH, with `-t`/`--no-follow`/`--copy` honored. Remote `ps`
+confirmation when the remote stage is `prod` (`--force` skips it). A server
+profile whose `stage` is missing or not `dev`/`staging`/`prod` is treated as
+`prod` by every remote gate, with a WARNING after the system status line; a
+server profile that does not parse fails the command before it touches the
+server. Remote `up` is non-destructive so it doesn't confirm. Remote `logs`
+keeps follow-by-default, streaming over SSH, with `-t`/`--no-follow`/`--copy` honored. Remote `ps`
 renders the same styled table as the local one, read over SSH. Without a remote
 flag they all behave exactly as before (local). In remote mode these run from a
 pure addons repo with no local `docker-compose.yml`.
@@ -1389,6 +1392,13 @@ Per-project files are keyed by the SHA-256 of the project root so two projects
 with the same folder name never collide. `reset` lets you wipe global,
 per-project, or both. Echo writes only under `~/.config/echo/` — never into
 your project repo (except appending `backups/` to an existing `.gitignore`).
+
+A `global.toml` or project profile that does not parse stops Echo at startup
+with one `ERROR echo.config:` line naming the file, line and column (exit 2),
+and no command writes over it: fix the file or move it aside. Echo's own state
+files (deploy history, checkpoints, recalls, connect sessions) still read as
+empty when corrupt; the next write first moves the broken copy aside as
+`<name>.corrupt-<YYYYMMDD-HHMMSS>` and logs a WARNING.
 
 ## Project layout
 

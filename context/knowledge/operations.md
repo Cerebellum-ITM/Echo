@@ -103,3 +103,4 @@ How to read it: `pending` = no record of a real-environment check exists in the 
 | 124 | Deploy lock written/verified and `push --clean`/`--restore-code` writing it, on a real server | pending |
 | 125 | `deploy --modules ccima_flow_mail@99f2109 --from habitta_prod --dry-run` first; the real deploy needs the user's authorization | pending |
 | 126 | Code snapshot, automatic code+DB restore on failure and the declined-rollback `code` checkpoint on a real server | pending (never run on a real server) |
+| 127 | Startup exit 2 on a broken `global.toml` in a real terminal (REPL and one-shot); the undeclared-stage WARNING and prod confirm against a real server whose profile has no `stage` | pending (covered by tests with temp `HOME` and a fake `ssh`; the one-shot error line was checked locally on a built binary) |

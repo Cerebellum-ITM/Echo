@@ -5,6 +5,7 @@ import (
 	"context"
 	_ "embed"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os/exec"
 	"strings"
@@ -67,7 +68,13 @@ type connectTarget struct {
 	odooContainer string
 	dbContainer   string
 	dbName        string
+	// stage is what every prod gate reads; on a remote target it is
+	// normalized by remoteConnectTarget. rawStage is the value the server
+	// profile declares, kept for display; stageDeclared is false when the
+	// server declared no stage Echo knows and stage fell back to prod.
 	stage         string
+	rawStage      string
+	stageDeclared bool
 	odooVersion   string
 	// dbExec is the transport for commands that run INSIDE the Postgres
 	// container: "compose" (the default) when dbContainer names a service
@@ -116,9 +123,10 @@ func RunConnect(ctx context.Context, opts ConnectOpts) (ConnectResult, error) {
 		[2]string{"mode", connectMode(target.remote)},
 		[2]string{"container", target.odooContainer})
 	opts.log("INFO", "system", "system", db,
-		statusFields(target.odooVersion, target.stage,
+		statusFields(target.odooVersion, target.rawStage,
 			statusProjectName(opts.Cfg, target.remote, opts.Cfg.ConnectRemotePath, ""),
 			db)...)
+	warnUndeclaredStage(target, opts.log)
 
 	if err := maybeConfirmConnectProd(opts, target); err != nil {
 		return res, err
@@ -257,7 +265,7 @@ func resolveConnectSelection(ctx context.Context, opts ConnectOpts, target conne
 		if err != nil {
 			return connectSelection{}, err
 		}
-		u, err := pickConnectUser(users, login, opts.Palette, target.stage)
+		u, err := pickConnectUser(users, login, opts.Palette, target.rawStage)
 		if err != nil {
 			return connectSelection{}, err
 		}
@@ -266,7 +274,7 @@ func resolveConnectSelection(ctx context.Context, opts ConnectOpts, target conne
 
 	if len(cache) > 0 {
 		opts.log("INFO", "cache", fmt.Sprintf("%d recent session(s) — pick one or fetch all", len(cache)), db)
-		chosen, fetchAll, err := pickRecentSessions(cache, opts.Palette, target.stage)
+		chosen, fetchAll, err := pickRecentSessions(cache, opts.Palette, target.rawStage)
 		if err != nil {
 			return connectSelection{}, err
 		}
@@ -281,7 +289,7 @@ func resolveConnectSelection(ctx context.Context, opts ConnectOpts, target conne
 	if err != nil {
 		return connectSelection{}, err
 	}
-	u, err := pickConnectUser(users, "", opts.Palette, target.stage)
+	u, err := pickConnectUser(users, "", opts.Palette, target.rawStage)
 	if err != nil {
 		return connectSelection{}, err
 	}
@@ -311,6 +319,8 @@ func resolveConnectTarget(ctx context.Context, opts ConnectOpts) (connectTarget,
 			dbContainer:   opts.Cfg.DBContainer,
 			dbName:        opts.Cfg.DBName,
 			stage:         opts.Cfg.Stage,
+			rawStage:      opts.Cfg.Stage,
+			stageDeclared: true,
 			odooVersion:   opts.Cfg.OdooVersion,
 		}, nil
 	}
@@ -330,17 +340,28 @@ func resolveConnectTarget(ctx context.Context, opts ConnectOpts) (connectTarget,
 func fetchRemoteProfile(ctx context.Context, opts ConnectOpts) (config.RemoteProfile, error) {
 	host := opts.Cfg.ConnectSSHHost
 	key := config.ProjectKey(opts.Cfg.ConnectRemotePath)
+	globalPath := "~/.config/echo/" + config.GlobalFileName
+	projectPath := "~/.config/echo/projects/" + key + ".toml"
 
 	// global.toml is optional (compose cmd falls back to a default).
-	globalData, _ := runSSH(ctx, host, "cat ~/.config/echo/global.toml", nil)
+	globalData, _ := runSSH(ctx, host, "cat "+globalPath, nil)
 
-	projData, err := runSSH(ctx, host, "cat ~/.config/echo/projects/"+key+".toml", nil)
+	projData, err := runSSH(ctx, host, "cat "+projectPath, nil)
 	if err != nil {
 		return config.RemoteProfile{}, fmt.Errorf(
 			"no Echo profile for %q on %s (expected projects/%s.toml) — run `init` there first: %w",
 			opts.Cfg.ConnectRemotePath, host, key, err)
 	}
-	return config.ParseRemoteProfile(globalData, projData), nil
+	prof, err := config.ParseRemoteProfile(globalData, projData)
+	var perr *config.ParseError
+	if errors.As(err, &perr) {
+		path := projectPath
+		if perr.Path == config.GlobalFileName {
+			path = globalPath
+		}
+		return config.RemoteProfile{}, fmt.Errorf("server profile %s on %s does not parse: %s", path, host, perr.Detail())
+	}
+	return prof, err
 }
 
 // maybeConfirmConnectProd replicates maybeConfirmProd but keys off the

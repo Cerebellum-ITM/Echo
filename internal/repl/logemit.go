@@ -70,6 +70,15 @@ func emitOdooLogTo(w io.Writer, level, logger, msg string, fields []logField, s 
 	teeRunLog(plainOdooLogFields(level, logger, msg, fields, db))
 }
 
+// PrintConfigError prints the single ERROR line for a config file that does
+// not parse at startup. No theme is loaded yet (it lives in the broken file),
+// so it renders with the default palette, on stderr.
+func PrintConfigError(err error) {
+	p := theme.PaletteByName("")
+	emitOdooLogTo(os.Stderr, "ERROR", "echo.config", err.Error(),
+		[]logField{{"hint", "fix the file or move it aside"}}, theme.New(p, theme.StageDev), p, "")
+}
+
 // renderOdooLog builds the styled Odoo-format line emitOdooLog prints, but
 // returns it as a string (generating a fresh timestamp + pid). Used both by
 // emitOdooLog and by the `shell` line transform, which reformats loose

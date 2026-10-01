@@ -63,5 +63,8 @@ func SaveLastSequence(projectKey string, s LastSequence) error {
 	if err := toml.NewEncoder(&buf).Encode(s); err != nil {
 		return err
 	}
+	if err := preserveCorrupt(path, &LastSequence{}); err != nil {
+		return err
+	}
 	return writeAtomic(path, buf.Bytes())
 }

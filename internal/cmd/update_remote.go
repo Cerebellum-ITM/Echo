@@ -46,7 +46,7 @@ func runUpdateRemote(ctx context.Context, opts ModulesOpts, from string) ([]stri
 			return nil, ErrNoModulesAvailable
 		}
 		title := "Modules to update on " + targetLabel(rsc)
-		picked, _, canceled, perr := runFuzzyPickerCore(title, avail, nil, nil, nil, opts.Palette, rsc.target.stage)
+		picked, _, canceled, perr := runFuzzyPickerCore(title, avail, nil, nil, nil, opts.Palette, rsc.target.rawStage)
 		if perr != nil {
 			return nil, perr
 		}

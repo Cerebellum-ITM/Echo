@@ -188,7 +188,7 @@ func TestConnectSectionRoundTrip(t *testing.T) {
 func TestParseRemoteProfile(t *testing.T) {
 	global := []byte("compose_cmd = \"docker-compose\"\n")
 	project := []byte("odoo_container = \"web\"\ndb_container = \"postgres\"\ndb_name = \"erp_prod\"\nstage = \"prod\"\nodoo_version = \"19\"\n")
-	prof := ParseRemoteProfile(global, project)
+	prof := mustParseRemote(t, global, project)
 	if prof.ComposeCmd != "docker-compose" {
 		t.Errorf("ComposeCmd = %q", prof.ComposeCmd)
 	}
@@ -208,7 +208,7 @@ func TestParseRemoteProfile(t *testing.T) {
 		t.Errorf("Stage = %q", prof.Stage)
 	}
 	// Missing global → compose falls back to a sane default.
-	if got := ParseRemoteProfile(nil, project).ComposeCmd; got != "docker compose" {
+	if got := mustParseRemote(t, nil, project).ComposeCmd; got != "docker compose" {
 		t.Errorf("fallback ComposeCmd = %q", got)
 	}
 	// No [checkpoint] on the server → the policy fields stay empty/zero so the
@@ -223,7 +223,7 @@ func TestParseRemoteProfileCheckpoint(t *testing.T) {
 	// Server [checkpoint]: global sets mode+keep, project overrides method.
 	global := []byte("[checkpoint]\nmode = \"on\"\nkeep = 5\n")
 	project := []byte("db_name = \"erp\"\n[checkpoint]\nmethod = \"dump\"\n")
-	prof := ParseRemoteProfile(global, project)
+	prof := mustParseRemote(t, global, project)
 	if prof.CheckpointMode != "on" {
 		t.Errorf("CheckpointMode = %q, want on", prof.CheckpointMode)
 	}
@@ -239,7 +239,7 @@ func TestParseRemoteProfilePush(t *testing.T) {
 	// Server [push]: global sets a path, project overrides it and adds mkdir.
 	global := []byte("[push]\npath = \"build/addons\"\n")
 	project := []byte("db_name = \"erp\"\n[push]\npath = \"docker/build\"\nmkdir = true\n")
-	prof := ParseRemoteProfile(global, project)
+	prof := mustParseRemote(t, global, project)
 	if prof.PushPath != "docker/build" {
 		t.Errorf("PushPath = %q, want docker/build (project override)", prof.PushPath)
 	}
@@ -247,7 +247,7 @@ func TestParseRemoteProfilePush(t *testing.T) {
 		t.Errorf("PushMkdir = %v, want true", prof.PushMkdir)
 	}
 	// Absent server [push] → empty so the client falls back to local config.
-	if bare := ParseRemoteProfile(nil, []byte("db_name = \"erp\"\n")); bare.PushPath != "" || bare.PushMkdir != nil {
+	if bare := mustParseRemote(t, nil, []byte("db_name = \"erp\"\n")); bare.PushPath != "" || bare.PushMkdir != nil {
 		t.Errorf("absent server [push] should be empty, got %q/%v", bare.PushPath, bare.PushMkdir)
 	}
 }
@@ -370,7 +370,7 @@ func TestParseRemoteProfileDeployActions(t *testing.T) {
 	// A project [[deploy.actions]] list replaces the global one wholesale.
 	global := []byte("[[deploy.actions]]\nname = \"g\"\nphase = \"pre_push\"\nwhere = \"local\"\nrun = \"echo g\"\n")
 	project := []byte("db_name = \"erp\"\n[[deploy.actions]]\nname = \"build\"\nphase = \"post_push\"\nwhere = \"remote\"\nrun = \"./build.sh\"\n")
-	prof := ParseRemoteProfile(global, project)
+	prof := mustParseRemote(t, global, project)
 	if len(prof.DeployActions) != 1 || prof.DeployActions[0].Name != "build" {
 		t.Fatalf("DeployActions = %+v, want the project list (wholesale)", prof.DeployActions)
 	}
@@ -382,11 +382,11 @@ func TestParseRemoteProfileDeployActions(t *testing.T) {
 		t.Errorf("decoded actions failed validation: %v", err)
 	}
 	// Only a global list → it stands.
-	if p2 := ParseRemoteProfile(global, []byte("db_name = \"erp\"\n")); len(p2.DeployActions) != 1 || p2.DeployActions[0].Name != "g" {
+	if p2 := mustParseRemote(t, global, []byte("db_name = \"erp\"\n")); len(p2.DeployActions) != 1 || p2.DeployActions[0].Name != "g" {
 		t.Errorf("global-only DeployActions = %+v, want [g]", p2.DeployActions)
 	}
 	// Neither → empty so the client falls back to its own local list.
-	if bare := ParseRemoteProfile(nil, []byte("db_name = \"erp\"\n")); len(bare.DeployActions) != 0 {
+	if bare := mustParseRemote(t, nil, []byte("db_name = \"erp\"\n")); len(bare.DeployActions) != 0 {
 		t.Errorf("absent [[deploy.actions]] should be empty, got %+v", bare.DeployActions)
 	}
 }
@@ -421,12 +421,12 @@ func TestDeployActionsExecPathRoundTrip(t *testing.T) {
 
 func TestDeployPushConfig(t *testing.T) {
 	// Server [deploy] push: project overrides global.
-	prof := ParseRemoteProfile([]byte("[deploy]\npush = false\n"), []byte("db_name = \"erp\"\n[deploy]\npush = true\n"))
+	prof := mustParseRemote(t, []byte("[deploy]\npush = false\n"), []byte("db_name = \"erp\"\n[deploy]\npush = true\n"))
 	if prof.DeployPush == nil || !*prof.DeployPush {
 		t.Errorf("server DeployPush = %v, want true (project override)", prof.DeployPush)
 	}
 	// Absent → nil so the client falls back.
-	if bare := ParseRemoteProfile(nil, []byte("db_name = \"erp\"\n")); bare.DeployPush != nil {
+	if bare := mustParseRemote(t, nil, []byte("db_name = \"erp\"\n")); bare.DeployPush != nil {
 		t.Errorf("absent [deploy] push should be nil, got %v", bare.DeployPush)
 	}
 }
@@ -462,7 +462,7 @@ func TestDeployPushRoundTrip(t *testing.T) {
 
 func TestDeployTestConfig(t *testing.T) {
 	// Server [deploy] test + test_modules: project overrides global.
-	prof := ParseRemoteProfile(
+	prof := mustParseRemote(t,
 		[]byte("[deploy]\ntest = false\ntest_modules = [\"a\"]\n"),
 		[]byte("db_name = \"erp\"\n[deploy]\ntest = true\ntest_modules = [\"sale\",\"stock\"]\n"))
 	if prof.DeployTest == nil || !*prof.DeployTest {
@@ -472,7 +472,7 @@ func TestDeployTestConfig(t *testing.T) {
 		t.Errorf("server DeployTestModules = %v, want [sale stock] (project wholesale)", prof.DeployTestModules)
 	}
 	// Absent → nil/empty so the client falls back.
-	bare := ParseRemoteProfile(nil, []byte("db_name = \"erp\"\n"))
+	bare := mustParseRemote(t, nil, []byte("db_name = \"erp\"\n"))
 	if bare.DeployTest != nil || len(bare.DeployTestModules) != 0 {
 		t.Errorf("absent [deploy] test should be nil/empty, got %v / %v", bare.DeployTest, bare.DeployTestModules)
 	}
@@ -607,4 +607,13 @@ func TestSavePromoteBranchAndBaseCoexist(t *testing.T) {
 	if cfg.PromoteBranch != "develop" {
 		t.Errorf("clearing the base must not clear the branch, got %q", cfg.PromoteBranch)
 	}
+}
+
+func mustParseRemote(t *testing.T, globalTOML, projectTOML []byte) RemoteProfile {
+	t.Helper()
+	prof, err := ParseRemoteProfile(globalTOML, projectTOML)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return prof
 }

@@ -264,6 +264,7 @@ func RunI18nPull(ctx context.Context, opts I18nPullOpts) error {
 		statusFields(target.odooVersion, prof.Stage,
 			statusProjectName(opts.Cfg, true, remotePath, p.from),
 			prof.DBName)...)
+	warnUndeclaredStage(target, opts.log)
 	conn := odoo.Conn{DB: target.dbName, Host: target.dbContainer}
 	pg := remotePullEnv(ctx, sshHost, remotePath)
 	conn.Port = pg["POSTGRES_PORT"]

@@ -75,6 +75,9 @@ func SaveLastUpdate(projectKey, db string, u LastUpdate) error {
 	if err := toml.NewEncoder(&buf).Encode(lastUpdatesFile{Updates: updates}); err != nil {
 		return err
 	}
+	if err := preserveCorrupt(path, &lastUpdatesFile{}); err != nil {
+		return err
+	}
 	return writeAtomic(path, buf.Bytes())
 }
 

@@ -68,7 +68,7 @@ func TestSaveConnectTargetKeepsEverySection(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	g := loadGlobalFile(path)
+	g := mustLoadGlobalFile(t, path)
 	if g.Reverb == nil || g.Reverb.Token != "s3cr3t" || g.Reverb.URL != "http://reverb.local:8080" {
 		t.Errorf("[reverb] lost or altered: %+v", g.Reverb)
 	}
@@ -102,7 +102,7 @@ func TestSaveGlobalKeepsReverbToken(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	g := loadGlobalFile(path)
+	g := mustLoadGlobalFile(t, path)
 	if g.Theme != "gruvbox" {
 		t.Errorf("Theme = %q, want gruvbox", g.Theme)
 	}
@@ -123,7 +123,7 @@ func TestSaveGlobalClearsDefaultPrompt(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if g := loadGlobalFile(path); g.Prompt != nil {
+	if g := mustLoadGlobalFile(t, path); g.Prompt != nil {
 		t.Errorf("[prompt] kept after returning to defaults: %+v", g.Prompt)
 	}
 }
@@ -184,7 +184,7 @@ project = "iza"
 env = "staging"
 api_url = "http://reverb.local:8080"
 `
-	prof := ParseRemoteProfile(nil, []byte(profile))
+	prof := mustParseRemote(t, nil, []byte(profile))
 	if prof.Reverb == nil {
 		t.Fatal("[reverb] marker not parsed")
 	}
@@ -192,7 +192,16 @@ api_url = "http://reverb.local:8080"
 		prof.Reverb.Env != "staging" || prof.Reverb.APIURL != "http://reverb.local:8080" {
 		t.Errorf("marker = %+v", prof.Reverb)
 	}
-	if bare := ParseRemoteProfile(nil, []byte("db_name = \"iza\"\n")); bare.Reverb != nil {
+	if bare := mustParseRemote(t, nil, []byte("db_name = \"iza\"\n")); bare.Reverb != nil {
 		t.Errorf("marker invented on a classic profile: %+v", bare.Reverb)
 	}
+}
+
+func mustLoadGlobalFile(t *testing.T, path string) globalFile {
+	t.Helper()
+	g, err := loadGlobalFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return g
 }

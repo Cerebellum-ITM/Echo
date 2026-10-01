@@ -5,11 +5,14 @@ Order: unblocked first; a unit gets a spec (`/ctx spec build <NN-name>`) before 
 
 | # | Unit | Builds | Depends on | Status |
 |---|---|---|---|---|
+| 128 | [partial-deploy-dependency-check](128-partial-deploy-dependency-check.md) | `deploy` warns (and asks on staging/prod) when shipped modules drop a method, field or xml id that a staying module still uses. | 127, 124-126 | spec written, awaiting approval |
 | 122 | remove-env-flag | Delete `-E`/`--env`: the parser cases, the `env:` prefix, `resolveReverbShell`, `reverbDeferred`/`requireNoReverb`, the `[reverb] compose_cmd`/`ssh_host` overrides. The HTTP client stays (Unit 120 uses it). Script in [spec 121](../../archive/2026-09-30-original/specs/121-reverb-link-mode-docs.md). | Reverb unit 30 (live since 2026-09-09) | pending, needs spec |
 | E8 | reverb-update-verdict | Delegated `update --remote` on a Reverb env takes its verdict from the job status, not from the ERROR-line scanner. Bug found in the live acceptance of 2026-09-10. | Unit 123 | pending, needs spec |
 | E5 | link-reverb | `link --reverb`: find the Reverb env of the current branch, register it as a connect target and bind the directory. | Reverb units 30, 31 | pending, needs spec |
 | E6 | refresh-remote | `refresh --remote`: trigger `POST /environments/{id}/refresh` on the linked Reverb env. | Reverb unit 32 (done) | pending, needs spec |
-| — | partial-deploy-dependency-check | `deploy --dry-run` warns when the shipped modules remove methods or fields that modules staying on the server still use (the failure behind the 2026-09-30 incident, see [deploy-safety](../../knowledge/deploy-safety.md)). | Units 124-126 | future, needs design |
+| 129 | [deploy-saved-plan](129-deploy-saved-plan.md) | `deploy --dry-run --save-plan plan.json` and `deploy --apply plan.json`: the run executes exactly the reviewed modules, shas, sources and actions, or refuses when anything changed since the plan (a ref moved, the disk changed, the lock on the target differs). | 124-126 | spec written, awaiting approval |
+| 130 | [compare-targets](130-compare-targets.md) | `compare --targets a,b`: per module, the version, source and sha each target's deploy lock records, side by side, answering "what does dev have that staging does not" before a partial deploy. Read-only. | 124 | spec written, awaiting approval |
+| 131 | [doctor](131-doctor.md) | `doctor --from <target>`: one health report of a target (server profile parses and declares `stage`, SSH and rsync on both ends, git-deploy preflight, disk for checkpoints, lock state, push destination exists and whether another target shares it — reported, never blocked). | 127 | spec written, awaiting approval |
 | — | i18n-live-stream | Stream the output of the i18n commands live instead of at the end. | — | agreed, not scheduled |
 | — | i18n-conf-debug | A debug flag that prints the ephemeral `odoo.conf` Echo generates for Odoo 19 i18n. | — | agreed, not scheduled |
 
@@ -19,7 +22,6 @@ Defects read in the code (not run); each is described where its topic lives. One
 
 | Fix | Where | Detail |
 |---|---|---|
-| A TOML syntax error in `global.toml` loads defaults silently and the next save overwrites the file | `internal/config` | [architecture-and-traps](../../knowledge/architecture-and-traps.md) |
 | `scriptExitCode` has no `ErrUsage` branch: `db-*` usage errors (`db-admin`, `ErrDBExists`) exit 1 and auto-copy instead of exiting 2 | `internal/repl/repl.go` | [database](../../knowledge/database.md) |
 | The `i18n-pull` builder ignores `SkipDecide`, so inside `sequence` it still asks Run/Copy/Cancel and Cancel does not cancel | `internal/cmd/build_i18npull.go` | [scripting](../../knowledge/scripting.md) |
 | `db-pull --restore` downloads the whole dump before `requireDBContainer` fails | `internal/cmd/db_pull.go` | [database](../../knowledge/database.md) |

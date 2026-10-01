@@ -113,6 +113,9 @@ func MarkDeployed(projectKey, targetKey string, shas []string) error {
 	if err := toml.NewEncoder(&buf).Encode(f); err != nil {
 		return err
 	}
+	if err := preserveCorrupt(path, &deployHistoryFile{}); err != nil {
+		return err
+	}
 	return writeAtomic(path, buf.Bytes())
 }
 
@@ -151,6 +154,9 @@ func ResetDeployedSHAs(projectKey, targetKey string, seed []string) error {
 
 	var buf bytes.Buffer
 	if err := toml.NewEncoder(&buf).Encode(f); err != nil {
+		return err
+	}
+	if err := preserveCorrupt(path, &deployHistoryFile{}); err != nil {
 		return err
 	}
 	return writeAtomic(path, buf.Bytes())
@@ -211,6 +217,9 @@ func UpdateDeployedMarks(projectKey, targetKey string, add, remove []string) err
 
 	var buf bytes.Buffer
 	if err := toml.NewEncoder(&buf).Encode(f); err != nil {
+		return err
+	}
+	if err := preserveCorrupt(path, &deployHistoryFile{}); err != nil {
 		return err
 	}
 	return writeAtomic(path, buf.Bytes())

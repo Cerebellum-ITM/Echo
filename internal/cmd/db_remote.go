@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"fmt"
 	"strings"
 
 	"github.com/pascualchavez/echo/internal/config"
@@ -19,8 +20,10 @@ const (
 
 // remoteConnectTarget builds the resolved container/db mapping from a
 // server-side Echo profile. Every remote command goes through it, so the
-// choice of DB transport is made in one place: a profile carrying the
-// [reverb] marker names its db container, not a compose service.
+// choice of DB transport and the stage every gate reads are made in one
+// place: a profile carrying the [reverb] marker names its db container, not
+// a compose service, and a stage that is not dev, staging or prod gates as
+// prod.
 func remoteConnectTarget(prof config.RemoteProfile) connectTarget {
 	t := connectTarget{
 		remote:        true,
@@ -28,13 +31,31 @@ func remoteConnectTarget(prof config.RemoteProfile) connectTarget {
 		odooContainer: prof.OdooContainer,
 		dbContainer:   prof.DBContainer,
 		dbName:        prof.DBName,
-		stage:         prof.Stage,
+		stage:         "prod",
+		rawStage:      prof.Stage,
 		odooVersion:   prof.OdooVersion,
+	}
+	switch stage := strings.ToLower(strings.TrimSpace(prof.Stage)); stage {
+	case "dev", "staging", "prod":
+		t.stage = stage
+		t.stageDeclared = true
 	}
 	if prof.Reverb != nil {
 		t.dbExec = dbExecDocker
 	}
 	return t
+}
+
+// warnUndeclaredStage logs, right after a remote target's system status
+// line, that its stage is gated as prod because the server does not declare
+// one Echo knows.
+func warnUndeclaredStage(t connectTarget, log func(level, sub, msg, db string, fields ...[2]string)) {
+	if t.stageDeclared {
+		return
+	}
+	log("WARNING", "", fmt.Sprintf(
+		"target stage is not declared on the server (stage=%q) — treated as prod; set stage in the server profile",
+		t.rawStage), t.dbName)
 }
 
 // dbExecMode is the transport the target declares, defaulting to compose so

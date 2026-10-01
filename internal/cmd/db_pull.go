@@ -119,7 +119,7 @@ func RunDBPull(ctx context.Context, opts DBOpts) error {
 
 	opts.log("INFO", "", "pulling database", asName,
 		[2]string{"target", label}, [2]string{"source", remoteDB},
-		[2]string{"stage", rsc.target.stage})
+		[2]string{"stage", rsc.target.rawStage})
 
 	// --- dump: stream pg_dump's binary stdout straight into ./backups/ ---
 	backupsDir := filepath.Join(opts.Root, "backups")

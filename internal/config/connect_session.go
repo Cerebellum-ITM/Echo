@@ -73,5 +73,8 @@ func SaveConnectSession(key string, s ConnectSession) error {
 	if err := toml.NewEncoder(&buf).Encode(connectSessionsFile{Sessions: sessions}); err != nil {
 		return err
 	}
+	if err := preserveCorrupt(path, &connectSessionsFile{}); err != nil {
+		return err
+	}
 	return writeAtomic(path, buf.Bytes())
 }

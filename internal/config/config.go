@@ -2,7 +2,9 @@ package config
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
@@ -500,21 +502,88 @@ type ProjectInfo struct {
 // ParseProjectInfo decodes one project profile's TOML bytes. A profile
 // without `project_path` (written by an older Echo) yields an empty
 // ProjectPath and is unusable as a connect target.
-func ParseProjectInfo(projectTOML []byte) ProjectInfo {
+func ParseProjectInfo(projectTOML []byte) (ProjectInfo, error) {
 	var p projectFile
-	if len(projectTOML) > 0 {
-		_ = toml.Unmarshal(projectTOML, &p)
+	if err := decodeTOML(projectProfileName, projectTOML, &p); err != nil {
+		return ProjectInfo{}, err
 	}
 	return ProjectInfo{
 		ProjectPath:   p.ProjectPath,
 		DBName:        p.DBName,
 		OdooContainer: p.OdooContainer,
 		Stage:         p.Stage,
+	}, nil
+}
+
+// GlobalFileName is the user-wide config file under the config root. It also
+// names the global half of a ParseRemoteProfile error.
+const GlobalFileName = "global.toml"
+
+// projectProfileName names a project profile parsed from bytes, whose path
+// only the caller knows.
+const projectProfileName = "project profile"
+
+// ParseError reports a config file Echo could not decode. Path is the file
+// as read, or GlobalFileName / "project profile" for bytes fetched from a
+// server.
+type ParseError struct {
+	Path string
+	Err  error
+}
+
+func (e *ParseError) Error() string {
+	return "cannot parse " + homeRelative(e.Path) + ": " + e.Detail()
+}
+
+func (e *ParseError) Unwrap() error { return e.Err }
+
+// Detail is the decode failure without the file name, led by the position
+// when the TOML library reports one.
+func (e *ParseError) Detail() string {
+	var perr toml.ParseError
+	if !errors.As(e.Err, &perr) || perr.Position.Line == 0 {
+		return e.Err.Error()
 	}
+	if perr.Position.Col == 0 {
+		return fmt.Sprintf("line %d: %s", perr.Position.Line, perr.Message)
+	}
+	return fmt.Sprintf("line %d, column %d: %s", perr.Position.Line, perr.Position.Col, perr.Message)
+}
+
+func decodeTOML(path string, data []byte, v any) error {
+	if err := toml.Unmarshal(data, v); err != nil {
+		return &ParseError{Path: path, Err: err}
+	}
+	return nil
+}
+
+// loadTOMLFile decodes the file at path into v. A missing file leaves v
+// untouched and is not an error.
+func loadTOMLFile(path string, v any) error {
+	data, err := os.ReadFile(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	return decodeTOML(path, data, v)
+}
+
+func homeRelative(path string) string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return path
+	}
+	if rel, err := filepath.Rel(home, path); err == nil && !strings.HasPrefix(rel, "..") {
+		return "~/" + rel
+	}
+	return path
 }
 
 // Load reads global + per-project config for the given project path.
-// Missing files are silently treated as empty; defaults are applied.
+// Missing files are treated as empty and defaults are applied; a file that
+// exists but does not parse is a *ParseError.
 func Load(projectPath string) (*Config, error) {
 	root, err := configRoot()
 	if err != nil {
@@ -526,9 +595,9 @@ func Load(projectPath string) (*Config, error) {
 		ProjectKey:  projectKey(projectPath),
 	}
 
-	var g globalFile
-	if data, err := os.ReadFile(filepath.Join(root, "global.toml")); err == nil {
-		_ = toml.Unmarshal(data, &g)
+	g, err := loadGlobalFile(filepath.Join(root, GlobalFileName))
+	if err != nil {
+		return nil, err
 	}
 	cfg.Theme = g.Theme
 	cfg.Logo = g.Logo
@@ -564,8 +633,8 @@ func Load(projectPath string) (*Config, error) {
 	}
 
 	var p projectFile
-	if data, err := os.ReadFile(filepath.Join(root, "projects", cfg.ProjectKey+".toml")); err == nil {
-		_ = toml.Unmarshal(data, &p)
+	if err := loadTOMLFile(filepath.Join(root, "projects", cfg.ProjectKey+".toml"), &p); err != nil {
+		return nil, err
 	}
 	cfg.OdooVersion = p.OdooVersion
 	cfg.OdooContainer = p.OdooContainer
@@ -728,15 +797,16 @@ type RemoteProfile struct {
 // ParseRemoteProfile decodes a remote host's `global.toml` and
 // `projects/<key>.toml` bytes into a RemoteProfile. Either input may be
 // empty (missing file); ComposeCmd falls back to the same default as a
-// local config when the global file is absent or omits it.
-func ParseRemoteProfile(globalTOML, projectTOML []byte) RemoteProfile {
+// local config when the global file is absent or omits it. A file that does
+// not parse is a *ParseError whose Path is GlobalFileName for the global half.
+func ParseRemoteProfile(globalTOML, projectTOML []byte) (RemoteProfile, error) {
 	var g globalFile
-	if len(globalTOML) > 0 {
-		_ = toml.Unmarshal(globalTOML, &g)
+	if err := decodeTOML(GlobalFileName, globalTOML, &g); err != nil {
+		return RemoteProfile{}, err
 	}
 	var p projectFile
-	if len(projectTOML) > 0 {
-		_ = toml.Unmarshal(projectTOML, &p)
+	if err := decodeTOML(projectProfileName, projectTOML, &p); err != nil {
+		return RemoteProfile{}, err
 	}
 	compose := g.ComposeCmd
 	if compose == "" {
@@ -795,7 +865,7 @@ func ParseRemoteProfile(globalTOML, projectTOML []byte) RemoteProfile {
 		DeployPush:        mergeDeployPush(g.Deploy, p.Deploy),
 		DeployTest:        mergeDeployTest(g.Deploy, p.Deploy),
 		DeployTestModules: mergeDeployTestModules(deployTestModulesFrom(g.Deploy), deployTestModulesFrom(p.Deploy)),
-	}
+	}, nil
 }
 
 // ReverbMarker identifies the Reverb environment a remote project directory
@@ -854,14 +924,13 @@ func WithDeployActions(existingTOML []byte, actions []DeployAction) ([]byte, err
 	return buf.Bytes(), nil
 }
 
-// loadGlobalFile decodes global.toml into the file struct. A missing or
-// unparseable file yields a zero value, so a save still writes a fresh one.
-func loadGlobalFile(path string) globalFile {
+// loadGlobalFile decodes global.toml into the file struct. A missing file
+// yields a zero value; one that does not parse is a *ParseError, and every
+// writer that reads first returns it instead of writing over the file.
+func loadGlobalFile(path string) (globalFile, error) {
 	var g globalFile
-	if data, err := os.ReadFile(path); err == nil {
-		_ = toml.Unmarshal(data, &g)
-	}
-	return g
+	err := loadTOMLFile(path, &g)
+	return g, err
 }
 
 // SaveGlobal writes the global fields the Config owns to global.toml
@@ -878,8 +947,11 @@ func SaveGlobal(cfg *Config) error {
 		return err
 	}
 
-	path := filepath.Join(root, "global.toml")
-	g := loadGlobalFile(path)
+	path := filepath.Join(root, GlobalFileName)
+	g, err := loadGlobalFile(path)
+	if err != nil {
+		return err
+	}
 	g.Theme = cfg.Theme
 	g.Logo = cfg.Logo
 	g.Banner = cfg.Banner
@@ -947,8 +1019,11 @@ func savePromote(mutate func(*promoteConfig)) error {
 	if err := os.MkdirAll(root, 0o700); err != nil {
 		return err
 	}
-	path := filepath.Join(root, "global.toml")
-	g := loadGlobalFile(path)
+	path := filepath.Join(root, GlobalFileName)
+	g, err := loadGlobalFile(path)
+	if err != nil {
+		return err
+	}
 	cur := promoteConfig{}
 	if g.Promote != nil {
 		cur = *g.Promote
@@ -982,8 +1057,8 @@ func SaveProject(cfg *Config) error {
 
 	path := filepath.Join(projDir, cfg.ProjectKey+".toml")
 	var p projectFile
-	if data, err := os.ReadFile(path); err == nil {
-		_ = toml.Unmarshal(data, &p)
+	if err := loadTOMLFile(path, &p); err != nil {
+		return err
 	}
 	p.OdooVersion = cfg.OdooVersion
 	p.OdooContainer = cfg.OdooContainer
@@ -1049,6 +1124,25 @@ func SaveProject(cfg *Config) error {
 	return writeAtomic(path, buf.Bytes())
 }
 
+// preserveCorrupt moves a state file that exists but does not decode into
+// shape aside as <path>.corrupt-<timestamp>, so the write that follows does
+// not destroy the only copy. A missing or decodable file is left alone.
+func preserveCorrupt(path string, shape any) error {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil
+	}
+	if _, err := toml.Decode(string(data), shape); err == nil {
+		return nil
+	}
+	aside := path + ".corrupt-" + time.Now().Format("20060102-150405")
+	if err := os.Rename(path, aside); err != nil {
+		return fmt.Errorf("keep unparseable state file aside: %w", err)
+	}
+	log.Warn("state file did not parse; kept it aside and started a new one", "file", aside)
+	return nil
+}
+
 func writeAtomic(path string, data []byte) error {
 	tmp := path + ".tmp"
 	if err := os.WriteFile(tmp, data, 0o600); err != nil {
@@ -1103,16 +1197,17 @@ func connectTargetsToFile(targets []ConnectTarget) map[string]*connectTargetFile
 }
 
 // LoadGlobal reads only the global config (no project), for the
-// projectless `connect` direct mode. Missing file → defaults.
+// projectless `connect` direct mode. Missing file → defaults; a file that
+// does not parse is a *ParseError.
 func LoadGlobal() (*Config, error) {
 	root, err := configRoot()
 	if err != nil {
 		return nil, err
 	}
 	cfg := &Config{}
-	var g globalFile
-	if data, err := os.ReadFile(filepath.Join(root, "global.toml")); err == nil {
-		_ = toml.Unmarshal(data, &g)
+	g, err := loadGlobalFile(filepath.Join(root, GlobalFileName))
+	if err != nil {
+		return nil, err
 	}
 	cfg.Theme = g.Theme
 	cfg.Logo = g.Logo

@@ -4,6 +4,12 @@
 
 ## Architecture
 
+### 2026-09-30 · A config file that does not parse stops Echo; a corrupt state file is kept aside, not fatal
+- **Why:** Loading defaults over a hand-edited file that has a typo let the next save overwrite the user's config. Config is the user's, so Echo refuses to start (exit 2) or to write; state is Echo's own convenience, so it stays best-effort and only the overwrite is made safe by renaming the corrupt copy.
+- **Rejected:** Keeping the silent fallback to defaults; failing commands on a corrupt state file (a corrupt deploy history would block every deploy).
+- **Source:** Unit 127; `internal/config/config.go` (`ParseError`, `loadTOMLFile`, `preserveCorrupt`), `main.go` (`exitOnConfigError`).
+- **Status:** active
+
 ### 2026-09-09 · Config saves are load-modify-write and always assign the fields a path owns
 - **Why:** Rebuilding the file from a literal dropped every field the saving path did not know; assigning owned fields even when nil keeps clear-on-default working while untouched fields survive.
 - **Rejected:** Rebuilding the config from a literal; writing only non-default fields (cannot clear a value back to default).
@@ -145,6 +151,12 @@
 - **Status:** active
 
 ## Remote targets
+
+### 2026-09-30 · An undeclared remote stage is treated as prod; a broken server profile fails the command
+- **Why:** The server profile is the only source of a remote stage, and an empty or misspelled `stage` silently disabled every remote gate. Failing closed costs a confirm on a dev box with a sloppy profile; failing open can cost production. A profile that does not parse used to read as empty (no containers, no stage, no actions), which is the same hole.
+- **Rejected:** Defaulting a remote to `dev` like the local rule (the laptop is not the risk); refusing to run on an undeclared stage (blocks every read-only verb).
+- **Source:** Unit 127; `internal/cmd/db_remote.go` (`remoteConnectTarget`, `warnUndeclaredStage`), `internal/cmd/connect.go` (`fetchRemoteProfile`).
+- **Status:** active
 
 ### 2026-09-30 · Unit 114 (`connect --serve`) is archived as a discarded proposal
 - **Why:** Owner decision; the proposal was never implemented. Its premise, kept as rationale only: a minted session id must not reach stdout, logs or `--json`, so it would have been served as a loopback proxy URL instead of printing the cookie.

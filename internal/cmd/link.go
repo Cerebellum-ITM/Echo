@@ -378,6 +378,7 @@ func probeLink(ctx context.Context, opts LinkOpts, fromName string) (config.Remo
 		statusFields(prof.OdooVersion, prof.Stage,
 			statusProjectName(opts.Cfg, true, opts.Cfg.ConnectRemotePath, fromName),
 			prof.DBName)...)
+	warnUndeclaredStage(remoteConnectTarget(prof), opts.log)
 	opts.log("INFO", "", "linked", prof.DBName,
 		[2]string{"stage", prof.Stage},
 		[2]string{"db", prof.DBName})

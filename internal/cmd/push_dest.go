@@ -206,7 +206,7 @@ func pickRemoteDir(ctx context.Context, rsc remoteShellContext, opts PushOpts, s
 			return "", fmt.Errorf("list %s: %w", cur, err)
 		}
 		choice, err := runSingleFuzzyPickerStaged("Push destination: "+cur,
-			dirPickerEntries(cur, dirs), opts.Palette, rsc.target.stage)
+			dirPickerEntries(cur, dirs), opts.Palette, rsc.target.rawStage)
 		if err != nil {
 			return "", err // ErrCancelled / ErrQuit propagate
 		}

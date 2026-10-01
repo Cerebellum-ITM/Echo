@@ -177,7 +177,7 @@ func RunPush(ctx context.Context, opts PushOpts) error {
 			return nil
 		}
 		picked, perr := pickModulesInteractive(ctx,
-			ModulesOpts{Cfg: withStage(opts.Cfg, rsc.target.stage), Root: opts.Root, Palette: opts.Palette},
+			ModulesOpts{Cfg: withStage(opts.Cfg, rsc.target.rawStage), Root: opts.Root, Palette: opts.Palette},
 			"Modules to push", nil)
 		if perr != nil {
 			return perr

@@ -94,6 +94,7 @@ func resolveRemoteShell(ctx context.Context, cfg *config.Config, palette theme.P
 		statusFields(target.odooVersion, prof.Stage,
 			statusProjectName(cfg, true, remotePath, fromName),
 			prof.DBName)...)
+	warnUndeclaredStage(target, emit)
 
 	conn := odoo.Conn{DB: target.dbName, Host: target.dbContainer}
 	pg := remotePullEnv(ctx, sshHost, remotePath)

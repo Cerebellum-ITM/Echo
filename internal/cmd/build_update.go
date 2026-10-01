@@ -97,7 +97,7 @@ func resolveUpdateBuildTarget(ctx context.Context, opts BuildOpts) (updateBuildT
 		if err != nil {
 			return updateBuildTarget{}, err
 		}
-		return updateBuildTarget{remote: true, fromName: opts.From, rsc: rsc, stage: rsc.target.stage}, nil
+		return updateBuildTarget{remote: true, fromName: opts.From, rsc: rsc, stage: rsc.target.rawStage}, nil
 	}
 
 	type choice struct {
@@ -135,13 +135,13 @@ func resolveUpdateBuildTarget(ctx context.Context, opts BuildOpts) (updateBuildT
 		if err != nil {
 			return updateBuildTarget{}, err
 		}
-		return updateBuildTarget{remote: true, fromName: c.name, rsc: rsc, stage: rsc.target.stage}, nil
+		return updateBuildTarget{remote: true, fromName: c.name, rsc: rsc, stage: rsc.target.rawStage}, nil
 	case "linked":
 		rsc, err := resolveRemoteShell(ctx, opts.Cfg, opts.Palette, opts.Root, "", updateBuildLog(opts))
 		if err != nil {
 			return updateBuildTarget{}, err
 		}
-		return updateBuildTarget{remote: true, linked: true, rsc: rsc, stage: rsc.target.stage}, nil
+		return updateBuildTarget{remote: true, linked: true, rsc: rsc, stage: rsc.target.rawStage}, nil
 	default: // local
 		return updateBuildTarget{stage: opts.Cfg.Stage}, nil
 	}

@@ -40,7 +40,7 @@ What enforces it: `internal/repl/registry_test.go` (Registry unique; Registry ==
 
 ## Config and state in code
 
-- Config writers are load-modify-write and always assign owned fields; a new section follows the checklist in [architecture-and-traps](architecture-and-traps.md#config-and-state-storage). State files are written with `writeAtomic` and loaded best-effort.
+- Config writers are load-modify-write and always assign owned fields; a new section follows the checklist in [architecture-and-traps](architecture-and-traps.md#config-and-state-storage). State files are written with `writeAtomic` after `preserveCorrupt`, and loaded best-effort; config files are read with `loadTOMLFile` and a parse error is returned, never swallowed ([architecture-and-traps](architecture-and-traps.md#config-and-state-storage)).
 - Never write into the user's project directory except for outputs the user asked for ([invariant 4](architecture-and-traps.md#invariants)).
 - Styling goes through `internal/theme`: tokens and `Lighten/Darken` for derived shades, no new raw hex. This is a goal; 154 ad-hoc `lipgloss.NewStyle()` calls exist outside the theme package. Rules: [ui](ui.md).
 - Odoo version differences: check how 17/18/19 differ before assuming 18; encode them in `internal/odoo`. Do not hardcode `docker compose` ([invariant 5](architecture-and-traps.md#invariants)).

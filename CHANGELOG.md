@@ -69,6 +69,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   la sesión.
 
 ### Changed
+- **A remote target whose stage is not declared is treated as prod.** A server
+  profile without `stage`, or with a value other than `dev`, `staging` or
+  `prod`, used to pass every remote gate silently. Now the remote prod
+  confirm, the deploy checkpoint default, test-on-prod, `watch` on prod and
+  the `db-admin` risk check all treat it as `prod`, and the command logs one
+  WARNING after the system status line asking to set `stage` in the server
+  profile. The status line and the pickers still show what the server says.
+  Local projects keep their rule (no profile means `dev`), and Reverb
+  environments always declare their stage.
 - **Selecting commits ships those commits, not the disk.** On a target without
   git-deploy, a module resolved from selected commits used to rsync the working
   tree, carrying later commits and uncommitted edits along. It now ships the
@@ -116,6 +125,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `reverb env env=<proj>/<env> id=<n> api=on|off`.
 
 ### Fixed
+- **A config file that does not parse is never overwritten.** A syntax error
+  in `global.toml` or a project profile used to load defaults silently, and
+  the next save (`--set-*`, `link`, registering a target, the compose
+  detection at startup) wrote a fresh file over the user's. Echo now stops at
+  startup with one `ERROR echo.config:` line naming the file, line and column
+  (exit 2, REPL and one-shot alike), and every writer refuses to write over a
+  file it could not read. State files Echo owns (deploy history, checkpoints,
+  update and sequence recalls, connect sessions) still read as empty when
+  corrupt, but the next write keeps the broken copy as
+  `<name>.corrupt-<YYYYMMDD-HHMMSS>` and logs a WARNING. Registering a target
+  skips a server profile that does not parse with a WARNING naming it.
+- **A server profile that does not parse fails the command.** It used to read
+  as an empty profile: no container names, no stage, no actions. Now any
+  remote command stops before touching the server with
+  `server profile <path> on <host> does not parse: line N, column M: …`.
 - **`uninstall` works.** It ran `odoo --uninstall <mods>`, a flag Odoo's CLI
   has never had, so every run died with `no such option: --uninstall`. It now
   pipes a script to `odoo shell` that calls `button_immediate_uninstall()` —

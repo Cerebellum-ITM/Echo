@@ -1240,6 +1240,7 @@ func RunDeploy(ctx context.Context, opts DeployOpts) (DeployResult, error) {
 		statusFields(target.odooVersion, prof.Stage,
 			statusProjectName(opts.Cfg, true, remotePath, fromName),
 			prof.DBName)...)
+	warnUndeclaredStage(target, opts.log)
 
 	// Resolve the effective push default (Unit 95): explicit flags win, then
 	// the server [deploy] push, then the local one, then off. Setting p.push

@@ -170,7 +170,7 @@ func registerTarget(ctx context.Context, palette theme.Palette, log func(level, 
 		return config.ConnectTarget{}, err
 	}
 
-	projects, err := remoteEchoProjects(ctx, host)
+	projects, err := remoteEchoProjects(ctx, host, log)
 	if err != nil {
 		return config.ConnectTarget{}, err
 	}
@@ -229,10 +229,12 @@ func registerTarget(ctx context.Context, palette theme.Palette, log func(level, 
 
 // remoteEchoProjects reads the server's Echo project profiles over SSH
 // and returns those that recorded a project_path (older profiles that
-// predate the field are skipped — they can't be used as a target).
-func remoteEchoProjects(ctx context.Context, host string) ([]config.ProjectInfo, error) {
+// predate the field are skipped — they can't be used as a target). A
+// profile that does not parse is skipped with a WARNING naming it; log may
+// be nil.
+func remoteEchoProjects(ctx context.Context, host string, log func(level, sub, msg, db string, fields ...[2]string)) ([]config.ProjectInfo, error) {
 	const sep = "==ECHO-PROFILE=="
-	listCmd := `for f in ~/.config/echo/projects/*.toml; do [ -e "$f" ] && { echo '` + sep + `'; cat "$f"; }; done`
+	listCmd := `for f in ~/.config/echo/projects/*.toml; do [ -e "$f" ] && { echo '` + sep + `' "$f"; cat "$f"; }; done`
 	out, err := runSSH(ctx, host, listCmd, nil)
 	if err != nil {
 		return nil, fmt.Errorf("read Echo config on %q: %w", host, err)
@@ -242,7 +244,15 @@ func remoteEchoProjects(ctx context.Context, host string) ([]config.ProjectInfo,
 		if strings.TrimSpace(chunk) == "" {
 			continue
 		}
-		info := config.ParseProjectInfo([]byte(chunk))
+		file, body, _ := strings.Cut(chunk, "\n")
+		info, err := config.ParseProjectInfo([]byte(body))
+		if err != nil {
+			if log != nil {
+				log("WARNING", "", "skipped a server profile that does not parse", "",
+					[2]string{"file", strings.TrimSpace(file)}, [2]string{"err", err.Error()})
+			}
+			continue
+		}
 		if info.ProjectPath != "" {
 			projects = append(projects, info)
 		}
