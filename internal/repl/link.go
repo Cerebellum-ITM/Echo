@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"slices"
 
 	"github.com/charmbracelet/huh"
 	"github.com/pascualchavez/echo/internal/cmd"
@@ -30,6 +31,13 @@ func (sess *session) runLink(ctx context.Context, args []string) {
 			sess.emitPSTableAs(rows, "echo.link.ps", db)
 		},
 	})
+
+	// `--list --json` is machine output already written to stdout; the
+	// blank line and the completion line of finalize would corrupt it.
+	if err == nil && slices.Contains(args, "--list") && slices.Contains(args, "--json") {
+		sess.exitCode = exitOK
+		return
+	}
 
 	switch {
 	case errors.Is(err, cmd.ErrCancelled), errors.Is(err, huh.ErrUserAborted),

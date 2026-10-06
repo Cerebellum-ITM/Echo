@@ -34,6 +34,19 @@ type CmdLogRecord struct {
 	// specific commit made it into an auto-deploy (watch batches, so the tip,
 	// not an exact SHA, is the deployed frontier).
 	DeployedTip string `json:"deployed_tip,omitempty"`
+	// The target a remote run really hit, as the server's profile resolved
+	// it. DB and Stage above stay the local profile's.
+	Target      string `json:"target,omitempty"`
+	Host        string `json:"host,omitempty"`
+	RemoteDB    string `json:"remote_db,omitempty"`
+	RemoteStage string `json:"remote_stage,omitempty"`
+	// The script a `shell-run` or piped `shell` fed to Odoo. ScriptSHA256 is
+	// of the full body; ScriptBody is cut to 64 KiB.
+	ScriptPath          string   `json:"script_path,omitempty"`
+	ScriptSHA256        string   `json:"script_sha256,omitempty"`
+	ScriptBody          string   `json:"script_body,omitempty"`
+	ScriptBodyTruncated bool     `json:"script_body_truncated,omitempty"`
+	ScriptOutputLines   []string `json:"script_output_lines,omitempty"`
 }
 
 // CmdLogMeta is a CmdLogRecord's header without its Lines, plus the file
@@ -54,6 +67,10 @@ type CmdLogMeta struct {
 	Truncated   bool      `json:"truncated"`
 	LineCount   int       `json:"line_count"`             // captured lines, without the body
 	DeployedTip string    `json:"deployed_tip,omitempty"` // branch tip a `watch-deploy` cycle shipped
+	Target      string    `json:"target,omitempty"`
+	Host        string    `json:"host,omitempty"`
+	RemoteDB    string    `json:"remote_db,omitempty"`
+	RemoteStage string    `json:"remote_stage,omitempty"`
 }
 
 // CmdLogsDir returns the per-project command-log directory,
@@ -338,6 +355,10 @@ func ListCmdLogs(root string) ([]CmdLogMeta, error) {
 			Truncated:   rec.Truncated,
 			LineCount:   len(rec.Lines),
 			DeployedTip: rec.DeployedTip,
+			Target:      rec.Target,
+			Host:        rec.Host,
+			RemoteDB:    rec.RemoteDB,
+			RemoteStage: rec.RemoteStage,
 		})
 	}
 	return out, nil

@@ -91,6 +91,9 @@ type session struct {
 	// (sequence steps, build mode); captured lines go to the top one. A
 	// nil slot is a run whose live file failed and was dropped.
 	liveRuns []*config.CmdLogLive
+	// extras holds what the current dispatch learned for its record beyond
+	// the captured lines; dispatchParsed scopes it to one dispatch.
+	extras recordExtras
 }
 
 // Exit codes returned by one-shot (script) dispatch. The interactive REPL
@@ -155,6 +158,8 @@ func newSession(s theme.Styles, p theme.Palette, project, id string, stage theme
 	cfg.PromptSegments = valid
 	sess.prompt = newPromptBuilder(sess)
 	logDBMax = cfg.LogDBMax
+	captureLine = sess.capture
+	cmd.OnRemoteResolved = sess.noteRemoteResolved
 	return sess, unknown
 }
 
@@ -258,11 +263,16 @@ func (sess *session) dispatchParsed(ctx context.Context, cmd string, args []stri
 	// recorded; fires before runStepCaptured's post-dispatch buffer reset,
 	// so recipe steps land as their own records. The live file shares the
 	// record's stem and is removed only after the record is written, so a
-	// recorded run never disappears between the two.
+	// recorded run never disappears between the two. The caller's extras
+	// are set aside so a nested step's remote target or script lands in the
+	// step's record only.
 	started := time.Now()
 	pushed := sess.pushLiveRun(cmd, args, started)
+	outerExtras := sess.extras
+	sess.extras = recordExtras{}
 	defer func() {
 		sess.saveCmdLog(cmd, args, started)
+		sess.extras = outerExtras
 		if pushed {
 			sess.popLiveRun()
 		}

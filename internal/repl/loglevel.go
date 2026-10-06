@@ -20,6 +20,20 @@ var loguruLogPrefix = regexp.MustCompile(
 	`^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d+ \| (DEBUG|INFO|WARNING|ERROR|CRITICAL) \| `,
 )
 
+// echoLogPrefix matches the plain form of Echo's own emitOdooLog lines,
+// which carry the 4-char level names of shortLevelName.
+var echoLogPrefix = regexp.MustCompile(
+	`^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},\d{3} \d+ (DEBU|INFO|WARN|ERRO|CRIT) `,
+)
+
+var echoLevelNames = map[string]string{
+	"DEBU": "DEBUG",
+	"INFO": "INFO",
+	"WARN": "WARNING",
+	"ERRO": "ERROR",
+	"CRIT": "CRITICAL",
+}
+
 // classifyOdooLog returns the Line.Kind for an Odoo log line. Recognises
 // both the standard Odoo format (comma-ms, pid, db) and the loguru format
 // (dot-ms, pipes, no pid/db). Non-matching lines fall back to "out", except
@@ -57,11 +71,15 @@ func classifyOdooLog(line, previousKind string) string {
 // ERROR/CRITICAL) when it has one, or "" otherwise. Unlike classifyOdooLog
 // it does not infer from context (no traceback inheritance) and keeps
 // ERROR and CRITICAL distinct — used by `report` to filter stored lines by
-// exact level. Recognizes the standard Odoo prefix, the loguru prefix, and
-// loose-severity stderr.
+// exact level. Recognizes the standard Odoo prefix, Echo's own short-level
+// prefix (returned as the full name), the loguru prefix, and loose-severity
+// stderr.
 func lineLevel(text string) string {
 	if m := odooLogPrefix.FindStringSubmatch(text); m != nil {
 		return m[1]
+	}
+	if m := echoLogPrefix.FindStringSubmatch(text); m != nil {
+		return echoLevelNames[m[1]]
 	}
 	if m := loguruLogPrefix.FindStringSubmatch(text); m != nil {
 		return m[1]

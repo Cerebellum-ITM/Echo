@@ -19,6 +19,11 @@ import (
 // locking is needed beyond what sess.print already assumes.
 var runLogSink io.Writer
 
+// captureLine, when non-nil, records every emitOdooLog line in the current
+// session's capture (sess.capture), so Echo's own lines reach records, live
+// files, copy-last and report like any printed line. newSession sets it.
+var captureLine func(Line)
+
 // logDBMax is the max display width of the database name in styled log
 // lines before it's middle-truncated (so a long name doesn't wrap the rest
 // of the line). Defaults to the config default; newSession overrides it
@@ -60,6 +65,12 @@ func emitOdooLog(level, logger, msg string, fields []logField, s theme.Styles, p
 // which writes its diagnostic to stderr so stdout carries only the JSON
 // array. The run-log tee still fires regardless of destination.
 func emitOdooLogTo(w io.Writer, level, logger, msg string, fields []logField, s theme.Styles, p theme.Palette, db string) {
+	plain := plainOdooLogFields(level, logger, msg, fields, db)
+	// Captured before the suppression check, as in sess.print: --silent is
+	// about the screen, not the data.
+	if captureLine != nil {
+		captureLine(Line{Kind: kindFromLevel(level), Text: plain})
+	}
 	// Silenced recipe step (--silent): drop screen + log entirely. The
 	// runner's own step/recap lines are emitted with suppression inactive,
 	// so they stay visible.
@@ -67,12 +78,13 @@ func emitOdooLogTo(w io.Writer, level, logger, msg string, fields []logField, s 
 		return
 	}
 	io.WriteString(w, renderOdooLog(level, logger, msg, fields, s, p, db)+"\n")
-	teeRunLog(plainOdooLogFields(level, logger, msg, fields, db))
+	teeRunLog(plain)
 }
 
 // PrintConfigError prints the single ERROR line for a config file that does
 // not parse at startup. No theme is loaded yet (it lives in the broken file),
-// so it renders with the default palette, on stderr.
+// so it renders with the default palette, on stderr. It runs before any
+// session exists, so the line is not captured.
 func PrintConfigError(err error) {
 	p := theme.PaletteByName("")
 	emitOdooLogTo(os.Stderr, "ERROR", "echo.config", err.Error(),

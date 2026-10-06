@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/pascualchavez/echo/internal/cmd"
 	"github.com/pascualchavez/echo/internal/config"
 )
 
@@ -37,6 +38,22 @@ func reportLine(l Line) config.ReportLine {
 		lvl = levelFromKind(l.Kind)
 	}
 	return config.ReportLine{Level: lvl, Text: l.Text}
+}
+
+// recordExtras is what a dispatch adds to its record beyond the captured
+// lines: the remote target it resolved and the script it ran. Nil means the
+// run had none.
+type recordExtras struct {
+	remote *cmd.RemoteResolution
+	script *scriptFields
+}
+
+// noteRemoteResolved is cmd.OnRemoteResolved for this session. The first
+// resolution of a dispatch wins, so `compare --targets a,b` records a.
+func (sess *session) noteRemoteResolved(r cmd.RemoteResolution) {
+	if sess.extras.remote == nil {
+		sess.extras.remote = &r
+	}
 }
 
 // isRecordable reports whether a dispatch of cmd gets a history record and
@@ -73,6 +90,16 @@ func (sess *session) saveCmdLog(cmd string, args []string, started time.Time) {
 		Warnings:   sess.lastWarnings,
 		Truncated:  sess.lastOutput.truncated,
 		Lines:      captureReportLines(sess.lastOutput.Filtered(nil)),
+	}
+	if r := sess.extras.remote; r != nil {
+		rec.Target, rec.Host, rec.RemoteDB, rec.RemoteStage = r.Target, r.Host, r.DB, r.Stage
+	}
+	if sc := sess.extras.script; sc != nil {
+		rec.ScriptPath = sc.path
+		rec.ScriptSHA256 = sc.sha256
+		rec.ScriptBody = sc.body
+		rec.ScriptBodyTruncated = sc.bodyTruncated
+		rec.ScriptOutputLines = sc.outputLines
 	}
 
 	root := sess.projectDir

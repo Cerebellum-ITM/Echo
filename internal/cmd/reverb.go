@@ -387,7 +387,7 @@ func resolveReverbShell(ctx context.Context, cfg *config.Config, spec string, lo
 	emit("INFO", "system", "system", prof.DBName,
 		statusFields(target.odooVersion, prof.Stage, renv.project+"/"+renv.env, prof.DBName)...)
 
-	return remoteShellContext{
+	rsc := remoteShellContext{
 		sshHost:    sshHost,
 		remotePath: re.Paths.ComposeDir,
 		fromName:   renv.ref(),
@@ -400,7 +400,9 @@ func resolveReverbShell(ctx context.Context, cfg *config.Config, spec string, lo
 			Password: re.DB.PasswordValue(),
 		},
 		reverb: renv,
-	}, nil
+	}
+	reportRemoteResolved(rsc)
+	return rsc, nil
 }
 
 // reverbError turns the client's sentinels into the operator-facing

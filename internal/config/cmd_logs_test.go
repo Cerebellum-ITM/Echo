@@ -97,6 +97,90 @@ func TestCmdLogDeployedTipRoundTrip(t *testing.T) {
 	}
 }
 
+func TestCmdLogRemoteAndScriptFieldsRoundTrip(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	root := "/some/project"
+
+	rec := CmdLogRecord{
+		Cmd:                 "shell-run fix.py --from stg",
+		Command:             "shell-run",
+		DB:                  "local_db",
+		Stage:               "dev",
+		From:                "stg",
+		Started:             time.Now().Truncate(time.Millisecond),
+		Lines:               []ReportLine{{Text: "190"}},
+		Target:              "stg",
+		Host:                "stg.example",
+		RemoteDB:            "stg_db",
+		RemoteStage:         "staging",
+		ScriptPath:          "/proj/scripts/fix.py",
+		ScriptSHA256:        "abc",
+		ScriptBody:          "print(190)\n",
+		ScriptBodyTruncated: true,
+		ScriptOutputLines:   []string{"190"},
+	}
+	if err := SaveCmdLog(root, rec); err != nil {
+		t.Fatalf("SaveCmdLog: %v", err)
+	}
+	metas, err := ListCmdLogs(root)
+	if err != nil || len(metas) != 1 {
+		t.Fatalf("ListCmdLogs = %d records, %v", len(metas), err)
+	}
+	m := metas[0]
+	if m.Target != "stg" || m.Host != "stg.example" || m.RemoteDB != "stg_db" || m.RemoteStage != "staging" {
+		t.Fatalf("remote fields not carried into meta: %+v", m)
+	}
+	if m.DB != "local_db" || m.Stage != "dev" {
+		t.Fatalf("db/stage must stay the local profile's: %+v", m)
+	}
+	full, ok := LoadCmdLog(m.Path)
+	if !ok {
+		t.Fatal("LoadCmdLog failed")
+	}
+	if full.ScriptPath != rec.ScriptPath || full.ScriptSHA256 != "abc" || full.ScriptBody != rec.ScriptBody ||
+		!full.ScriptBodyTruncated || len(full.ScriptOutputLines) != 1 || full.ScriptOutputLines[0] != "190" {
+		t.Fatalf("script fields not persisted: %+v", full)
+	}
+}
+
+func TestCmdLogOldRecordWithoutNewFields(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	root := "/some/project"
+	dir, err := CmdLogsDir(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	old := `{"cmd":"update sale","command":"update","db":"muutrade","stage":"dev","from":"",` +
+		`"exit":0,"started":"2026-09-01T10:00:00Z","duration_ms":5,"errors":0,"warnings":0,` +
+		`"truncated":false,"lines":[{"level":"INFO","text":"ok"}]}`
+	if err := os.WriteFile(filepath.Join(dir, "1756720800000-update.json"), []byte(old), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	metas, err := ListCmdLogs(root)
+	if err != nil || len(metas) != 1 {
+		t.Fatalf("ListCmdLogs = %d records, %v", len(metas), err)
+	}
+	if m := metas[0]; m.Command != "update" || m.Target != "" || m.Host != "" || m.RemoteDB != "" || m.RemoteStage != "" {
+		t.Fatalf("old record loaded wrong: %+v", m)
+	}
+
+	saveAt(t, root, "install", time.Now())
+	metas, _ = ListCmdLogs(root)
+	data, err := os.ReadFile(metas[0].Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{"target", "host", "remote_db", "remote_stage", "script_path", "script_sha256",
+		"script_body", "script_body_truncated", "script_output_lines"} {
+		if strings.Contains(string(data), `"`+key+`"`) {
+			t.Errorf("empty %s was written; it must be omitted", key)
+		}
+	}
+}
+
 func TestCmdLogListMissingDir(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	metas, err := ListCmdLogs("/never/saved")

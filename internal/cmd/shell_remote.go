@@ -26,6 +26,27 @@ type remoteShellContext struct {
 	reverb *reverbEnv
 }
 
+// RemoteResolution is the target a remote run really hit, as resolved from
+// the server side: the connect target's name (or the `-E` reference), the SSH
+// host, and the remote profile's database and stage.
+type RemoteResolution struct{ Target, Host, DB, Stage string }
+
+// OnRemoteResolved, when set, is called once per successful remote resolution
+// so the REPL can stamp the run's history record. It is a package var for the
+// same reason as EchoVersion: cmd cannot import repl.
+var OnRemoteResolved func(RemoteResolution)
+
+func reportRemoteResolved(rsc remoteShellContext) {
+	if OnRemoteResolved != nil {
+		OnRemoteResolved(RemoteResolution{
+			Target: rsc.fromName,
+			Host:   rsc.sshHost,
+			DB:     rsc.target.dbName,
+			Stage:  rsc.target.stage,
+		})
+	}
+}
+
 // remoteFlagsIn extracts the remote-mode switches from an argument list:
 // `--from <target>` / `--from=<target>` names a global connect target
 // (implying remote); bare `--remote` uses the resolution chain without a
@@ -112,7 +133,7 @@ func resolveRemoteShell(ctx context.Context, cfg *config.Config, palette theme.P
 			[2]string{"env", prof.Reverb.Project + "/" + prof.Reverb.Env}, [2]string{"reason", why})
 	}
 
-	return remoteShellContext{
+	rsc := remoteShellContext{
 		sshHost:    sshHost,
 		remotePath: remotePath,
 		fromName:   fromName,
@@ -120,7 +141,9 @@ func resolveRemoteShell(ctx context.Context, cfg *config.Config, palette theme.P
 		prof:       prof,
 		conn:       conn,
 		reverb:     renv,
-	}, nil
+	}
+	reportRemoteResolved(rsc)
+	return rsc, nil
 }
 
 // confirmRemoteProd gates a remote action on the REMOTE profile's stage

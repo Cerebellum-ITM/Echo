@@ -23,6 +23,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the retention pass and `logview --clear`; `logview` and the record format are
   unchanged. Best-effort: any live-file failure is silent and never affects the
   command.
+- **Command-log records say which remote a run really hit and which script it
+  ran.** A run that resolves a remote target records `target` (the connect
+  target's name, or the `env:<project>/<env>` reference of `-E`), `host`,
+  `remote_db` and `remote_stage` as the server's profile resolved them; `db`
+  and `stage` stay the local profile's. The first resolution of a run wins
+  (`compare --targets a,b` records `a`) and a sequence step's target belongs to
+  the step's record only. `logview --list --json` carries the four fields too. A
+  `shell-run` or piped `shell` also records `script_path` (empty for stdin),
+  `script_sha256` of the full body, `script_body` (cut to 64 KiB at a UTF-8
+  boundary, with `script_body_truncated`) and `script_output_lines`, the
+  script's own output without the shell's log lines. All new keys are omitted
+  when empty, so older records load unchanged.
+
+### Changed
+- **Echo's own `echo.*` lines are now part of a command's captured output.**
+  Records, live files, `report` and `copy-last` include them (with full level
+  names: `WARN` is stored as `WARNING`), so `copy-last` and the failure
+  auto-copy now carry Echo's lines among the command's output, and commands
+  whose output was only Echo lines (`modules`, `link`, `doctor` in text
+  mode…) now leave a record. They are captured, not counted: error and warning
+  totals and exit codes are unchanged.
+- **`link --list --json` prints only its JSON.** The blank line and the
+  `echo.link` completion line no longer follow it on stdout, and a successful
+  call no longer adds a `link` run to the command history.
 
 ## [0.26.0] - 2026-10-01
 
