@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -74,6 +75,12 @@ func CmdLogsDir(root string) (string, error) {
 // `<unix-millis>-<command>.json`. The millisecond stamp makes collisions
 // practically impossible and lexicographic order = chronological order.
 func cmdLogFilename(started time.Time, command string) string {
+	return cmdLogStem(started, command) + ".json"
+}
+
+// cmdLogStem is the `<unix-millis>-<command>` name shared by a record and
+// the live file of the same run.
+func cmdLogStem(started time.Time, command string) string {
 	safe := strings.Map(func(r rune) rune {
 		switch {
 		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '-', r == '_':
@@ -85,7 +92,7 @@ func cmdLogFilename(started time.Time, command string) string {
 	if safe == "" {
 		safe = "cmd"
 	}
-	return strconv.FormatInt(started.UnixMilli(), 10) + "-" + safe + ".json"
+	return strconv.FormatInt(started.UnixMilli(), 10) + "-" + safe
 }
 
 // SaveCmdLog writes one command-log record atomically, creating the
@@ -104,6 +111,184 @@ func SaveCmdLog(root string, r CmdLogRecord) error {
 		return err
 	}
 	return writeAtomic(filepath.Join(dir, cmdLogFilename(r.Started, r.Command)), data)
+}
+
+const cmdLogLiveSuffix = ".running.ndjson"
+
+// cmdLogLiveMaxBytes caps a live file; a var only so tests can shrink it.
+var cmdLogLiveMaxBytes = 2 << 20
+
+// CmdLogLiveHeader is the first line of a live file. Its fields hold what
+// the run's CmdLogRecord will hold; PID lets a reader that cannot flock
+// tell a running writer from an orphan.
+type CmdLogLiveHeader struct {
+	Schema    int       `json:"schema"`
+	Cmd       string    `json:"cmd"`
+	Command   string    `json:"command"`
+	DB        string    `json:"db"`
+	Stage     string    `json:"stage"`
+	From      string    `json:"from"`
+	Started   time.Time `json:"started"`
+	PID       int       `json:"pid"`
+	Truncated bool      `json:"truncated,omitempty"`
+}
+
+// CmdLogLive is the `<unix-millis>-<command>.running.ndjson` file a run
+// appends its captured lines to while it happens: the header, then one
+// ReportLine per line. The writer holds LOCK_EX on it until Remove, so a
+// file whose lock can be taken belongs to a dead process.
+type CmdLogLive struct {
+	file    *os.File
+	path    string
+	header  CmdLogLiveHeader
+	written int
+}
+
+// OpenCmdLogLive creates the live file for a run, locks it and writes the
+// header. On any failure nothing is left on disk.
+func OpenCmdLogLive(root string, h CmdLogLiveHeader) (*CmdLogLive, error) {
+	dir, err := CmdLogsDir(root)
+	if err != nil {
+		return nil, err
+	}
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return nil, err
+	}
+	// Created under a temporary name and renamed once locked: a prune in
+	// another Echo process must never see the final name without a lock,
+	// or it would take the new file for an orphan. The lock follows the
+	// inode through the rename.
+	path := filepath.Join(dir, cmdLogStem(h.Started, h.Command)+cmdLogLiveSuffix)
+	tmp := path + ".tmp"
+	f, err := os.OpenFile(tmp, os.O_CREATE|os.O_EXCL|os.O_WRONLY|os.O_APPEND, 0o600)
+	if err != nil {
+		return nil, err
+	}
+	h.Schema = 1
+	l := &CmdLogLive{file: f, path: tmp, header: h}
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
+		l.Remove()
+		return nil, err
+	}
+	if err := l.writeJSON(h); err != nil {
+		l.Remove()
+		return nil, err
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		l.Remove()
+		return nil, err
+	}
+	l.path = path
+	return l, nil
+}
+
+// Append writes one line. When it would push the file past the cap, the
+// file is first rewritten in place from keep() (the lines the run still
+// buffers) under a header marked truncated; a reader that sees the file
+// shrink starts over.
+func (l *CmdLogLive) Append(line ReportLine, keep func() []ReportLine) error {
+	data, err := json.Marshal(line)
+	if err != nil {
+		return err
+	}
+	data = append(data, '\n')
+	if l.written+len(data) > cmdLogLiveMaxBytes {
+		if err := l.compact(keep()); err != nil {
+			return err
+		}
+	}
+	return l.write(data)
+}
+
+// compact rewrites the file as the truncated header plus the newest of
+// kept that fit in half the cap, so the next compaction is another half cap
+// of output away instead of on the very next line.
+func (l *CmdLogLive) compact(kept []ReportLine) error {
+	h := l.header
+	h.Truncated = true
+	header, err := json.Marshal(h)
+	if err != nil {
+		return err
+	}
+	header = append(header, '\n')
+
+	budget := cmdLogLiveMaxBytes/2 - len(header)
+	var tail [][]byte
+	for i := len(kept) - 1; i >= 0; i-- {
+		data, err := json.Marshal(kept[i])
+		if err != nil {
+			return err
+		}
+		data = append(data, '\n')
+		if len(data) > budget {
+			break
+		}
+		budget -= len(data)
+		tail = append(tail, data)
+	}
+
+	buf := header
+	for i := len(tail) - 1; i >= 0; i-- {
+		buf = append(buf, tail[i]...)
+	}
+	if err := l.file.Truncate(0); err != nil {
+		return err
+	}
+	l.written = 0
+	return l.write(buf)
+}
+
+func (l *CmdLogLive) writeJSON(v any) error {
+	data, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	return l.write(append(data, '\n'))
+}
+
+func (l *CmdLogLive) write(data []byte) error {
+	n, err := l.file.Write(data)
+	l.written += n
+	return err
+}
+
+// Remove closes the live file, releasing its lock, and deletes it.
+func (l *CmdLogLive) Remove() {
+	if l == nil {
+		return
+	}
+	_ = l.file.Close()
+	_ = os.Remove(l.path)
+}
+
+// isOrphanLiveFile reports whether nobody holds the live file's lock, i.e.
+// the process that wrote it is gone.
+func isOrphanLiveFile(path string) bool {
+	f, err := os.Open(path)
+	if err != nil {
+		return false
+	}
+	defer f.Close()
+	if syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB) != nil {
+		return false
+	}
+	_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+	return true
+}
+
+// removeOrphanLiveFiles deletes the live files in dir left by dead
+// processes and returns how many it removed.
+func removeOrphanLiveFiles(dir string, entries []os.DirEntry) (removed int) {
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), cmdLogLiveSuffix) {
+			continue
+		}
+		path := filepath.Join(dir, e.Name())
+		if isOrphanLiveFile(path) && os.Remove(path) == nil {
+			removed++
+		}
+	}
+	return removed
 }
 
 // ListCmdLogs reads the project's cmd-logs dir and returns each record's
@@ -177,8 +362,9 @@ func LoadCmdLog(path string) (CmdLogRecord, bool) {
 // records whose filename timestamp is older than retentionDays), then a
 // count pass (drop the oldest beyond maxRuns). A value of 0 disables that
 // pass. Both passes tolerate individual remove failures — pruning is
-// best-effort and never touches anything but `*.json` in the project's own
-// directory. Returns how many files were removed.
+// best-effort and never touches anything but `*.json` records and orphaned
+// live files in the project's own directory. Orphans count in the returned
+// number of removed files but not toward maxRuns.
 func PruneCmdLogs(root string, retentionDays, maxRuns int) (removed int, err error) {
 	dir, err := CmdLogsDir(root)
 	if err != nil {
@@ -191,6 +377,7 @@ func PruneCmdLogs(root string, retentionDays, maxRuns int) (removed int, err err
 		}
 		return 0, err
 	}
+	removed = removeOrphanLiveFiles(dir, entries)
 	names := make([]string, 0, len(entries))
 	for _, e := range entries {
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
@@ -228,9 +415,9 @@ func PruneCmdLogs(root string, retentionDays, maxRuns int) (removed int, err err
 	return removed, nil
 }
 
-// ClearCmdLogs deletes every `*.json` record in the project's cmd-logs dir,
-// tolerating individual remove failures. It is the backend for Unit 82's
-// `logview --clear`. A missing dir is a no-op.
+// ClearCmdLogs deletes every `*.json` record and every orphaned live file
+// in the project's cmd-logs dir, tolerating individual remove failures. It
+// is the backend for Unit 82's `logview --clear`. A missing dir is a no-op.
 func ClearCmdLogs(root string) (removed int, err error) {
 	dir, err := CmdLogsDir(root)
 	if err != nil {
@@ -243,6 +430,7 @@ func ClearCmdLogs(root string) (removed int, err error) {
 		}
 		return 0, err
 	}
+	removed = removeOrphanLiveFiles(dir, entries)
 	for _, e := range entries {
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
 			continue

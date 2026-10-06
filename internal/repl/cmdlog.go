@@ -1,6 +1,7 @@
 package repl
 
 import (
+	"os"
 	"strings"
 	"time"
 
@@ -25,32 +26,40 @@ var cmdLogSkip = map[string]bool{
 func captureReportLines(lines []Line) []config.ReportLine {
 	out := make([]config.ReportLine, 0, len(lines))
 	for _, l := range lines {
-		lvl := lineLevel(l.Text)
-		if lvl == "" {
-			lvl = levelFromKind(l.Kind)
-		}
-		out = append(out, config.ReportLine{Level: lvl, Text: l.Text})
+		out = append(out, reportLine(l))
 	}
 	return out
+}
+
+func reportLine(l Line) config.ReportLine {
+	lvl := lineLevel(l.Text)
+	if lvl == "" {
+		lvl = levelFromKind(l.Kind)
+	}
+	return config.ReportLine{Level: lvl, Text: l.Text}
+}
+
+// isRecordable reports whether a dispatch of cmd gets a history record and
+// a live file: not when disabled, not for meta commands or the read-only
+// inspectors.
+func (sess *session) isRecordable(cmd string) bool {
+	return sess.cfg != nil && !sess.cfg.CmdLogsDisabled && !isMetaCommand(cmd) && !cmdLogSkip[cmd]
 }
 
 // saveCmdLog snapshots the just-finished command's captured output as a
 // history record under ~/.config/echo/cmd-logs/<key>/. Best-effort: any
 // failure is swallowed so it never breaks or delays the command. Skipped:
-// disabled config, meta commands, the read-only inspectors, and empty
-// captures (e.g. unknown-command).
-func (sess *session) saveCmdLog(cmd string, args []string, dur time.Duration) {
-	if sess.cfg == nil || sess.cfg.CmdLogsDisabled {
-		return
-	}
-	if isMetaCommand(cmd) || cmdLogSkip[cmd] {
+// commands that are not recordable and empty captures (e.g.
+// unknown-command).
+func (sess *session) saveCmdLog(cmd string, args []string, started time.Time) {
+	if !sess.isRecordable(cmd) {
 		return
 	}
 	if sess.lastOutput == nil || sess.lastOutput.IsEmpty() {
 		return
 	}
 
-	startedAt := time.Now().Add(-dur)
+	dur := time.Since(started)
 	rec := config.CmdLogRecord{
 		Cmd:        strings.TrimSpace(cmd + " " + strings.Join(args, " ")),
 		Command:    cmd,
@@ -58,7 +67,7 @@ func (sess *session) saveCmdLog(cmd string, args []string, dur time.Duration) {
 		Stage:      string(sess.stage),
 		From:       remoteRunLabel(args),
 		Exit:       sess.exitCode,
-		Started:    startedAt,
+		Started:    started,
 		DurationMS: dur.Milliseconds(),
 		Errors:     sess.lastErrors,
 		Warnings:   sess.lastWarnings,
@@ -69,6 +78,56 @@ func (sess *session) saveCmdLog(cmd string, args []string, dur time.Duration) {
 	root := sess.projectDir
 	_ = config.SaveCmdLog(root, rec)
 	_, _ = config.PruneCmdLogs(root, sess.cfg.CmdLogsRetentionDays, sess.cfg.CmdLogsMaxRuns)
+}
+
+// pushLiveRun opens the live file a recordable dispatch streams its lines
+// to and pushes it on the session's stack. It reports whether it pushed;
+// an open failure only means this run has no live file.
+func (sess *session) pushLiveRun(cmd string, args []string, started time.Time) bool {
+	if !sess.isRecordable(cmd) {
+		return false
+	}
+	live, err := config.OpenCmdLogLive(sess.projectDir, config.CmdLogLiveHeader{
+		Cmd:     strings.TrimSpace(cmd + " " + strings.Join(args, " ")),
+		Command: cmd,
+		DB:      sess.cfg.DBName,
+		Stage:   string(sess.stage),
+		From:    remoteRunLabel(args),
+		Started: started,
+		PID:     os.Getpid(),
+	})
+	if err != nil {
+		return false
+	}
+	sess.liveRuns = append(sess.liveRuns, live)
+	return true
+}
+
+// popLiveRun closes and deletes the innermost live file. Nested dispatches
+// return in LIFO order, so the top is the caller's own.
+func (sess *session) popLiveRun() {
+	n := len(sess.liveRuns)
+	sess.liveRuns[n-1].Remove()
+	sess.liveRuns = sess.liveRuns[:n-1]
+}
+
+// capture records a printed line: in the live file of the innermost run
+// and in lastOutput. The live append goes first so a compaction rebuilds
+// from the buffer as it was before this line, then adds the line once.
+// A failed append drops that run's live file; its slot stays as nil so the
+// stack still pops in order.
+func (sess *session) capture(l Line) {
+	if n := len(sess.liveRuns); n > 0 && sess.liveRuns[n-1] != nil {
+		live := sess.liveRuns[n-1]
+		keep := func() []config.ReportLine { return captureReportLines(sess.lastOutput.Filtered(nil)) }
+		if err := live.Append(reportLine(l), keep); err != nil {
+			live.Remove()
+			sess.liveRuns[n-1] = nil
+		}
+	}
+	if sess.lastOutput != nil {
+		sess.lastOutput.Add(l)
+	}
 }
 
 // pruneCmdLogs fires one best-effort retention pass, called once at session

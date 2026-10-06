@@ -87,6 +87,10 @@ type session struct {
 	// carry no remote flag of their own.
 	lastViewFrom   string
 	lastViewRemote bool
+	// liveRuns stacks the live cmd-log files of nested dispatches
+	// (sequence steps, build mode); captured lines go to the top one. A
+	// nil slot is a run whose live file failed and was dropped.
+	liveRuns []*config.CmdLogLive
 }
 
 // Exit codes returned by one-shot (script) dispatch. The interactive REPL
@@ -252,9 +256,17 @@ func (sess *session) dispatchParsed(ctx context.Context, cmd string, args []stri
 	// Persist the captured output as a history record when the command
 	// finishes (Unit 81). Deferred so the build-mode early return is still
 	// recorded; fires before runStepCaptured's post-dispatch buffer reset,
-	// so recipe steps land as their own records.
+	// so recipe steps land as their own records. The live file shares the
+	// record's stem and is removed only after the record is written, so a
+	// recorded run never disappears between the two.
 	started := time.Now()
-	defer func() { sess.saveCmdLog(cmd, args, time.Since(started)) }()
+	pushed := sess.pushLiveRun(cmd, args, started)
+	defer func() {
+		sess.saveCmdLog(cmd, args, started)
+		if pushed {
+			sess.popLiveRun()
+		}
+	}()
 
 	// Build mode (--build / -b) is universal: intercept before the switch,
 	// but only for commands the switch actually routes — an unknown command
@@ -1198,9 +1210,7 @@ func (sess *session) emitStreamLine(lc *logColorer, line string) {
 func (sess *session) print(l Line) {
 	// Capture for `report` even when the line is silenced — suppression is
 	// about live noise, not losing the data.
-	if sess.lastOutput != nil {
-		sess.lastOutput.Add(l)
-	}
+	sess.capture(l)
 	if outputSuppressed(levelFromKind(l.Kind)) {
 		return
 	}
@@ -1242,9 +1252,7 @@ func (sess *session) print(l Line) {
 // `--log` stay clean even when the display string carries per-segment color
 // the standard Kind styling can't express (e.g. the push change tree).
 func (sess *session) printStyled(rendered, plain, kind string) {
-	if sess.lastOutput != nil {
-		sess.lastOutput.Add(Line{Kind: kind, Text: plain})
-	}
+	sess.capture(Line{Kind: kind, Text: plain})
 	if outputSuppressed(levelFromKind(kind)) {
 		return
 	}

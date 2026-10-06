@@ -5,6 +5,25 @@ All notable changes to Echo are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- **Live command logs: any run, REPL or one-shot, can be followed while it
+  happens.** Each recorded command now keeps
+  `~/.config/echo/cmd-logs/<key>/<started-ms>-<command>.running.ndjson` beside
+  its future `.json` record, same stem: one JSON header line (`schema`, `cmd`,
+  `command`, `db`, `stage`, `from`, `started`, `pid`) followed by one
+  `{"level","text"}` line per captured line, appended as it is printed. The
+  writer holds an exclusive `flock` on it; past 2 MiB it is rewritten in place
+  with the newest buffered lines that fit in 1 MiB, under a header with
+  `"truncated":true`. When the run
+  ends the usual `.json` record is written first and the live file removed.
+  Nested runs (sequence steps, build mode) each get their own file, and lines
+  go to the innermost one. Live files left by a killed process are removed by
+  the retention pass and `logview --clear`; `logview` and the record format are
+  unchanged. Best-effort: any live-file failure is silent and never affects the
+  command.
+
 ## [0.26.0] - 2026-10-01
 
 ### Added
