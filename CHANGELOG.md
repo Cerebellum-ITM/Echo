@@ -35,6 +35,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   boundary, with `script_body_truncated`) and `script_output_lines`, the
   script's own output without the shell's log lines. All new keys are omitted
   when empty, so older records load unchanged.
+- **`ECHO_LOG_FORMAT=json` prints Echo's log lines as one JSON object per
+  line**, for programs that spawn `echo_cli` and want fields instead of text.
+  Echo's own `echo.*` lines become `{"time","pid","level","db","logger","msg",
+  "fields","text"}` (full level name, `fields` as ordered `[key, value]` pairs
+  and omitted when empty, `text` the plain line the run log gets), on the same
+  stdout or stderr as before. Every other printed line (subprocess and Odoo
+  output, script output, status lines) becomes `{"level","text"}`, the shape of
+  live-file lines, with plain text. Any other value, or none, keeps today's
+  text. Unchanged: `--silent`, records, live files, the `--log` file, `--json`
+  results, and the banner, `Goodbye!`, the help body, the sequence review,
+  pickers, prompts and errors printed before startup completes.
 
 ### Changed
 - **Echo's own `echo.*` lines are now part of a command's captured output.**

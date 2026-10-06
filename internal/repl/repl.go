@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -158,6 +159,7 @@ func newSession(s theme.Styles, p theme.Palette, project, id string, stage theme
 	cfg.PromptSegments = valid
 	sess.prompt = newPromptBuilder(sess)
 	logDBMax = cfg.LogDBMax
+	jsonLogs = os.Getenv("ECHO_LOG_FORMAT") == "json"
 	captureLine = sess.capture
 	cmd.OnRemoteResolved = sess.noteRemoteResolved
 	return sess, unknown
@@ -1224,6 +1226,11 @@ func (sess *session) print(l Line) {
 	if outputSuppressed(levelFromKind(l.Kind)) {
 		return
 	}
+	if jsonLogs {
+		writeJSONLine(os.Stdout, reportLine(l))
+		teeRunLog(l.Text)
+		return
+	}
 
 	s := sess.styles
 	var text string
@@ -1262,10 +1269,15 @@ func (sess *session) print(l Line) {
 // `--log` stay clean even when the display string carries per-segment color
 // the standard Kind styling can't express (e.g. the push change tree).
 func (sess *session) printStyled(rendered, plain, kind string) {
-	sess.capture(Line{Kind: kind, Text: plain})
+	l := Line{Kind: kind, Text: plain}
+	sess.capture(l)
 	if outputSuppressed(levelFromKind(kind)) {
 		return
 	}
-	fmt.Println(rendered)
+	if jsonLogs {
+		writeJSONLine(os.Stdout, reportLine(l))
+	} else {
+		fmt.Println(rendered)
+	}
 	teeRunLog(plain)
 }
