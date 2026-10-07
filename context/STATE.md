@@ -10,8 +10,12 @@ the server and undone when a run fails. The deploy half came out of the habitta_
 
 ## Where we are
 
-- **v0.25.0 is the last release** (`main` = `eb1b49c`, tag `v0.25.0`). Branch `wip/ps-remote` (HEAD `787a2f7`)
-  is 18 commits ahead, all unreleased and listed in `CHANGELOG.md` `[Unreleased]`.
+- **v0.26.0 is the last release** (2026-10-01): PR [#24](https://github.com/Cerebellum-ITM/Echo/pull/24) merged
+  as `d3f6541` (`[MERGE] feat/reverb-link-deploy-safety`), release commit `72fc85a`, tag `v0.26.0`, GitHub
+  release with the three binaries. `main` and the working branch `feat/reverb-link-deploy-safety` are both at
+  `72fc85a`; nothing is unreleased. The branch was `wip/ps-remote` until the release: the merge was rewritten
+  and force-pushed under the new name the same day ([decisions](decisions.md#process)), so PR #24 still shows
+  the old head name. The checkout was last left on `main`; switch back to the working branch before new work.
 - **Units 127-131 are implemented**, one commit each, specs archived under `archive/2026-09-30-<unit>/`:
   127 config load safety (`a43813c`), 128 partial-deploy dependency check (`1432557`), 131 `doctor`
   (`34510e8`, also the deploy-lock read split and the `dump` checkpoint disk preflight fix), 130
@@ -19,7 +23,7 @@ the server and undone when a run fails. The deploy half came out of the habitta_
 - Before them on the branch: 118-121, 123, 124 deploy lock (`a73d4db`), 125 per-module source (`1d29ccb`),
   126 code rollback (`fa3dad6`), `link --add`, remote `ps`, `uninstall` through `odoo shell`, and the store
   adoption (`516a05e`).
-- `go build`, `go vet` and `go test ./...` are green at `787a2f7`. Units 124-131 are covered with temp `HOME`
+- `go build`, `go vet` and `go test ./...` are green at `72fc85a`. Units 124-131 are covered with temp `HOME`
   and a fake `ssh` on `PATH` ([code-standards](knowledge/code-standards.md)); none has run against a real
   server yet ([ledger](knowledge/operations.md#live-verification-ledger)).
 - The `odoo-probe` skill (`~/Documents/Projects/odoo-probe/SKILL.md`) teaches 127-131 (config parse error,
@@ -30,7 +34,7 @@ the server and undone when a run fails. The deploy half came out of the habitta_
 
 | Blocker | Detail |
 |---|---|
-| none | Live checks and the release wait only on the user's authorization. |
+| none | The live checks wait only on the user's authorization. |
 
 ## Next
 
@@ -38,12 +42,10 @@ the server and undone when a run fails. The deploy half came out of the habitta_
    `echo_cli doctor --from habitta_prod`, `echo_cli compare --targets habitta_dev,habitta_prod`,
    `echo_cli deploy --modules ccima_flow_mail@99f2109 --from habitta_prod --dry-run --save-plan plan.json`
    (rows in the [ledger](knowledge/operations.md#live-verification-ledger)).
-2. Release 0.26.0: bump `Version` in `internal/repl/repl.go` and promote `[Unreleased]` in the same commit; reword
-   the `[Unreleased] Deprecated` sentence that says `-E` waits for Reverb unit 30 ([operations](knowledge/operations.md#release-and-versioning)).
-3. Small fixes, one commit each ([plan](work/build/plan.md#small-fixes-found-during-the-2026-09-30-store-adoption));
+2. Small fixes, one commit each ([plan](work/build/plan.md#small-fixes-found-during-the-2026-09-30-store-adoption));
    two were added by 127-129: `-C <alias>` hides a config parse error, and `deploy --json` omits `code_sha` and
    `dependencies`.
-4. Unit 122 (remove `-E`): write its spec first, then E8, E5, E6.
+3. Unit 122 (remove `-E`): write its spec first, then E8, E5, E6.
 
 ## Messages
 
@@ -53,8 +55,8 @@ the server and undone when a run fails. The deploy half came out of the habitta_
 
 ## Open questions for the user
 
-- none. On 2026-10-01 the user chose to release 0.26.0 before Unit 122 and to drop the stale auto-memory note
-  (deleted).
+- The `branch-flow` skill names branches `feature/<slug>`; the working branch is `feat/reverb-link-deploy-safety`.
+  Rename it, or start the next unit (Unit 122) on a fresh `feature/<slug>` branch?
 
 ## Pending, not blocking
 

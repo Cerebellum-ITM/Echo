@@ -1,10 +1,14 @@
 package repl
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 func TestPythonScriptsIn(t *testing.T) {
@@ -133,5 +137,52 @@ func TestParseShellRunArgs(t *testing.T) {
 				tc.in, noCopy, from, remote, positional,
 				tc.noCopy, tc.from, tc.remote, tc.positional)
 		}
+	}
+}
+
+func TestScriptOutputLinesDropsEchoLines(t *testing.T) {
+	lines := []Line{
+		{Kind: "info", Text: "2026-10-06 13:55:00,123 4242 INFO muutrade echo.shell-run.start: shell-run args=fix.py"},
+		{Kind: "warn", Text: "2026-10-06 13:55:00,124 4242 WARN stg_db echo.shell-run.remote: target stage is not declared"},
+		{Kind: "out", Text: "190"},
+		{Kind: "info", Text: "2026-10-06 13:55:01,000 4242 INFO muutrade echo.shell-run: shell-run completed"},
+	}
+	got := scriptOutputLines(lines)
+	if len(got) != 1 || got[0].Text != "190" {
+		t.Fatalf("expected only the print line [190], got %v", got)
+	}
+}
+
+func TestNewScriptFields(t *testing.T) {
+	captured := []Line{
+		{Kind: "info", Text: "2026-10-06 13:55:00,123 4242 INFO muutrade echo.shell-run.start: shell-run"},
+		{Kind: "out", Text: "row 1"},
+		{Kind: "out", Text: "row 2"},
+	}
+	sf := newScriptFields("/proj/scripts/fix.py", []byte("print('ok')\n"), captured)
+	if sf.path != "/proj/scripts/fix.py" || sf.body != "print('ok')\n" || sf.bodyTruncated {
+		t.Fatalf("small body: %+v", sf)
+	}
+	if !reflect.DeepEqual(sf.outputLines, []string{"row 1", "row 2"}) {
+		t.Fatalf("output lines = %q", sf.outputLines)
+	}
+
+	// "é" is two bytes; placing one across the cap forces the cut back a byte.
+	body := []byte(strings.Repeat("a", scriptBodyMax-1) + "é" + strings.Repeat("b", 10))
+	sf = newScriptFields("", body, nil)
+	if !sf.bodyTruncated || len(sf.body) != scriptBodyMax-1 || !utf8.ValidString(sf.body) {
+		t.Fatalf("truncated=%v len=%d valid=%v", sf.bodyTruncated, len(sf.body), utf8.ValidString(sf.body))
+	}
+	sum := sha256.Sum256(body)
+	if sf.sha256 != hex.EncodeToString(sum[:]) {
+		t.Fatalf("sha256 = %s, want the hash of the full body", sf.sha256)
+	}
+	if sf.outputLines != nil {
+		t.Fatalf("no captured lines must leave no output lines: %q", sf.outputLines)
+	}
+
+	exact := []byte(strings.Repeat("x", scriptBodyMax))
+	if sf := newScriptFields("", exact, nil); sf.bodyTruncated || len(sf.body) != scriptBodyMax {
+		t.Fatalf("a body of exactly the cap was cut: truncated=%v len=%d", sf.bodyTruncated, len(sf.body))
 	}
 }

@@ -5,6 +5,60 @@ All notable changes to Echo are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- **Live command logs: any run, REPL or one-shot, can be followed while it
+  happens.** Each recorded command now keeps
+  `~/.config/echo/cmd-logs/<key>/<started-ms>-<command>.running.ndjson` beside
+  its future `.json` record, same stem: one JSON header line (`schema`, `cmd`,
+  `command`, `db`, `stage`, `from`, `started`, `pid`) followed by one
+  `{"level","text"}` line per captured line, appended as it is printed. The
+  writer holds an exclusive `flock` on it; past 2 MiB it is rewritten in place
+  with the newest buffered lines that fit in 1 MiB, under a header with
+  `"truncated":true`. When the run
+  ends the usual `.json` record is written first and the live file removed.
+  Nested runs (sequence steps, build mode) each get their own file, and lines
+  go to the innermost one. Live files left by a killed process are removed by
+  the retention pass and `logview --clear`; `logview` and the record format are
+  unchanged. Best-effort: any live-file failure is silent and never affects the
+  command.
+- **Command-log records say which remote a run really hit and which script it
+  ran.** A run that resolves a remote target records `target` (the connect
+  target's name, or the `env:<project>/<env>` reference of `-E`), `host`,
+  `remote_db` and `remote_stage` as the server's profile resolved them; `db`
+  and `stage` stay the local profile's. The first resolution of a run wins
+  (`compare --targets a,b` records `a`) and a sequence step's target belongs to
+  the step's record only. `logview --list --json` carries the four fields too. A
+  `shell-run` or piped `shell` also records `script_path` (empty for stdin),
+  `script_sha256` of the full body, `script_body` (cut to 64 KiB at a UTF-8
+  boundary, with `script_body_truncated`) and `script_output_lines`, the
+  script's own output without the shell's log lines. All new keys are omitted
+  when empty, so older records load unchanged.
+- **`ECHO_LOG_FORMAT=json` prints Echo's log lines as one JSON object per
+  line**, for programs that spawn `echo_cli` and want fields instead of text.
+  Echo's own `echo.*` lines become `{"time","pid","level","db","logger","msg",
+  "fields","text"}` (full level name, `fields` as ordered `[key, value]` pairs
+  and omitted when empty, `text` the plain line the run log gets), on the same
+  stdout or stderr as before. Every other printed line (subprocess and Odoo
+  output, script output, status lines) becomes `{"level","text"}`, the shape of
+  live-file lines, with plain text. Any other value, or none, keeps today's
+  text. Unchanged: `--silent`, records, live files, the `--log` file, `--json`
+  results, and the banner, `Goodbye!`, the help body, the sequence review,
+  pickers, prompts and errors printed before startup completes.
+
+### Changed
+- **Echo's own `echo.*` lines are now part of a command's captured output.**
+  Records, live files, `report` and `copy-last` include them (with full level
+  names: `WARN` is stored as `WARNING`), so `copy-last` and the failure
+  auto-copy now carry Echo's lines among the command's output, and commands
+  whose output was only Echo lines (`modules`, `link`, `doctor` in text
+  mode…) now leave a record. They are captured, not counted: error and warning
+  totals and exit codes are unchanged.
+- **`link --list --json` prints only its JSON.** The blank line and the
+  `echo.link` completion line no longer follow it on stdout, and a successful
+  call no longer adds a `link` run to the command history.
+
 ## [0.26.0] - 2026-10-01
 
 ### Added

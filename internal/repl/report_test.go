@@ -103,6 +103,11 @@ func TestLineLevel(t *testing.T) {
 		{"2026-06-02 18:34:47,606 3675 ERROR develop odoo.x: boom", "ERROR"},
 		{"2026-06-02 18:34:47.606 | CRITICAL | m:f:1 - x", "CRITICAL"},
 		{"Warn: Can't find .pfb for face 'Courier'", "WARNING"},
+		{"2026-10-06 13:55:00,123 4242 DEBU muutrade echo.update: probe", "DEBUG"},
+		{"2026-10-06 13:55:00,123 4242 INFO muutrade echo.update: update completed", "INFO"},
+		{"2026-10-06 13:55:00,123 4242 WARN - echo.link: no targets", "WARNING"},
+		{"2026-10-06 13:55:00,123 4242 ERRO muutrade echo.update.error: update failed err=x", "ERROR"},
+		{"2026-10-06 13:55:00,123 4242 CRIT muutrade echo.x: meltdown", "CRITICAL"},
 		{"just some plain output", ""},
 		{"", ""},
 	}

@@ -1,13 +1,17 @@
 package repl
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/pascualchavez/echo/internal/clipboard"
 	"github.com/pascualchavez/echo/internal/cmd"
@@ -189,7 +193,7 @@ func (sess *session) runShellRun(ctx context.Context, args []string) {
 
 	dir := sess.scriptsDir()
 	var scriptPath string
-	var stdin io.Reader
+	var body []byte
 	var err error
 	switch {
 	case len(positional) > 0 && positional[0] == "-":
@@ -198,12 +202,17 @@ func (sess *session) runShellRun(ctx context.Context, args []string) {
 		if !cmd.StdinPiped() {
 			err = fmt.Errorf("stdin is a terminal — pipe a script or pass a file")
 		} else {
-			stdin = os.Stdin
+			body, err = io.ReadAll(os.Stdin)
 		}
 	case len(positional) > 0:
 		scriptPath, err = resolveScriptArg(positional[0], dir, sess.projectDir)
 	default:
 		scriptPath, err = pickScriptFile(dir, sess.palette)
+	}
+	// The body read here is the one that runs, so the record's hash is of
+	// exactly what Odoo executed.
+	if err == nil && scriptPath != "" {
+		body, err = os.ReadFile(scriptPath)
 	}
 	if err != nil {
 		sess.readonlyFinalize("shell-run", err)
@@ -216,7 +225,7 @@ func (sess *session) runShellRun(ctx context.Context, args []string) {
 		Cfg:        sess.cfg,
 		Root:       sess.projectDir,
 		ScriptPath: scriptPath,
-		Stdin:      stdin,
+		Stdin:      bytes.NewReader(body),
 		Args:       args,
 		From:       from,
 		Remote:     remote,
@@ -226,6 +235,7 @@ func (sess *session) runShellRun(ctx context.Context, args []string) {
 			sess.emitStreamLine(lc, line)
 		}),
 	})
+	sess.extras.script = newScriptFields(scriptPath, body, sess.lastOutput.lines)
 
 	if runErr == nil && !noCopy && !sess.lastOutput.IsEmpty() {
 		sess.copyShellRunOutput()
@@ -242,12 +252,18 @@ func (sess *session) runShellRun(ctx context.Context, args []string) {
 func (sess *session) runShellPiped(ctx context.Context, args []string) {
 	from, remote := remoteRunFlags(args)
 
+	body, err := io.ReadAll(os.Stdin)
+	if err != nil {
+		sess.readonlyFinalize("shell", err)
+		return
+	}
+
 	lc := &logColorer{}
 	stats := &runStats{}
 	runErr := cmd.RunShellScript(ctx, cmd.ShellScriptOpts{
 		Cfg:     sess.cfg,
 		Root:    sess.projectDir,
-		Stdin:   os.Stdin,
+		Stdin:   bytes.NewReader(body),
 		Args:    args,
 		From:    from,
 		Remote:  remote,
@@ -257,7 +273,43 @@ func (sess *session) runShellPiped(ctx context.Context, args []string) {
 			sess.emitStreamLine(lc, line)
 		}),
 	})
+	sess.extras.script = newScriptFields("", body, sess.lastOutput.lines)
 	sess.readonlyFinalize("shell", runErr)
+}
+
+// scriptBodyMax caps the script body kept in a history record; the hash
+// still covers the whole body.
+const scriptBodyMax = 64 << 10
+
+// scriptFields is the script part of a `shell-run` / piped `shell` record.
+type scriptFields struct {
+	path          string
+	sha256        string
+	body          string
+	bodyTruncated bool
+	outputLines   []string
+}
+
+// newScriptFields builds the record's script fields from the script's path
+// ("" for stdin), its full body and the lines captured by the run. A body
+// over scriptBodyMax is cut back to the last whole UTF-8 rune.
+func newScriptFields(path string, body []byte, captured []Line) *scriptFields {
+	sum := sha256.Sum256(body)
+	sf := &scriptFields{path: path, sha256: hex.EncodeToString(sum[:])}
+	kept := body
+	if len(kept) > scriptBodyMax {
+		cut := scriptBodyMax
+		for cut > 0 && !utf8.RuneStart(kept[cut]) {
+			cut--
+		}
+		kept = kept[:cut]
+		sf.bodyTruncated = true
+	}
+	sf.body = string(kept)
+	for _, l := range scriptOutputLines(captured) {
+		sf.outputLines = append(sf.outputLines, l.Text)
+	}
+	return sf
 }
 
 // copyShellRunOutput copies only the script's own output to the clipboard —

@@ -42,7 +42,7 @@ func TestRunLogSinkTee(t *testing.T) {
 	}
 
 	// plainOdooLogFields must carry the structured fields and no ANSI.
-	line := plainOdooLogFields("ERROR", "echo.run", "stopped at step 2/3",
+	line := plainOdooLogFields(time.Now(), "ERROR", "echo.run", "stopped at step 2/3",
 		[]logField{{"exit", "1"}}, "mydb")
 	if strings.Contains(line, "\x1b[") {
 		t.Errorf("plain line contains ANSI escape: %q", line)

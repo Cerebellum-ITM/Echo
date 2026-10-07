@@ -1,6 +1,7 @@
 package repl
 
 import (
+	"encoding/json"
 	"io"
 	"os"
 	"strconv"
@@ -19,6 +20,30 @@ import (
 // locking is needed beyond what sess.print already assumes.
 var runLogSink io.Writer
 
+// captureLine, when non-nil, records every emitOdooLog line in the current
+// session's capture (sess.capture), so Echo's own lines reach records, live
+// files, copy-last and report like any printed line. newSession sets it.
+var captureLine func(Line)
+
+// jsonLogs, set by newSession from ECHO_LOG_FORMAT=json, makes every line of
+// the log path (emitOdooLogTo, sess.print, sess.printStyled) one JSON object
+// instead of styled text, so a program that spawns Echo reads fields rather
+// than parsing text.
+var jsonLogs bool
+
+// jsonLogLine is an emitOdooLog line in JSON mode. Text is the plain line the
+// run log and the capture get, so a reader that only wants text can use it.
+type jsonLogLine struct {
+	Time   string      `json:"time"`
+	PID    int         `json:"pid"`
+	Level  string      `json:"level"`
+	DB     string      `json:"db"`
+	Logger string      `json:"logger"`
+	Msg    string      `json:"msg"`
+	Fields [][2]string `json:"fields,omitempty"`
+	Text   string      `json:"text"`
+}
+
 // logDBMax is the max display width of the database name in styled log
 // lines before it's middle-truncated (so a long name doesn't wrap the rest
 // of the line). Defaults to the config default; newSession overrides it
@@ -31,6 +56,11 @@ func teeRunLog(plain string) {
 	if runLogSink != nil {
 		io.WriteString(runLogSink, plain+"\n")
 	}
+}
+
+func writeJSONLine(w io.Writer, v any) {
+	b, _ := json.Marshal(v)
+	w.Write(append(b, '\n'))
 }
 
 // logField is one structured key/value pair for emitOdooLog. Order is
@@ -60,19 +90,50 @@ func emitOdooLog(level, logger, msg string, fields []logField, s theme.Styles, p
 // which writes its diagnostic to stderr so stdout carries only the JSON
 // array. The run-log tee still fires regardless of destination.
 func emitOdooLogTo(w io.Writer, level, logger, msg string, fields []logField, s theme.Styles, p theme.Palette, db string) {
+	now := time.Now()
+	plain := plainOdooLogFields(now, level, logger, msg, fields, db)
+	// Captured before the suppression check, as in sess.print: --silent is
+	// about the screen, not the data.
+	if captureLine != nil {
+		captureLine(Line{Kind: kindFromLevel(level), Text: plain})
+	}
 	// Silenced recipe step (--silent): drop screen + log entirely. The
 	// runner's own step/recap lines are emitted with suppression inactive,
 	// so they stay visible.
 	if outputSuppressed(level) {
 		return
 	}
-	io.WriteString(w, renderOdooLog(level, logger, msg, fields, s, p, db)+"\n")
-	teeRunLog(plainOdooLogFields(level, logger, msg, fields, db))
+	if jsonLogs {
+		writeJSONLine(w, newJSONLogLine(now, level, logger, msg, fields, db, plain))
+	} else {
+		io.WriteString(w, renderOdooLog(level, logger, msg, fields, s, p, db)+"\n")
+	}
+	teeRunLog(plain)
+}
+
+func newJSONLogLine(now time.Time, level, logger, msg string, fields []logField, db, plain string) jsonLogLine {
+	if db == "" {
+		db = "-"
+	}
+	line := jsonLogLine{
+		Time:   now.Format("2006-01-02T15:04:05.000Z07:00"),
+		PID:    os.Getpid(),
+		Level:  level,
+		DB:     db,
+		Logger: logger,
+		Msg:    msg,
+		Text:   plain,
+	}
+	for _, f := range fields {
+		line.Fields = append(line.Fields, [2]string{f.key, f.value})
+	}
+	return line
 }
 
 // PrintConfigError prints the single ERROR line for a config file that does
 // not parse at startup. No theme is loaded yet (it lives in the broken file),
-// so it renders with the default palette, on stderr.
+// so it renders with the default palette, on stderr. It runs before any
+// session exists, so the line is not captured.
 func PrintConfigError(err error) {
 	p := theme.PaletteByName("")
 	emitOdooLogTo(os.Stderr, "ERROR", "echo.config", err.Error(),
@@ -188,7 +249,11 @@ func quoteIfNeeded(v string) string {
 // header that identifies the failure (timestamp, pid, level, db,
 // logger, message) without leaking terminal escapes.
 func plainOdooLog(level, logger, msg, db string) string {
-	ts := time.Now().Format("2006-01-02 15:04:05.000")
+	return plainOdooLogAt(time.Now(), level, logger, msg, db)
+}
+
+func plainOdooLogAt(now time.Time, level, logger, msg, db string) string {
+	ts := now.Format("2006-01-02 15:04:05.000")
 	ts = strings.Replace(ts, ".", ",", 1)
 	pid := strconv.Itoa(os.Getpid())
 	if db == "" {
@@ -201,10 +266,11 @@ func plainOdooLog(level, logger, msg, db string) string {
 	return base
 }
 
-// plainOdooLogFields is plainOdooLog plus the ` key=val` tail, used to
-// tee a structured emitOdooLog line into the run-log sink without ANSI.
-func plainOdooLogFields(level, logger, msg string, fields []logField, db string) string {
-	line := plainOdooLog(level, logger, msg, db)
+// plainOdooLogFields is plainOdooLog at a given time plus the ` key=val`
+// tail, used to tee a structured emitOdooLog line into the run-log sink
+// without ANSI.
+func plainOdooLogFields(now time.Time, level, logger, msg string, fields []logField, db string) string {
+	line := plainOdooLogAt(now, level, logger, msg, db)
 	for _, f := range fields {
 		line += " " + f.key + "=" + quoteIfNeeded(f.value)
 	}
