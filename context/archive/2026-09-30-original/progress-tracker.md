@@ -212,6 +212,16 @@ _(siguiente: Unit 122 — el borrado de `-E`, cuando la unidad 30 de Reverb est�
   `watch` pasa `PushSrcSHA`/`Via` a `RunDeploy`. Tests en
   `deploy_lock_test.go`, incluido el script de escritura corrido de verdad
   contra un repo git local. Spec: `context/specs/124-deploy-lock.md`.
+- [x] `link --add` — alta de sistemas desde link (2026-09-14). El asistente
+  `registerTarget` (host de `~/.ssh/config` → proyecto Echo leído por SSH →
+  nombre) estaba amarrado a `connect --add`, que además mintea sesión y abre
+  el navegador: dar de alta un servidor obligaba a conectarse a él. Ahora
+  `link --add` lo corre y encadena el bind, y `pickConnectTarget` acepta un
+  callback `onAdd` que pone la entrada de alta al final del picker (nil en
+  `deploy`, que no puede registrar nada). `rememberTarget` refleja el target
+  recién guardado en el `*config.Config` cargado para que `--list`/`--next`
+  lo vean sin releer `global.toml`. `registerTarget` reporta por el logger
+  del comando en vez de un `fmt.Printf` suelto.
 - [x] Ajuste a la Unit 117 — título e etiquetas del ítem de 1Password
   (2026-09-11). El título deja de anteponer `Odoo`: ahora es
   `<proyecto> (<db>)`, que es como se busca en la bóveda. El servidor sale

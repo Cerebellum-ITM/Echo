@@ -722,6 +722,12 @@
 
 ## Process
 
+### 2026-10-01 · v0.26.0 was rewritten so its merge carries a descriptive branch name
+- **Why:** The first merge kept the working branch's stale name (`wip/ps-remote`, from one early commit), and a merge commit keeps that name on `main` for good. The code was identical and the repository has one developer, so a force-push of `main`, a moved tag and a recreated GitHub release cost nothing downstream.
+- **Rejected:** Leaving the published history as it was and only renaming the branch going forward.
+- **Source:** merge `d3f6541`, release commit `72fc85a` (replacing `beaafb3` / `a8c6769`); PR #24 keeps the old head name and carries a note.
+- **Status:** active
+
 ### 2026-09-30 · The project context is a ctx store (repo storage), replacing the six legacy files and the single progress tracker
 - **Why:** Handoffs had piled up: a 246 KB tracker with stale sections and specs for units already shipped. The store keeps STATE, decisions, knowledge and work small and true.
 - **Rejected:** Keeping the legacy files and tracker as the working context.
