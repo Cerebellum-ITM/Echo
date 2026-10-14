@@ -10,9 +10,10 @@ import (
 	"github.com/pascualchavez/echo/internal/cmd"
 )
 
-// runSideload implements `sideload <path> [--from <target>] [--dry-run]
-// [--allow-prod] [--resync] [--no-lint] [--json]` and `sideload --list`: pack
-// the local addon(s), stream the changed ones into the remote
+// runSideload implements `sideload [<module|path>…] [--from <target>]
+// [--dry-run] [--allow-prod] [--resync] [--no-lint] [--json]`, the library
+// picker when no module is named, and the read-only `--list`, `--available`
+// and `--library*` forms: pack the addon(s), stream the changed ones into the remote
 // `.echo/sideload/`, wire them through an Echo-managed compose override, then
 // run the remote stop → up -d → install/update sequence over SSH. With --json
 // the decorated stream goes to stderr and one result object to stdout.

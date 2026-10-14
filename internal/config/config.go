@@ -159,6 +159,10 @@ type Config struct {
 	// means "test whatever the deploy deploys".
 	DeployTestModules []string
 
+	// SideloadLibrary ([sideload] library, global.toml only) lists the local
+	// roots `sideload` offers modules from, as written (a leading ~ is kept).
+	SideloadLibrary []string
+
 	// PromoteBranch ([promote] branch, global + per-project, project wins) —
 	// the single accumulation branch `promote` funnels worktree changes into
 	// (Unit 97). Empty means "not configured" — there is no hardcoded default;
@@ -266,6 +270,7 @@ type globalFile struct {
 	Push           *pushConfig                   `toml:"push"`
 	Deploy         *deployFile                   `toml:"deploy"`
 	Promote        *promoteConfig                `toml:"promote"`
+	Sideload       *sideloadConfig               `toml:"sideload"`
 	Reverb         *reverbConfig                 `toml:"reverb"`
 	ConnectTargets map[string]*connectTargetFile `toml:"connect_targets"`
 	ProjectAliases map[string]string             `toml:"project_aliases"`
@@ -279,6 +284,12 @@ type globalFile struct {
 type promoteConfig struct {
 	Branch string `toml:"branch"`
 	Base   string `toml:"base"`
+}
+
+// sideloadConfig is the [sideload] table, valid in global.toml only: the
+// library describes this machine's module repositories, never a server.
+type sideloadConfig struct {
+	Library []string `toml:"library"`
 }
 
 // reverbConfig is the [reverb] table, valid in global.toml ONLY (Unit 107).
@@ -609,6 +620,9 @@ func Load(projectPath string) (*Config, error) {
 	applyCheckpoint(cfg, g.Checkpoint)
 	applyPush(cfg, g.Push)
 	applyReverb(cfg, g.Reverb)
+	if g.Sideload != nil {
+		cfg.SideloadLibrary = g.Sideload.Library
+	}
 	if g.Promote != nil && g.Promote.Branch != "" {
 		cfg.PromoteBranch = g.Promote.Branch
 		cfg.PromoteBranchSource = "global"
@@ -1008,6 +1022,32 @@ func SavePromoteBase(base string) error {
 	return savePromote(func(p *promoteConfig) { p.Base = base })
 }
 
+// SaveSideloadLibrary replaces the [sideload] library of global.toml with
+// roots, preserving every other section; an empty list drops the section.
+func SaveSideloadLibrary(roots []string) error {
+	root, err := configRoot()
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(root, 0o700); err != nil {
+		return err
+	}
+	path := filepath.Join(root, GlobalFileName)
+	g, err := loadGlobalFile(path)
+	if err != nil {
+		return err
+	}
+	g.Sideload = nil
+	if len(roots) > 0 {
+		g.Sideload = &sideloadConfig{Library: roots}
+	}
+	var buf bytes.Buffer
+	if err := toml.NewEncoder(&buf).Encode(g); err != nil {
+		return err
+	}
+	return writeAtomic(path, buf.Bytes())
+}
+
 // savePromote applies mutate to the [promote] table of global.toml and writes
 // it back. It reads the existing table first, so setting one field never drops
 // the other, and drops the whole section only once both are empty.
@@ -1218,6 +1258,9 @@ func LoadGlobal() (*Config, error) {
 	applyCmdLogs(cfg, g.CmdLogs)
 	applyCheckpoint(cfg, g.Checkpoint)
 	applyReverb(cfg, g.Reverb)
+	if g.Sideload != nil {
+		cfg.SideloadLibrary = g.Sideload.Library
+	}
 	cfg.ConnectTargets = sortedConnectTargets(g.ConnectTargets)
 	cfg.ProjectAliases = g.ProjectAliases
 	applyDefaults(cfg)

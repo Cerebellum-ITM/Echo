@@ -83,21 +83,33 @@ type SideloadModule struct {
 	At       string `json:"at,omitempty"`
 	Verified *bool  `json:"verified,omitempty"`
 	Dest     string `json:"dest,omitempty"`
+	Source   string `json:"source,omitempty"`
+	Status   string `json:"status,omitempty"`
 }
 
 type sideloadArgs struct {
-	source    string
-	from      string
-	dryRun    bool
-	allowProd bool
-	resync    bool
-	noLint    bool
-	jsonOut   bool
-	list      bool
+	sources     []string
+	from        string
+	dryRun      bool
+	allowProd   bool
+	resync      bool
+	noLint      bool
+	jsonOut     bool
+	list        bool
+	available   bool
+	libraryList bool
+	libraryAdd  string
+	libraryRm   string
 }
 
 func parseSideloadArgs(args []string) (sideloadArgs, error) {
 	out := sideloadArgs{}
+	value := func(i int, flag string) (string, error) {
+		if i+1 >= len(args) || strings.HasPrefix(args[i+1], "-") {
+			return "", fmt.Errorf("%w: %s requires a value", ErrUsage, flag)
+		}
+		return args[i+1], nil
+	}
 	for i := 0; i < len(args); i++ {
 		a := args[i]
 		switch {
@@ -113,31 +125,52 @@ func parseSideloadArgs(args []string) (sideloadArgs, error) {
 			out.jsonOut = true
 		case a == "--list":
 			out.list = true
-		case a == "--from":
-			if i+1 >= len(args) {
-				return out, fmt.Errorf("%w: --from requires a target name", ErrUsage)
+		case a == "--available":
+			out.available = true
+		case a == "--library":
+			out.libraryList = true
+		case a == "--library-add", a == "--library-rm", a == "--from":
+			v, err := value(i, a)
+			if err != nil {
+				return out, err
 			}
-			out.from = args[i+1]
+			switch a {
+			case "--library-add":
+				out.libraryAdd = v
+			case "--library-rm":
+				out.libraryRm = v
+			default:
+				out.from = v
+			}
 			i++
 		case strings.HasPrefix(a, "--from="):
 			out.from = strings.TrimPrefix(a, "--from=")
 		case strings.HasPrefix(a, "-"):
 			return out, fmt.Errorf("%w: unknown flag: %s", ErrUsage, a)
 		default:
-			if out.source != "" {
-				return out, fmt.Errorf("%w: sideload takes a single source path", ErrUsage)
+			for _, s := range strings.Split(a, ",") {
+				if s = strings.TrimSpace(s); s != "" {
+					out.sources = append(out.sources, s)
+				}
 			}
-			out.source = a
 		}
 	}
-	if out.list {
-		if out.source != "" || out.dryRun || out.allowProd || out.resync || out.noLint {
-			return out, fmt.Errorf("%w: --list takes only --from and --json", ErrUsage)
+	runFlags := len(out.sources) > 0 || out.dryRun || out.allowProd || out.resync || out.noLint
+	libraryFlags := 0
+	for _, set := range []bool{out.libraryList, out.libraryAdd != "", out.libraryRm != ""} {
+		if set {
+			libraryFlags++
 		}
-		return out, nil
 	}
-	if out.source == "" {
-		return out, fmt.Errorf("%w: sideload requires a source path (an addon dir or a folder of addons)", ErrUsage)
+	switch {
+	case libraryFlags > 1:
+		return out, fmt.Errorf("%w: --library, --library-add and --library-rm are mutually exclusive", ErrUsage)
+	case libraryFlags == 1 && (runFlags || out.list || out.available || out.from != "" || out.jsonOut):
+		return out, fmt.Errorf("%w: the --library flags take no other argument", ErrUsage)
+	case out.list && out.available:
+		return out, fmt.Errorf("%w: --list and --available are mutually exclusive", ErrUsage)
+	case (out.list || out.available) && runFlags:
+		return out, fmt.Errorf("%w: --list and --available take only --from and --json", ErrUsage)
 	}
 	return out, nil
 }
@@ -147,6 +180,8 @@ func parseSideloadArgs(args []string) (sideloadArgs, error) {
 type sideloadAddon struct {
 	name string
 	dir  string
+	ref  string // library branch the content was read from, if any
+	sha  string
 }
 
 // sideloadExcludes are directory/file names skipped when hashing and
@@ -453,19 +488,27 @@ func RunSideload(ctx context.Context, opts SideloadOpts) (SideloadResult, error)
 	if err != nil {
 		return SideloadResult{}, err
 	}
+	if p.libraryList || p.libraryAdd != "" || p.libraryRm != "" {
+		return runSideloadLibrary(opts, p)
+	}
 	if p.list {
 		return runSideloadList(ctx, opts, p)
 	}
 
-	addons, err := collectAddons(p.source)
-	if err != nil {
-		return SideloadResult{}, fmt.Errorf("%w: %v", ErrUsage, err)
+	var addons []sideloadAddon
+	var names []string
+	for _, src := range p.sources {
+		if !isSideloadPath(src) {
+			names = append(names, src)
+			continue
+		}
+		found, cerr := collectAddons(src)
+		if cerr != nil {
+			return SideloadResult{}, fmt.Errorf("%w: %v", ErrUsage, cerr)
+		}
+		addons = append(addons, found...)
 	}
-	names := make([]string, len(addons))
-	for i, a := range addons {
-		names[i] = a.name
-	}
-	opts.log("INFO", "", "addons collected", "", [2]string{"addons", strings.Join(names, ",")})
+	fromLibrary := p.available || len(p.sources) == 0 || len(names) > 0
 
 	rsc, err := resolveRemoteShell(ctx, opts.Cfg, opts.Palette, opts.Root, p.from, opts.Log)
 	if err != nil {
@@ -473,11 +516,97 @@ func RunSideload(ctx context.Context, opts SideloadOpts) (SideloadResult, error)
 	}
 	db := rsc.target.dbName
 	res := SideloadResult{Target: rsc.fromName, DB: db, JSON: p.jsonOut}
+	serie := odooSerie(rsc.target.odooVersion)
+
+	if fromLibrary {
+		if serie == "" {
+			return res, fmt.Errorf("%w: the target declares no Odoo version, so the library cannot pick a series; pass a path", ErrUsage)
+		}
+		scratch, serr := os.MkdirTemp("", "echo-sideload-*")
+		if serr != nil {
+			return res, serr
+		}
+		defer os.RemoveAll(scratch)
+
+		roots := opts.Cfg.SideloadLibrary
+		lib, hidden, warnings := discoverLibrary(ctx, roots, serie)
+		for _, w := range warnings {
+			opts.log("WARNING", "library", w, db)
+		}
+		if hidden > 0 {
+			opts.log("INFO", "library", "modules hidden for another Odoo series", db,
+				[2]string{"hidden", strconv.Itoa(hidden)}, [2]string{"serie", serie})
+		}
+
+		var chosen []libraryModule
+		switch {
+		case p.available:
+			rows, aerr := libraryStatus(ctx, opts, rsc, lib, scratch)
+			if aerr != nil {
+				return res, aerr
+			}
+			res.Addons = rows
+			for _, r := range rows {
+				opts.log("INFO", "library", "module", db,
+					[2]string{"name", r.Name}, [2]string{"version", r.Version},
+					[2]string{"source", r.Source}, [2]string{"status", r.Status})
+			}
+			if len(rows) == 0 {
+				opts.log("INFO", "library", "no library module fits this target", db, [2]string{"serie", serie})
+			}
+			return res, nil
+		case len(names) > 0:
+			for _, name := range names {
+				m, ferr := findLibraryModule(lib, name, roots, serie)
+				if ferr != nil {
+					return res, ferr
+				}
+				chosen = append(chosen, m)
+			}
+		default:
+			if len(lib) == 0 {
+				return res, fmt.Errorf("%w: no library module fits Odoo %s (sideload --library lists the roots)", ErrUsage, serie)
+			}
+			if err := requireTTY("name the modules (sideload <name>…) or list them with sideload --available"); err != nil {
+				return res, err
+			}
+			picked, perr := pickLibraryModules(ctx, opts, rsc, lib, scratch)
+			if perr != nil {
+				return res, perr
+			}
+			chosen = picked
+		}
+		for _, m := range chosen {
+			if m.dirtyOnBranch(ctx) {
+				opts.log("WARNING", "library", "uncommitted changes are not shipped", db,
+					[2]string{"module", m.name}, [2]string{"branch", m.branch})
+			}
+			dest, derr := os.MkdirTemp(scratch, "m-*")
+			if derr != nil {
+				return res, derr
+			}
+			dir, merr := m.materialize(ctx, dest)
+			if merr != nil {
+				return res, fmt.Errorf("read %s from %s: %w", m.name, m.source(), merr)
+			}
+			addons = append(addons, sideloadAddon{name: m.name, dir: dir, ref: m.branch, sha: m.sha})
+		}
+	}
+
+	seen := map[string]bool{}
+	names = names[:0]
+	for _, a := range addons {
+		if seen[a.name] {
+			return res, fmt.Errorf("%w: module %s selected twice", ErrUsage, a.name)
+		}
+		seen[a.name] = true
+		names = append(names, a.name)
+	}
+	opts.log("INFO", "", "addons collected", db, [2]string{"addons", strings.Join(names, ",")})
+
 	if err := sideloadTargetError(rsc, p.allowProd); err != nil {
 		return res, err
 	}
-
-	serie := odooSerie(rsc.target.odooVersion)
 	if serie == "" {
 		opts.log("WARNING", "plan", "target declares no Odoo version, manifest series not checked", db)
 	}
@@ -605,6 +734,8 @@ func RunSideload(ctx context.Context, opts SideloadOpts) (SideloadResult, error)
 		}
 		shipped[a.name] = LockModule{
 			Source:  lockSourceSideload,
+			Ref:     a.ref,
+			SHA:     a.sha,
 			Tree:    sideloadHashPrefix + newHashes[a.name],
 			Version: versions[a.name],
 			Dest:    remoteDir,

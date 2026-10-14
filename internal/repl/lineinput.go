@@ -1,6 +1,7 @@
 package repl
 
 import (
+	"context"
 	"os"
 	"strings"
 
@@ -9,6 +10,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"golang.org/x/term"
 
+	"github.com/pascualchavez/echo/internal/cmd"
 	"github.com/pascualchavez/echo/internal/theme"
 )
 
@@ -164,6 +166,16 @@ func (m lineModel) handleTab() (tea.Model, tea.Cmd) {
 	}
 	fields := strings.Fields(buf)
 	last := fields[len(fields)-1]
+	if len(fields) >= 2 && fields[0] == "sideload" && !strings.HasPrefix(last, "-") && !sideloadTakesValue(fields[len(fields)-2]) {
+		prefix := buf[:len(buf)-len(last)]
+		var matches []string
+		for _, n := range cmd.SideloadLibraryNames(context.Background()) {
+			if strings.HasPrefix(n, last) {
+				matches = append(matches, n)
+			}
+		}
+		return m.tabComplete(matches, last, func(c string) string { return prefix + c })
+	}
 	if !strings.HasPrefix(last, "-") {
 		m.lastWasTab = false
 		return m, nil
@@ -254,4 +266,10 @@ func readLine(prompt string, history []string, info lipgloss.Style, palette them
 		return lineResult{}, err
 	}
 	return final.(lineModel).result, nil
+}
+
+// sideloadTakesValue reports whether a sideload flag consumes the next token,
+// which is then a value, not a library module to complete.
+func sideloadTakesValue(flag string) bool {
+	return flag == "--from" || flag == "--library-add" || flag == "--library-rm"
 }

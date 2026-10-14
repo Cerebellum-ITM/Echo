@@ -23,24 +23,37 @@ func TestParseSideloadArgs(t *testing.T) {
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		if got.source != "./my_addon" || got.from != "prod" || !got.dryRun || !got.resync || got.allowProd {
+		if len(got.sources) != 1 || got.sources[0] != "./my_addon" || got.from != "prod" || !got.dryRun || !got.resync || got.allowProd {
 			t.Fatalf("parsed = %+v", got)
 		}
 	})
 	t.Run("from equals form", func(t *testing.T) {
 		got, err := parseSideloadArgs([]string{"--from=staging", "path"})
-		if err != nil || got.from != "staging" || got.source != "path" {
+		if err != nil || got.from != "staging" || len(got.sources) != 1 || got.sources[0] != "path" {
 			t.Fatalf("parsed = %+v err = %v", got, err)
 		}
 	})
-	t.Run("missing source", func(t *testing.T) {
-		if _, err := parseSideloadArgs([]string{"--dry-run"}); !errors.Is(err, ErrUsage) {
-			t.Fatalf("err = %v, want ErrUsage", err)
+	t.Run("no source opens the library", func(t *testing.T) {
+		got, err := parseSideloadArgs([]string{"--from", "stg"})
+		if err != nil || len(got.sources) != 0 {
+			t.Fatalf("parsed = %+v err = %v", got, err)
 		}
 	})
-	t.Run("two positionals", func(t *testing.T) {
-		if _, err := parseSideloadArgs([]string{"a", "b"}); err == nil {
-			t.Fatal("expected error for two source paths")
+	t.Run("several modules", func(t *testing.T) {
+		got, err := parseSideloadArgs([]string{"a,b", "c"})
+		if err != nil || strings.Join(got.sources, " ") != "a b c" {
+			t.Fatalf("parsed = %+v err = %v", got, err)
+		}
+	})
+	t.Run("library flags stand alone", func(t *testing.T) {
+		if _, err := parseSideloadArgs([]string{"--library-add", "x", "--from", "stg"}); !errors.Is(err, ErrUsage) {
+			t.Fatalf("err = %v, want ErrUsage", err)
+		}
+		if _, err := parseSideloadArgs([]string{"--library", "--library-rm", "x"}); !errors.Is(err, ErrUsage) {
+			t.Fatalf("err = %v, want ErrUsage", err)
+		}
+		if _, err := parseSideloadArgs([]string{"--available", "mod"}); !errors.Is(err, ErrUsage) {
+			t.Fatalf("--available with a module: err = %v, want ErrUsage", err)
 		}
 	})
 	t.Run("unknown flag", func(t *testing.T) {

@@ -926,10 +926,24 @@ private or experimental module on a client's instance before deciding
 whether it belongs in their repo.
 
 ```sh
-echo sideload ~/dev/forced_config_parameter --from staging --dry-run
-echo sideload ~/dev/forced_config_parameter --from staging
+echo sideload --library-add ~/Documents/Projects/odoo-forced-config-parameter
+echo sideload --from staging                     # picker over your library
+echo sideload forced_config_parameter --from staging
+echo sideload ~/dev/some_addon --from staging --dry-run
 echo sideload --list --from staging
 ```
+
+- **The library** is a list of local roots in `global.toml` (`[sideload] library`),
+  managed with `--library`, `--library-add` and `--library-rm`. A root that is a
+  git repository with one branch per Odoo series (`17.0`, `18.0`, …) offers the
+  modules of the branch matching the target, read from the commit: uncommitted
+  edits never travel. Any other root offers its working-tree modules whose
+  manifest fits the target's series.
+- `sideload` with no module opens a picker over the library modules that fit the
+  target, each with its version, source and status (`new`,
+  `sideloaded · current`, `sideloaded · changed`). A name resolves from the
+  library; anything with a `/`, or an existing directory, is a path. Without a
+  TTY a module or `--available` is required.
 
 - Each addon (a folder with `__manifest__.py`, or a folder of addons) is
   packed and copied to `<remote_path>/.echo/sideload/<addon>`, next to the
@@ -960,6 +974,8 @@ echo sideload --list --from staging
 | `--allow-prod` | Allow a prod target behind an interactive confirm |
 | `--json` | One result object on stdout, logs on stderr |
 | `--list` | List what the target's lock records as sideloaded |
+| `--available` | List the library modules that fit the target, with their status |
+| `--library` / `--library-add <path>` / `--library-rm <path>` | Show or edit the library roots |
 
 ### Promote (worktree funnel)
 

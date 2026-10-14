@@ -39,6 +39,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `--allow-prod`, which still asks interactively and fails without a TTY;
   Reverb environments are refused. `--dry-run`, `--json` and `--list` (what
   the target's lock records as sideloaded).
+- **`sideload` picks from your own module library.** `--library-add <path>`
+  registers a root in `global.toml` (`[sideload] library`); `sideload --from
+  <target>` with no module opens a picker over the library modules that fit the
+  target's Odoo series, each with its version, source and status against the
+  target (`new`, `sideloaded · current`, `sideloaded · changed`), and
+  `sideload <name>` resolves a module by name. A root with one branch per series
+  ships the matching branch as committed, never uncommitted edits, and its lock
+  entry records the branch and commit. `--available` lists the same without the
+  picker, `--library` / `--library-rm` show and edit the roots, and Tab completes
+  library module names after `sideload`.
 
 ### Changed
 - **`db-restore` no longer looks hung on a large backup.** The data load and
