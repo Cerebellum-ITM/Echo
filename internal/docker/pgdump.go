@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"strings"
@@ -39,12 +40,12 @@ func Dump(ctx context.Context, composeCmd, dir, dbContainer, user, db, outPath s
 	return nil
 }
 
-// Restore pipes the contents of inPath into `pg_restore -d <db>
-// --no-owner --role=<user>` inside dbContainer. When onLine is non-nil,
+// Restore pipes in into `pg_restore -d <db> --no-owner --role=<user>`
+// inside dbContainer. When onLine is non-nil,
 // pg_restore runs with --verbose and every stderr line is forwarded to it
 // live (so the caller can show progress during the long restore);
 // error/fatal lines are still collected for the failure message.
-func Restore(ctx context.Context, composeCmd, dir, dbContainer, user, db, inPath string, onLine func(string)) error {
+func Restore(ctx context.Context, composeCmd, dir, dbContainer, user, db string, in io.Reader, onLine func(string)) error {
 	if user == "" {
 		user = "postgres"
 	}
@@ -57,13 +58,7 @@ func Restore(ctx context.Context, composeCmd, dir, dbContainer, user, db, inPath
 	}
 	cmd := exec.CommandContext(ctx, args[0], args[1:]...)
 	cmd.Dir = dir
-
-	f, err := os.Open(inPath)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-	cmd.Stdin = f
+	cmd.Stdin = in
 
 	detail, werr := streamStderr(cmd, onLine)
 	if werr != nil {
@@ -72,12 +67,12 @@ func Restore(ctx context.Context, composeCmd, dir, dbContainer, user, db, inPath
 	return nil
 }
 
-// RestoreSQL loads a plain-SQL dump (e.g. an Odoo backup's dump.sql) into
-// db by piping it to `psql` inside dbContainer. Used for archives that
+// RestoreSQL loads a plain-SQL dump (e.g. an Odoo backup's dump.sql) from
+// in into db through `psql` inside dbContainer. Used for archives that
 // carry SQL text rather than a pg_dump custom-format file. psql exits
 // non-zero only on fatal/connection errors (no ON_ERROR_STOP), matching a
 // manual `psql < dump.sql` against a freshly-created, --no-owner dump.
-func RestoreSQL(ctx context.Context, composeCmd, dir, dbContainer, user, db, inPath string, onLine func(string)) error {
+func RestoreSQL(ctx context.Context, composeCmd, dir, dbContainer, user, db string, in io.Reader, onLine func(string)) error {
 	if user == "" {
 		user = "postgres"
 	}
@@ -87,13 +82,7 @@ func RestoreSQL(ctx context.Context, composeCmd, dir, dbContainer, user, db, inP
 	)
 	cmd := exec.CommandContext(ctx, args[0], args[1:]...)
 	cmd.Dir = dir
-
-	f, err := os.Open(inPath)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-	cmd.Stdin = f
+	cmd.Stdin = in
 
 	detail, werr := streamStderr(cmd, onLine)
 	if werr != nil {
@@ -138,4 +127,3 @@ func joinErrDetail(werr error, detail string) string {
 	}
 	return werr.Error() + ": " + detail
 }
-

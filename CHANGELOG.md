@@ -5,6 +5,18 @@ All notable changes to Echo are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+- **`db-restore` no longer looks hung on a large backup.** The data load and
+  the zip extraction report byte progress as INFO lines (one per 10 % of the
+  input: `progress=40% read=1.1GB total=2.8GB`), and every long phase emits a
+  heartbeat with `elapsed=` after 30 s without a line. Once the dump is fully
+  read the restore says `finalizing (indexes and constraints)` and keeps
+  beating until it ends; the filestore copy gets the heartbeat too. Works for
+  Echo zips (`pg_restore`) and native Odoo zips (`psql`, previously silent for
+  the whole load), and for `db-pull --restore`.
+
 ## [0.27.0] - 2026-10-07
 
 ### Added

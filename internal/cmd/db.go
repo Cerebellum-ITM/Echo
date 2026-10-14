@@ -373,7 +373,7 @@ func restoreBackupFile(ctx context.Context, opts DBOpts, picked, target string, 
 		note = n
 	} else {
 		opts.log("INFO", "restore", "restoring data", target, [2]string{"file", filepath.Base(picked)})
-		if err := docker.Restore(ctx, opts.Cfg.ComposeCmd, opts.Root, opts.Cfg.DBContainer, dbUser(opts), target, picked, restoreLineLogger(opts, target)); err != nil {
+		if err := restoreData(ctx, opts, target, picked, false); err != nil {
 			return err
 		}
 	}
@@ -395,6 +395,36 @@ func restoreBackupFile(ctx context.Context, opts DBOpts, picked, target string, 
 	return nil
 }
 
+// restoreData feeds the dump at path to pg_restore (or psql when sql is
+// set). With a logger it reports byte progress and streams pg_restore's
+// verbose lines; without one the restore runs quiet.
+func restoreData(ctx context.Context, opts DBOpts, target, path string, sql bool) error {
+	f, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	var in io.Reader = f
+	var onLine func(string)
+	if opts.Log != nil {
+		info, err := f.Stat()
+		if err != nil {
+			return err
+		}
+		p := newRestoreProgress(opts, target, "restoring data", info.Size())
+		defer p.Stop()
+		in = &countingReader{r: f, p: p}
+		onLine = restoreLineLogger(opts, target)
+	}
+
+	restore := docker.Restore
+	if sql {
+		restore = docker.RestoreSQL
+	}
+	return restore(ctx, opts.Cfg.ComposeCmd, opts.Root, opts.Cfg.DBContainer, dbUser(opts), target, in, onLine)
+}
+
 // restoreFromZip restores the dump inside a .zip and copies its
 // filestore into the Odoo container. It returns a footer suffix
 // describing the outcome (" (with filestore)" or "") so the caller can
@@ -408,11 +438,12 @@ func restoreFromZip(ctx context.Context, opts DBOpts, target, zipPath string) (s
 	defer os.RemoveAll(tmpDir)
 
 	opts.log("INFO", "restore", "extracting archive", target, [2]string{"file", filepath.Base(zipPath)})
-	if err := unzip(zipPath, tmpDir); err != nil {
+	extract := newRestoreProgress(opts, target, "extracting archive", 0)
+	err = unzip(zipPath, tmpDir, extract)
+	extract.Stop()
+	if err != nil {
 		return "", err
 	}
-
-	onLine := restoreLineLogger(opts, target)
 
 	// Pick the restore path by which dump the archive carries: Echo's own
 	// backups ship a pg_dump custom-format `dump.backup` (pg_restore),
@@ -420,12 +451,12 @@ func restoreFromZip(ctx context.Context, opts DBOpts, target, zipPath string) (s
 	switch {
 	case fileExists(filepath.Join(tmpDir, "dump.backup")):
 		opts.log("INFO", "restore", "restoring data", target, [2]string{"format", "custom"})
-		if err := docker.Restore(ctx, opts.Cfg.ComposeCmd, opts.Root, opts.Cfg.DBContainer, dbUser(opts), target, filepath.Join(tmpDir, "dump.backup"), onLine); err != nil {
+		if err := restoreData(ctx, opts, target, filepath.Join(tmpDir, "dump.backup"), false); err != nil {
 			return "", err
 		}
 	case fileExists(filepath.Join(tmpDir, "dump.sql")):
 		opts.log("INFO", "restore", "restoring data", target, [2]string{"format", "sql"})
-		if err := docker.RestoreSQL(ctx, opts.Cfg.ComposeCmd, opts.Root, opts.Cfg.DBContainer, dbUser(opts), target, filepath.Join(tmpDir, "dump.sql"), onLine); err != nil {
+		if err := restoreData(ctx, opts, target, filepath.Join(tmpDir, "dump.sql"), true); err != nil {
 			return "", err
 		}
 	default:
@@ -442,7 +473,10 @@ func restoreFromZip(ctx context.Context, opts DBOpts, target, zipPath string) (s
 		return "", nil
 	}
 	opts.log("INFO", "restore", "copying filestore", target)
-	if err := copyFilestoreToContainer(ctx, opts, target, srcFilestore); err != nil {
+	copying := newRestoreProgress(opts, target, "copying filestore", 0)
+	err = copyFilestoreToContainer(ctx, opts, target, srcFilestore)
+	copying.Stop()
+	if err != nil {
 		return "", fmt.Errorf("filestore copy: %w", err)
 	}
 	return " (with filestore)", nil
@@ -1221,12 +1255,19 @@ func addDirToZip(zw *zip.Writer, srcDir, zipPrefix string) error {
 	})
 }
 
-func unzip(src, dst string) error {
+func unzip(src, dst string, p *progressReporter) error {
 	r, err := zip.OpenReader(src)
 	if err != nil {
 		return err
 	}
 	defer r.Close()
+	if p != nil {
+		var total int64
+		for _, f := range r.File {
+			total += int64(f.UncompressedSize64)
+		}
+		p.setTotal(total)
+	}
 	for _, f := range r.File {
 		out := filepath.Join(dst, f.Name)
 		if !strings.HasPrefix(out, filepath.Clean(dst)+string(os.PathSeparator)) && out != filepath.Clean(dst) {
@@ -1250,7 +1291,11 @@ func unzip(src, dst string) error {
 			rc.Close()
 			return err
 		}
-		if _, err := io.Copy(w, rc); err != nil {
+		var dstW io.Writer = w
+		if p != nil {
+			dstW = countingWriter{w: w, p: p}
+		}
+		if _, err := io.Copy(dstW, rc); err != nil {
 			w.Close()
 			rc.Close()
 			return err
