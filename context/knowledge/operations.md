@@ -33,6 +33,7 @@ How to read it: `pending` = no record of a real-environment check exists in the 
 | Unit | What to verify | Status |
 |---|---|---|
 | 9-12 | Db, shell, `test` and i18n basics against real Odoo/Postgres/docker (old "not tested" lines) | unknown; likely covered by daily use, never recorded |
+| 133 | `sideload` against a real remote | verified on fuentebuena-dev 2026-10-14 (Odoo 19) with `forced_config_parameter` pinning `database.expiration_date`: `--list`, `--dry-run`, install (`installed 19.0.1.0.0`), the value held against `set_param`, `unlink` and a raw `UPDATE`, a second run was `up to date` with no restart, `--list --json` and `deploy --lock` show `source=sideload verified=true`. First attempt failed: the container recreate dropped a hand-installed PyJWT (see [deploy](deploy.md#sideload)). Prod refusal not run live (unit-tested) |
 | 11, 75 | `test` locally and `test --from <target>` (muutrade -> develop) against a real Odoo; the `--http-port=8189` isolation on Odoo 19 Enterprise | pending |
 | 15 | Banner on a wide TTY (soundwave/shadow, stage colour) | pending (user visual check) |
 | 16 | `copy-last` through tmux and the OSC 52 path; checklist is the git-ignored local `.unverified/untested.html` (2026-05-18, may be stale) | pending |

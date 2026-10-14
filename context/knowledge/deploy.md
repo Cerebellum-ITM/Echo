@@ -127,7 +127,9 @@ The deploy line (local `[promote]` branch plus the server's deploy branch) keeps
 - **Change detection**: content hash per (target, addon) in `~/.config/echo/sideload-history/<projectKey>.toml`, written only after a fully successful run; it gates the file sync only, `ir_module_module` decides `-i` vs `-u`.
 - **Lock**: each synced addon is recorded `source=sideload`, `via=sideload`, `dest` = server path, the content hash in `tree` as `sha256:<hex>` (never a git tree id), `verified` after the Odoo run. `rebase` (`--set-code`, `--restore-code`, git rollback) and `push --clean` keep these entries.
 - **Gates, all before any server write**: Reverb target → `ErrUsage`; stage `prod` (undeclared included) → `ErrUsage` without `--allow-prod`, and with it a red confirm that fails closed without a TTY (no `--force` path); a five-part manifest version of another series → `ErrUsage` (shorter versions pass: Odoo prefixes the series); lint over the addon dirs with the target's Odoo version (`err` blocks, `--no-lint`).
-- **Not yet**: no checkpoint or rollback (Unit 134), no `--rm` (Unit 135), no local mode (Unit 136). **Hypothesis:** a mount base that is itself a bind of the client checkout gets an empty `<addon>/` mountpoint directory created in the host checkout; to settle live.
+- **Trap: the first sideload to a target recreates the Odoo container** (a new mount changes its config), so anything installed by hand inside the old container is gone (measured on fuentebuena-dev 2026-10-14: PyJWT, and the registry stopped loading). `deploy` only restarts. Check for hand-installed packages before the first sideload.
+- **The nested mount leaves a residue**: when the mount base is a bind of a host directory, Docker creates an empty root-owned `<addon>/` mountpoint there (measured on fuentebuena-dev 2026-10-14).
+- **Not yet**: no checkpoint or rollback (Unit 134), no `--rm` (Unit 135), no local mode (Unit 136).
 
 ## Promote
 
