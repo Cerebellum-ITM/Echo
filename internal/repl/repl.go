@@ -222,7 +222,7 @@ func (sess *session) renderPrompt() string {
 var dispatchNames = []string{
 	"help", "clear", "copy-last", "report", "logview", "sequence",
 	"init", "reset", "alias", "link", "doctor",
-	"up", "down", "stop", "restart", "ps", "logs", "push", "deploy", "watch", "checkpoint", "actions", "promote",
+	"up", "down", "stop", "restart", "ps", "logs", "push", "deploy", "sideload", "watch", "checkpoint", "actions", "promote",
 	"install", "update", "uninstall", "test", "modules", "modinfo", "modstate", "view", "compare", "lint",
 	"i18n-export", "i18n-update", "i18n-pull",
 	"db-admin", "db-backup", "db-restore", "db-pull", "db-drop", "db-neutralize", "db-list", "db-use",
@@ -349,6 +349,8 @@ func (sess *session) dispatchParsed(ctx context.Context, cmd string, args []stri
 		sess.runActions(ctx, args)
 	case "promote":
 		sess.runPromote(ctx, args)
+	case "sideload":
+		sess.runSideload(ctx, args)
 	default:
 		sess.print(Line{Kind: "warn", Text: "unknown command: " + cmd + " — try help"})
 		sess.exitCode = exitUsage
@@ -591,6 +593,14 @@ func helpSections() []helpSection {
 			{"  --set-base <ref>", "Persist the default base the promote branch is reset onto and exit"},
 			{"  --no-fetch", "With --reset: don't refresh the base's remote first"},
 			{"  --dry-run", "Preview the change tree / commit list; move nothing"},
+			{"sideload <path>", "Install/update addons that live outside the repo on a dev/staging remote (.echo/sideload, compose override)"},
+			{"  --from <target>", "Use a named connect target (default: this dir's link)"},
+			{"  --dry-run", "Probe, hash and show the plan; execute nothing"},
+			{"  --allow-prod", "Allow a prod target; still asks interactively and fails without a TTY"},
+			{"  --resync", "Ignore stored hashes; re-sync every addon"},
+			{"  --no-lint", "Skip the pre-flight lint of the addons"},
+			{"  --json", "Emit a machine-readable result to stdout (logs to stderr)"},
+			{"  --list", "List the addons the target's deploy lock records as sideloaded (no changes)"},
 		}},
 		{"Session", []helpEntry{
 			{"copy-last", "Copy the last command's output to clipboard"},

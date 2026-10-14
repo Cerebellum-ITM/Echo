@@ -99,7 +99,13 @@ func runPushClean(ctx context.Context, opts PushOpts, p pushArgs) error {
 	if err := runRemoteClean(ctx, rsc, absDir, scoped); err != nil {
 		return err
 	}
-	updateDeployLock(ctx, rsc, opts.Log, func(l *DeployLock) { l.forget(dirtyModuleCandidates(scoped)) })
+	updateDeployLock(ctx, rsc, opts.Log, func(l *DeployLock) {
+		for _, name := range dirtyModuleCandidates(scoped) {
+			if l.Modules[name].Source != lockSourceSideload {
+				delete(l.Modules, name)
+			}
+		}
+	})
 	if opts.OnSync != nil {
 		opts.OnSync(dirtyEntriesToChanges(scoped))
 	}

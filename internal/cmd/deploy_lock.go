@@ -57,6 +57,7 @@ const (
 	lockSourceWorktree = "worktree"
 	lockSourceCommit   = "commit"
 	lockSourceBranch   = "branch"
+	lockSourceSideload = "sideload"
 
 	lockSchema  = 1
 	lockDirName = ".echo"
@@ -77,6 +78,9 @@ func lockFilePath(remotePath string) string {
 // label renders where an entry's content came from: `worktree@0b6fc41+dirty`.
 func (m LockModule) label() string {
 	s := m.Source
+	if m.Source == lockSourceSideload {
+		return s + "@" + shortSHA(strings.TrimPrefix(m.Tree, sideloadHashPrefix))
+	}
 	if m.SHA != "" {
 		s += "@" + shortSHA(m.SHA)
 	}
@@ -109,9 +113,13 @@ func (l *DeployLock) forget(names []string) {
 
 // rebase records a move of the whole deploy branch. The branch entries it
 // supersedes go away; overlay entries survive only when the overlay did.
+// Sideloaded addons live outside the checkout and always survive.
 func (l *DeployLock) rebase(base LockBase, keepOverlay bool) {
 	l.Base = &base
 	for name, e := range l.Modules {
+		if e.Source == lockSourceSideload {
+			continue
+		}
 		if e.Source == lockSourceBranch || !keepOverlay {
 			delete(l.Modules, name)
 		}

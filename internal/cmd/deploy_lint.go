@@ -76,15 +76,22 @@ func lintScopeReport(opts DeployOpts, scope lintScope) int {
 			[2]string{"modules", strings.Join(missing, ",")})
 	}
 
+	return reportLintResult(opts.log, scope.root, opts.Cfg.OdooVersion, res)
+}
+
+// reportLintResult logs a lint result's coverage caveats, findings and, when
+// clean, the summary line; it returns how many findings block. root renders
+// finding paths, configured is the Odoo version the grammar was asked for.
+func reportLintResult(log logFn, root, configured string, res LintResult) int {
 	// Coverage caveats before the verdict: they change what a clean
 	// result below actually means.
 	for _, pass := range res.SkippedPasses {
-		opts.log("WARNING", "lint", "validator unavailable, pass skipped", "",
+		log("WARNING", "lint", "validator unavailable, pass skipped", "",
 			[2]string{"pass", pass}, [2]string{"needs", "xmllint"})
 	}
 	if !res.GrammarExact && len(res.Modules) > 0 {
-		opts.log("WARNING", "lint", "no grammar for the configured Odoo version", "",
-			[2]string{"configured", opts.Cfg.OdooVersion}, [2]string{"used", res.GrammarMajor})
+		log("WARNING", "lint", "no grammar for the configured Odoo version", "",
+			[2]string{"configured", configured}, [2]string{"used", res.GrammarMajor})
 	}
 
 	for _, f := range res.Findings {
@@ -92,15 +99,15 @@ func lintScopeReport(opts DeployOpts, scope lintScope) int {
 		if f.Kind == odoolint.KindWarn {
 			level = "WARNING"
 		}
-		opts.log(level, "lint", f.Message, "",
-			[2]string{"file", RelPath(scope.root, f.File)},
+		log(level, "lint", f.Message, "",
+			[2]string{"file", RelPath(root, f.File)},
 			[2]string{"line", strconv.Itoa(f.Line)},
 			[2]string{"rule", f.Rule})
 	}
 
 	errs := res.Errors()
 	if errs == 0 {
-		opts.log("INFO", "lint", "pre-flight clean", "",
+		log("INFO", "lint", "pre-flight clean", "",
 			[2]string{"modules", strings.Join(res.Modules, ",")},
 			[2]string{"files", strconv.Itoa(res.Files)},
 			[2]string{"warnings", strconv.Itoa(res.Warnings())})

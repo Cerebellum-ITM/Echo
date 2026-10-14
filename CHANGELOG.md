@@ -26,6 +26,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   --name --link`; `--stage` is required without a TTY. An existing remote
   `global.toml` is never rewritten; it is only created with
   `compose_cmd = "docker-compose"` on a host that has v1 alone.
+- **`sideload <path> --from <target>`: install or update addons that live
+  outside the project's repo on a remote dev/staging instance.** Each addon is
+  copied to `<remote_path>/.echo/sideload/<addon>` and mounted into the Odoo
+  container through an Echo-owned `docker-compose.override.yml`, so the
+  client's repository, `odoo.conf` and compose file stay untouched; then
+  `stop` → `up -d` → one `-i`/`-u` run. Unchanged addons are skipped by content
+  hash (`--resync` forces). Shipped addons are recorded in the deploy lock as
+  `source=sideload`, and `deploy --set-code` / `push --clean` keep them. Before
+  any write the manifest version is checked against the target's Odoo series
+  and the addons are linted (`--no-lint`). Prod targets are refused unless
+  `--allow-prod`, which still asks interactively and fails without a TTY;
+  Reverb environments are refused. `--dry-run`, `--json` and `--list` (what
+  the target's lock records as sideloaded).
 
 ### Changed
 - **`db-restore` no longer looks hung on a large backup.** The data load and

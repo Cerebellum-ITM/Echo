@@ -118,6 +118,17 @@ The deploy line (local `[promote]` branch plus the server's deploy branch) keeps
 - Each cycle that reaches deploy writes one local `watch-deploy` cmd-log record (SHAs in the command, full tip in `deployed_tip`, exit 0/1); cycles that deploy nothing write none. "Did my commit auto-deploy" is `git merge-base --is-ancestor <sha> <deployed_tip>` (watch batches commits). Reading it (`logview --json`) is in [scripting.md](scripting.md).
 - Monitor mode: a side goroutine follows `compose logs --no-log-prefix -f` of the Odoo container while idle, as decoration. It is stopped SYNCHRONOUSLY before any cycle output (no interleaving), reopened with `--tail 0` after each cycle (deploy recreates containers), `--tail 20` at start; a stream that dies on its own warns and retries after one interval. `--no-logs` for tmux/CI. Not offered in `sequence` (does not terminate). Requires `rsync` locally even on git targets (`requireRsync` at start).
 
+## Sideload
+
+`sideload <path> --from <t>` ships addons that live outside the project's repo (`internal/cmd/sideload.go`, Unit 133). It is not a deploy source: no git, no commit selection, no deploy history, no promote; the invariants of the sections above do not apply to it.
+
+- **Where the code lives**: `<remotePath>/.echo/sideload/<addon>`, inside the lock's `.echo/` (its `*` `.gitignore` is created by the sync if missing, so a client checkout at `remotePath` never sees it). Transport is an in-memory `tar.gz` over SSH stdin, replace-then-untar; only `tar` is needed on the server.
+- **How the container sees it**: nested per-addon bind mounts `./.echo/sideload/<a>:<base>/<a>` in an Echo-owned `docker-compose.override.yml` (marker header); `<base>` is the first container `addons_path` entry not under `/usr/` (`pickMountBase`). The override mounts the union of every addon ever sideloaded to the target. A foreign override (no marker) stops the run before any file travels. Compose loads the override on every `up`, the client's own included.
+- **Change detection**: content hash per (target, addon) in `~/.config/echo/sideload-history/<projectKey>.toml`, written only after a fully successful run; it gates the file sync only, `ir_module_module` decides `-i` vs `-u`.
+- **Lock**: each synced addon is recorded `source=sideload`, `via=sideload`, `dest` = server path, the content hash in `tree` as `sha256:<hex>` (never a git tree id), `verified` after the Odoo run. `rebase` (`--set-code`, `--restore-code`, git rollback) and `push --clean` keep these entries.
+- **Gates, all before any server write**: Reverb target → `ErrUsage`; stage `prod` (undeclared included) → `ErrUsage` without `--allow-prod`, and with it a red confirm that fails closed without a TTY (no `--force` path); a five-part manifest version of another series → `ErrUsage` (shorter versions pass: Odoo prefixes the series); lint over the addon dirs with the target's Odoo version (`err` blocks, `--no-lint`).
+- **Not yet**: no checkpoint or rollback (Unit 134), no `--rm` (Unit 135), no local mode (Unit 136). **Hypothesis:** a mount base that is itself a bind of the client checkout gets an empty `<addon>/` mountpoint directory created in the host checkout; to settle live.
+
 ## Promote
 
 `promote` is the LOCAL funnel from a feature worktree into the single deploy branch; no SSH, push, deploy or commit (`promote.go`). The invariant behind it: the instance is fed from ONE branch (history is per target SHA, watch follows one ref), and git forbids the same branch in two worktrees, which is why the destination is a separate worktree.

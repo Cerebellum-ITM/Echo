@@ -198,8 +198,14 @@ func LintModules(cfg *config.Config, root string, modules []string) (LintResult,
 	if len(targets) == 0 {
 		return LintResult{}, missing, nil
 	}
+	res, err := lintModuleDirs(cfg.OdooVersion, targets, found)
+	return res, missing, err
+}
 
-	grammar, major, exact := odoolint.Grammar(cfg.OdooVersion)
+// lintModuleDirs lints module directories given as paths, named by modules,
+// against the grammar of odooVersion.
+func lintModuleDirs(odooVersion string, targets, modules []string) (LintResult, error) {
+	grammar, major, exact := odoolint.Grammar(odooVersion)
 	res, err := odoolint.Check(targets, odoolint.Options{
 		Grammar:      grammar,
 		Xmllint:      odoolint.FindXmllint(),
@@ -207,17 +213,17 @@ func LintModules(cfg *config.Config, root string, modules []string) (LintResult,
 		ManifestDirs: targets,
 	})
 	if err != nil {
-		return LintResult{}, missing, err
+		return LintResult{}, err
 	}
 
 	return LintResult{
 		Findings:      res.Findings,
 		Files:         res.Files,
-		Modules:       found,
+		Modules:       modules,
 		GrammarMajor:  major,
 		GrammarExact:  exact,
 		SkippedPasses: res.SkippedPasses,
-	}, missing, nil
+	}, nil
 }
 
 // RelPath renders p relative to root when it is inside it, so findings
