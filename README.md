@@ -96,6 +96,8 @@ and every command is wired to the right containers.
 | Command  | Description                                                        |
 |----------|--------------------------------------------------------------------|
 | `init`   | Interactive setup (Odoo version, containers, DB, stage, optional alias) |
+| `init --remote` | Write a remote host's Echo profile over SSH, register the target and link it — no `echo` needed on the server |
+| `init --from <target>` | Write or fix the profile of an already registered target |
 | `reset`  | Wipe Echo config — global, per-project, or both                    |
 | `alias [<name>]` | Register this project so `-C <name>` stands in for its path (no args: list) |
 | `  --list` | List all project aliases                                         |
@@ -826,16 +828,33 @@ never abort the run. A selected dirty module resolves straight to its name
 
 #### Example: link a repo and deploy (dummy data)
 
-One-time setup. On the **server**, create the Echo profile `deploy` reads
-(containers, DB, stage):
+One-time setup. Create the Echo profile `deploy` reads (containers, DB,
+stage) on the server. From your **laptop**, without installing Echo there:
+
+```sh
+cd ~/dev/my-shop-addons           # your local addons repo
+echo init --remote                # pick the SSH host, type /srv/odoo/my-shop, confirm the detected stack
+```
+
+`init --remote` runs `compose config --services`, `psql -l` and `odoo
+--version` over SSH, writes `~/.config/echo/projects/<sha256-of-path>.toml`
+on the server, registers the connect target and offers to link this
+directory. An existing profile is edited in place: only the init fields
+change, `[deploy]`, `[push]` and `[checkpoint]` are kept. Headless:
+
+```sh
+echo init --remote --host erp-prod --path /srv/odoo/my-shop --stage prod --name erp-prod --link
+```
+
+Or, on the **server** itself (if Echo is installed there):
 
 ```sh
 ssh erp-prod                      # host alias from your ~/.ssh/config (key auth)
 cd /srv/odoo/my-shop && echo init
 ```
 
-On your **laptop**, register the remote as a connect target and bind your
-addons repo to it:
+Then, if you did not link it during `init --remote`, register the remote as a
+connect target and bind your addons repo to it:
 
 ```sh
 cd ~/dev/my-shop-addons           # your local addons repo (no docker-compose.yml needed)

@@ -31,9 +31,14 @@ func ListDatabases(ctx context.Context, composeCmd, dir, dbContainer, user strin
 	if err != nil {
 		return nil, err
 	}
+	return ParseDatabases(string(out)), nil
+}
 
+// ParseDatabases extracts the non-system database names from `psql -lqt`
+// output.
+func ParseDatabases(out string) []string {
 	var dbs []string
-	for _, line := range strings.Split(string(out), "\n") {
+	for _, line := range strings.Split(out, "\n") {
 		parts := strings.SplitN(line, "|", 2)
 		name := strings.TrimSpace(parts[0])
 		if name == "" || systemDBs[name] {
@@ -41,7 +46,7 @@ func ListDatabases(ctx context.Context, composeCmd, dir, dbContainer, user strin
 		}
 		dbs = append(dbs, name)
 	}
-	return dbs, nil
+	return dbs
 }
 
 // DatabaseInfo describes one row returned by ListDatabasesDetailed.

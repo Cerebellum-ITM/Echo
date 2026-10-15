@@ -302,7 +302,7 @@ func (sess *session) dispatchParsed(ctx context.Context, cmd string, args []stri
 	case "sequence":
 		sess.runSequence(ctx, args)
 	case "init":
-		sess.runInit()
+		sess.runInit(ctx, args)
 	case "reset":
 		sess.runReset()
 	case "alias":
@@ -365,6 +365,13 @@ func helpSections() []helpSection {
 	return []helpSection{
 		{"Project", []helpEntry{
 			{"init", "Configure Odoo project (containers, version, DB)"},
+			{"  --remote", "Write a remote host's Echo profile over SSH (no echo_cli needed there)"},
+			{"  --from <target>", "Write or fix the profile of a registered target"},
+			{"  --host --path", "Headless host alias and remote directory (with --remote)"},
+			{"  --stage --odoo-version", "Headless profile values (--stage is required without a TTY)"},
+			{"  --odoo-container --db-container --db", "Headless services and database (default: detected)"},
+			{"  --name --link", "Register the target under <name> and bind this directory to it"},
+			{"  --force", "Allow lowering the stage of a prod profile without a confirm"},
 			{"reset", "Wipe Echo configuration (global / per-project / all)"},
 			{"alias [<name>]", "Register this project as `-C <name>` (no args: list)"},
 			{"  --list", "List all project aliases"},
@@ -724,8 +731,11 @@ func helpCommandNames() []string {
 	return out
 }
 
-func (sess *session) runInit() {
-	ctx := context.Background()
+func (sess *session) runInit(ctx context.Context, args []string) {
+	if len(args) > 0 {
+		sess.runInitRemote(ctx, args)
+		return
+	}
 	newCfg, err := cmd.RunInit(ctx, cmd.InitOpts{
 		Cfg:       sess.cfg,
 		Root:      sess.projectDir,

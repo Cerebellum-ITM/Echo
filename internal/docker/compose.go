@@ -46,8 +46,14 @@ func ListContainers(ctx context.Context, composeCmd, dir string) ([]Container, e
 	if err != nil {
 		return nil, err
 	}
+	return ParseContainers(string(out)), nil
+}
+
+// ParseContainers parses `compose ps --format '{{.Service}}\t{{.Name}}'`
+// output.
+func ParseContainers(out string) []Container {
 	var containers []Container
-	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" {
 			continue
@@ -61,7 +67,7 @@ func ListContainers(ctx context.Context, composeCmd, dir string) ([]Container, e
 			Name:    strings.TrimSpace(parts[1]),
 		})
 	}
-	return containers, nil
+	return containers
 }
 
 // Up runs `<compose> up -d [services...]` and streams output line by line.

@@ -176,7 +176,7 @@ func registerTarget(ctx context.Context, palette theme.Palette, log func(level, 
 	}
 	if len(projects) == 0 {
 		return config.ConnectTarget{}, fmt.Errorf(
-			"no Echo projects with a stored path on %q — run Echo there once (update it if needed) so its profiles record project_path", host)
+			"no Echo projects with a stored path on %q — run Echo there once (update it if needed) so its profiles record project_path, or run `echo_cli init --remote` from here", host)
 	}
 
 	labels := make([]string, len(projects))
