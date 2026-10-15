@@ -11,7 +11,7 @@ var Registry = []string{
 	"i18n-export", "i18n-update", "i18n-pull",
 	"db-admin", "db-backup", "db-restore", "db-pull", "db-drop", "db-neutralize", "db-list", "db-use",
 	"bash", "psql", "shell", "shell-run", "connect",
-	"up", "down", "stop", "restart", "ps", "logs", "push", "deploy", "watch", "checkpoint", "actions", "promote",
+	"up", "down", "stop", "restart", "ps", "logs", "push", "deploy", "sideload", "watch", "checkpoint", "actions", "promote",
 	"copy-last", "report", "logview", "sequence",
 	"clear", "help", "exit", "quit",
 }
@@ -59,6 +59,7 @@ var commandFlags = map[string][]string{
 	"promote":       {"--dirty", "--commits", "--to", "--set-branch", "--show-branch", "--create-dest", "--dry-run", "--force", "--reset", "--discard", "--set-base", "--no-fetch"},
 	"checkpoint":    {"--from", "--remote", "--method", "--all", "--force", "--json", "-E", "--env"},
 	"actions":       {"--from", "--remote", "--json", "--force", "-E", "--env"},
+	"sideload":      {"--from", "--dry-run", "--allow-prod", "--resync", "--no-lint", "--json", "--list", "--available", "--library", "--library-add", "--library-rm"},
 	"copy-last":     {"--errors"},
 	"report":        {"--step", "--level", "--min-level", "--copy"},
 	"logview":       {"--list", "--last", "--clear", "--force", "--from", "--remote", "--json"},

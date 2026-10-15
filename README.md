@@ -917,6 +917,66 @@ command can still cross over without switching at all: `deploy --from staging`.
 `ir_module_module`, not from the commit tags. `stock_extra` was picked from
 the working tree (`via=dirty`) and joins the update set.
 
+### Sideload
+
+`sideload` installs or updates addons that live **outside the project's
+repo** on a remote dev/staging instance, without the code ever entering the
+client's repository, `odoo.conf` or `docker-compose.yml`. Use it to try a
+private or experimental module on a client's instance before deciding
+whether it belongs in their repo.
+
+```sh
+echo sideload --library-add ~/Documents/Projects/odoo-forced-config-parameter
+echo sideload --from staging                     # picker over your library
+echo sideload forced_config_parameter --from staging
+echo sideload ~/dev/some_addon --from staging --dry-run
+echo sideload --list --from staging
+```
+
+- **The library** is a list of local roots in `global.toml` (`[sideload] library`),
+  managed with `--library`, `--library-add` and `--library-rm`. A root that is a
+  git repository with one branch per Odoo series (`17.0`, `18.0`, …) offers the
+  modules of the branch matching the target, read from the commit: uncommitted
+  edits never travel. Any other root offers its working-tree modules whose
+  manifest fits the target's series.
+- `sideload` with no module opens a picker over the library modules that fit the
+  target, each with its version, source and status (`new`,
+  `sideloaded · current`, `sideloaded · changed`). A name resolves from the
+  library; anything with a `/`, or an existing directory, is a path. Without a
+  TTY a module or `--available` is required.
+
+- Each addon (a folder with `__manifest__.py`, or a folder of addons) is
+  packed and copied to `<remote_path>/.echo/sideload/<addon>`, next to the
+  deploy lock. `.echo/` ignores itself, so a repository checked out at the
+  remote path never sees it.
+- The container sees each addon through a bind mount at
+  `<addons path>/<addon>`, written into a `docker-compose.override.yml` that
+  Echo owns (marker header). If the server already has an override Echo did
+  not write, `sideload` stops and prints the volume lines to add by hand.
+- Then the usual `stop` → `up -d` → one `-i`/`-u` run. An addon whose content
+  did not change since its last sideload to that target is skipped
+  (`--resync` sends everything again).
+- Each shipped addon is recorded in the deploy lock as `source=sideload`, so
+  `deploy --lock`, `doctor` and `compare --targets` show it. `deploy --set-code`
+  and `push --clean` leave it alone.
+- Before any server write: the manifest version must belong to the target's
+  Odoo series (`18.0.x.y.z` on an Odoo 18 target), and the addons are linted
+  (`--no-lint` skips it).
+- **Prod is refused.** `--allow-prod` turns the refusal into an interactive
+  confirm; without a TTY it still fails. Reverb environments are not supported.
+
+| Flag | Effect |
+|------|--------|
+| `--from <target>` | Named connect target (default: this directory's link) |
+| `--dry-run` | Show the mount base and the install/update plan; write nothing |
+| `--resync` | Ignore stored hashes and re-send every addon |
+| `--no-lint` | Skip the pre-flight lint |
+| `--allow-prod` | Allow a prod target behind an interactive confirm |
+| `--json` | One result object on stdout, logs on stderr |
+| `--list` | List what the target's lock records as sideloaded |
+| `--available` | List the library modules that fit the target, with their status |
+| `--library` / `--library-add <path>` / `--library-rm <path>` | Show or edit the library roots |
+
 ### Promote (worktree funnel)
 
 `promote` is a **purely-local** git helper: it funnels the changes from the
