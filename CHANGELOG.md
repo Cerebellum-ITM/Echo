@@ -5,6 +5,38 @@ All notable changes to Echo are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- **`init --remote`: set up a remote host without installing Echo on it.**
+  Echo never runs on the server, but every remote verb needs the server's
+  Echo profile, which only `init` on the server could write. `init --remote`
+  (SSH host from `~/.ssh/config` plus the remote project path) and
+  `init --from <target>` (a registered target whose profile is missing or
+  wrong) now write it over SSH: they detect the compose command, services
+  (`compose config --services`, so the stack may be stopped), databases and
+  Odoo version, show the same form as `init`, write
+  `~/.config/echo/projects/<key>.toml` atomically and re-read it. An existing
+  profile is edited in place (only `odoo_version`, `stage`, `odoo_container`,
+  `db_container`, `db_name`, `project_path` change); a Reverb-owned profile or
+  one with keys this Echo does not know is refused. Lowering a prod (or
+  undeclared) stage asks first (`--force` skips). The target is registered
+  and the current directory can be linked in the same run. Headless with
+  `--host --path --stage --odoo-version --odoo-container --db-container --db
+  --name --link`; `--stage` is required without a TTY. An existing remote
+  `global.toml` is never rewritten; it is only created with
+  `compose_cmd = "docker-compose"` on a host that has v1 alone.
+
+### Changed
+- **`db-restore` no longer looks hung on a large backup.** The data load and
+  the zip extraction report byte progress as INFO lines (one per 10 % of the
+  input: `progress=40% read=1.1GB total=2.8GB`), and every long phase emits a
+  heartbeat with `elapsed=` after 30 s without a line. Once the dump is fully
+  read the restore says `finalizing (indexes and constraints)` and keeps
+  beating until it ends; the filestore copy gets the heartbeat too. Works for
+  Echo zips (`pg_restore`) and native Odoo zips (`psql`, previously silent for
+  the whole load), and for `db-pull --restore`.
+
 ## [0.27.0] - 2026-10-07
 
 ### Added

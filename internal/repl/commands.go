@@ -21,6 +21,7 @@ var Registry = []string{
 // flags) are intentionally excluded. Commands absent from the map have
 // no known flags. Powers flag highlighting and Tab flag completion.
 var commandFlags = map[string][]string{
+	"init":          {"--remote", "--from", "--host", "--path", "--stage", "--odoo-version", "--odoo-container", "--db-container", "--db", "--name", "--link", "--force"},
 	"alias":         {"--list", "--rm", "--migrate"},
 	"link":          {"--show", "--rm", "--next", "--list", "--add", "--json"},
 	"doctor":        {"--from", "--remote", "--json"},

@@ -349,7 +349,7 @@ func fetchRemoteProfile(ctx context.Context, opts ConnectOpts) (config.RemotePro
 	projData, err := runSSH(ctx, host, "cat "+projectPath, nil)
 	if err != nil {
 		return config.RemoteProfile{}, fmt.Errorf(
-			"no Echo profile for %q on %s (expected projects/%s.toml) — run `init` there first: %w",
+			"no Echo profile for %q on %s (expected projects/%s.toml) — run `init` there first, or `echo_cli init --remote` from here: %w",
 			opts.Cfg.ConnectRemotePath, host, key, err)
 	}
 	prof, err := config.ParseRemoteProfile(globalData, projData)
