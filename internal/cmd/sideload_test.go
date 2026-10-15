@@ -376,6 +376,11 @@ func TestDeployLockKeepsSideloadEntries(t *testing.T) {
 	if got := sideloaded.label(); !strings.HasPrefix(got, "sideload@abcdef0") {
 		t.Errorf("label = %q", got)
 	}
+	fromLibrary := sideloaded
+	fromLibrary.Ref, fromLibrary.SHA = "19.0", "b8e4393d7a5f7b848fb48f70f4e28b54f3bc5290"
+	if got := fromLibrary.label(); got != "sideload:19.0@b8e4393" {
+		t.Errorf("versioned library label = %q, want sideload:19.0@b8e4393", got)
+	}
 }
 
 func TestRunSideloadFakeRemote(t *testing.T) {
