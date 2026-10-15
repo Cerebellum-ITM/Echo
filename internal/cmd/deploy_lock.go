@@ -76,9 +76,14 @@ func lockFilePath(remotePath string) string {
 }
 
 // label renders where an entry's content came from: `worktree@0b6fc41+dirty`.
+// A sideload from a versioned library repo names its branch and commit
+// (`sideload:19.0@b8e4393`); one from a plain folder has only its content hash.
 func (m LockModule) label() string {
 	s := m.Source
 	if m.Source == lockSourceSideload {
+		if m.Ref != "" && m.SHA != "" {
+			return s + ":" + m.Ref + "@" + shortSHA(m.SHA)
+		}
 		return s + "@" + shortSHA(strings.TrimPrefix(m.Tree, sideloadHashPrefix))
 	}
 	if m.SHA != "" {

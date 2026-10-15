@@ -46,7 +46,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   target (`new`, `sideloaded · current`, `sideloaded · changed`), and
   `sideload <name>` resolves a module by name. A root with one branch per series
   ships the matching branch as committed, never uncommitted edits, and its lock
-  entry records the branch and commit. `--available` lists the same without the
+  entry records the branch and commit, which `deploy --lock` and
+  `compare --targets` show as `sideload:19.0@b8e4393` (a plain folder keeps
+  `sideload@<content hash>`). `--available` lists the same without the
   picker, `--library` / `--library-rm` show and edit the roots, and Tab completes
   library module names after `sideload`.
 
