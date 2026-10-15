@@ -1,51 +1,49 @@
 # State
-> Where the work stands, what blocks it, what is next. Rewritten whole at every `/ctx close`; no history here. Last rewritten: 2026-10-01.
+> Where the work stands, what blocks it, what is next. Rewritten whole at every `/ctx close`; no history here. Last rewritten: 2026-10-15.
 
 ## Goal
 
-Make Echo safe to point at any remote Odoo: link mode as the one way to reach a target (Reverb environments
-included), and a `deploy` whose shipped code is known, reproducible from any ref, checked against what stays on
-the server and undone when a run fails. The deploy half came out of the habitta_prod incident of 2026-09-30
-([deploy-safety](knowledge/deploy-safety.md)).
+Make Echo safe and cheap to point at any remote Odoo: link mode as the one way to reach a target, a `deploy`
+whose shipped code is known and undone on failure, and now hosts that need nothing of Echo installed
+(`init --remote`) plus private modules shipped from a local library (`sideload`) without touching the client's
+repository.
 
 ## Where we are
 
-- **v0.26.0 is the last release** (2026-10-01): PR [#24](https://github.com/Cerebellum-ITM/Echo/pull/24) merged
-  as `d3f6541` (`[MERGE] feat/reverb-link-deploy-safety`), release commit `72fc85a`, tag `v0.26.0`, GitHub
-  release with the three binaries. `main` and the working branch `feat/reverb-link-deploy-safety` are both at
-  `72fc85a`; nothing is unreleased. The branch was `wip/ps-remote` until the release: the merge was rewritten
-  and force-pushed under the new name the same day ([decisions](decisions.md#process)), so PR #24 still shows
-  the old head name. The checkout was last left on `main`; switch back to the working branch before new work.
-- **Units 127-131 are implemented**, one commit each, specs archived under `archive/2026-09-30-<unit>/`:
-  127 config load safety (`a43813c`), 128 partial-deploy dependency check (`1432557`), 131 `doctor`
-  (`34510e8`, also the deploy-lock read split and the `dump` checkpoint disk preflight fix), 130
-  `compare --targets` (`341d6b8`), 129 saved deploy plan `--save-plan`/`--apply` (`787a2f7`).
-- Before them on the branch: 118-121, 123, 124 deploy lock (`a73d4db`), 125 per-module source (`1d29ccb`),
-  126 code rollback (`fa3dad6`), `link --add`, remote `ps`, `uninstall` through `odoo shell`, and the store
-  adoption (`516a05e`).
-- `go build`, `go vet` and `go test ./...` are green at `72fc85a`. Units 124-131 are covered with temp `HOME`
-  and a fake `ssh` on `PATH` ([code-standards](knowledge/code-standards.md)); none has run against a real
-  server yet ([ledger](knowledge/operations.md#live-verification-ledger)).
-- The `odoo-probe` skill (`~/Documents/Projects/odoo-probe/SKILL.md`) teaches 127-131 (config parse error,
-  undeclared stage, `doctor`, `compare --targets`, `deploy --lock`, dependency check, saved plans): commit
-  `2dff0e7` in that repo, not pushed.
+- **v0.27.0 is the last release** (2026-10-07, `3f62780`). `main` is at `8643a1d`, **9 commits ahead of
+  `origin/main`, not pushed and not released**. Unreleased on `main`, all in `CHANGELOG.md` `[Unreleased]`:
+  - Unit 132 `db-restore` progress and heartbeat (`35810b7`).
+  - Unit 139 `init --remote` / `init --from` (`7fced0f`), merged as `561907d`.
+  - Units 133 and 137 `sideload` and its library (`d4ecb4f`, `ae632b5`), merged as `891fe9d`; the branch was
+    built in another session's worktree and had never been merged until it was rebased onto `main` today.
+  - Lock label of library sideloads `sideload:<branch>@<sha>` (`6ac9fb7`), merged as `8643a1d`.
+- `go build`, `go vet`, `go test ./...` green at `8643a1d`. Feature branches of today and the sideload worktree
+  were deleted after the merges.
+- **Live on morwi-fb (2026-10-15)**, a host with no `echo_cli` and no `~/.config/echo` before today:
+  `init --remote` wrote both profiles; connect targets `morwi-fb-stable` (`~/projects/fb_stable`, db
+  `fuentebuena_stable`) and `morwi-fb-odoo` (`~/projects/fb_odoo`, db `fuentebuena`), both stage `staging`,
+  Odoo 19; `~/Documents/Projects/morwi/fuentebuena` is linked to `morwi-fb-odoo`; `doctor` ok=6 on both.
+  `forced_config_parameter` (library `odoo-forced-config-parameter@19.0`, commit `b8e4393`) is sideloaded on
+  `morwi-fb-stable`, so that project now has an Echo-owned `docker-compose.override.yml`. Rows in the
+  [ledger](knowledge/operations.md#live-verification-ledger).
+- The installed `~/.local/bin/echo_cli` predates all of the above: it has no `init --remote` and no `sideload`.
+  Today's runs used a binary built from `main`.
 
 ## Blockers
 
 | Blocker | Detail |
 |---|---|
-| none | The live checks wait only on the user's authorization. |
+| none | Push, release and the remaining live checks wait only on the user. |
 
 ## Next
 
-1. Live checks of 124-131 against the real hosts, authorised by the user, read-only first:
-   `echo_cli doctor --from habitta_prod`, `echo_cli compare --targets habitta_dev,habitta_prod`,
-   `echo_cli deploy --modules ccima_flow_mail@99f2109 --from habitta_prod --dry-run --save-plan plan.json`
-   (rows in the [ledger](knowledge/operations.md#live-verification-ledger)).
-2. Small fixes, one commit each ([plan](work/build/plan.md#small-fixes-found-during-the-2026-09-30-store-adoption));
-   two were added by 127-129: `-C <alias>` hides a config parse error, and `deploy --json` omits `code_sha` and
-   `dependencies`.
-3. Unit 122 (remove `-E`): write its spec first, then E8, E5, E6.
+1. Release 0.28.0 (minor: new commands): promote `[Unreleased]` and bump `Version` in `internal/repl/repl.go` in
+   one commit ([operations](knowledge/operations.md#release-and-versioning)), push `main`, then reinstall
+   `echo_cli`.
+2. Live checks still open: the `init --remote` form, prod-downgrade and link confirms in tmux; the `sideload`
+   picker in a TTY; `db-restore` progress on a local stack (Unit 132).
+3. Sideload follow-ups 134 (checkpoint and code snapshot), 135 (`--rm`), 136 (local mode); 138 needs a decision.
+   Then 122 (remove `-E`), E8, E5, E6 ([plan](work/build/plan.md)).
 
 ## Messages
 
@@ -55,15 +53,14 @@ the server and undone when a run fails. The deploy half came out of the habitta_
 
 ## Open questions for the user
 
-- The `branch-flow` skill names branches `feature/<slug>`; the working branch is `feat/reverb-link-deploy-safety`.
-  Rename it, or start the next unit (Unit 122) on a fresh `feature/<slug>` branch?
+- Unit 138 (ship sideloaded Python compiled): pick an option from [138](work/build/138-sideload-obfuscation.md)
+  or close it.
 
 ## Pending, not blocking
 
-- Units 127-131 deviated from their specs only in small ways the user accepted (type names, an extra `rawStage`
-  field on `connectTarget`, `--force` also skipping the dependency prompt in a TTY, `compare` usage errors now
-  exiting 2); the behaviour-visible ones are in [deploy-safety](knowledge/deploy-safety.md#dependency-check) and
-  [modules-and-odoo](knowledge/modules-and-odoo.md).
-- Technology facts collected during the adoption belong in the `odoo-dev` / `odoo-probe` skills, not here; the
-  list was handed to the user on 2026-09-30.
+- Small fixes from the 2026-09-30 adoption, one commit each
+  ([plan](work/build/plan.md#small-fixes-found-during-the-2026-09-30-store-adoption)).
+- Three old worktrees in `.claude/worktrees/` (`confident-elion-650faa`, `magical-curran-0b83c4`,
+  `recursing-franklin-ab22db`, all detached) and about twenty merged `feat/*` branches remain; untouched.
+- `ctx_audit.py` flags `messages/README.md` as a stale message; it is the folder's index, a false positive.
 - `gofmt -l` flags 8 pre-existing files (e.g. `internal/cmd/actions_test.go`); untouched on purpose.

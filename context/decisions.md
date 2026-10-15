@@ -152,6 +152,12 @@
 
 ## Remote targets
 
+### 2026-10-15 · The server profile can be written from the client over SSH (`init --remote`); the stack stays declared on the server
+- **Why:** Echo never runs on the server, but every remote verb reads the server's Echo profile and only `init` run there could write it, so each host needed `echo_cli` installed just to produce one file. Writing it from the client keeps the server as the only source of the stack and the stage ([2026-06-08](#2026-06-08--a-remote-target-inherits-the-servers-echo-profile-it-is-never-redeclared-locally)); only the author of the file changes. An existing profile is edited in place (the six init fields), and one carrying a `[reverb]` marker or keys this Echo cannot decode is refused, because re-encoding it would drop what it does not know. An existing remote `global.toml` is never rewritten (it can hold targets and a token); it is created, with `compose_cmd` only, on a v1-only host. Lowering a prod or undeclared stage asks first, since it disables every remote prod gate.
+- **Rejected:** Copying the binary to the host to run `init` and deleting it (an install in all but name); declaring the stack in the local config (contradicts the server-first rule); a `link --add` row only (the user chose a command plus `--from` for a target whose profile is missing).
+- **Source:** Unit 139 (user choices 2026-10-15); `internal/cmd/init_remote.go` (`RunInitRemote`), `internal/config/remote_init.go` (`RenderRemoteProject`). Verified on morwi-fb 2026-10-15.
+- **Status:** active
+
 ### 2026-09-30 · `doctor` is a read-only report that resolves its target like every remote verb and never stops at the first failure
 - **Why:** Each readiness fact (server rsync, git clone, checkpoint disk, lock state, destination) used to surface only when a deploy reached the step that needs it, after the code snapshot. `doctor` runs every check in three read-only SSH batches and reports each one, so one broken profile does not hide a missing rsync. Without `--from` it takes the usual chain (link binding, one target, TTY-guarded picker), because that is what every other remote verb does; checking every target at once can come later as `--all`.
 - **Rejected:** Requiring `--from`/`--remote` (bare `doctor` as `ErrUsage`); checking every registered target by default; reusing `resolveRemoteShell` (it returns at the first profile error doctor must survive).

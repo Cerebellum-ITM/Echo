@@ -1,5 +1,5 @@
 # Build plan
-> The open units of Echo, in order. Everything not listed here is implemented; shipped units live in git, the CHANGELOG and [archive](../../archive/2026-09-30-original/specs/). Last verified: 2026-09-30.
+> The open units of Echo, in order. Everything not listed here is implemented; shipped units live in git, the CHANGELOG and [archive](../../archive/2026-09-30-original/specs/). Last verified: 2026-10-15.
 
 Order: unblocked first; a unit gets a spec (`/ctx spec build <NN-name>`) before any code.
 
@@ -7,7 +7,6 @@ Order: unblocked first; a unit gets a spec (`/ctx spec build <NN-name>`) before 
 |---|---|---|---|---|
 | 132 | db-restore-progress | Byte progress + 30 s heartbeat for `db-restore` load, unzip and filestore copy, so a working restore never looks hung. [Spec](132-db-restore-progress.md). | — | implemented; live verification pending |
 | 139 | init-remote | `init --remote` / `init --from <t>`: write the server-side Echo profile from the client over SSH (detect compose, services, DB, Odoo version; edit an existing profile in place; register and link the target), so a host without `echo_cli` installed works with every remote verb. Numbered after the sideload branch's 133-138. [Spec](139-init-remote.md). | — | implemented; live verification pending |
-| 133 | sideload | `sideload <path> --from <t>`: ship addons that live outside the repo to a dev/staging target under `.echo/sideload/`, mounted through an Echo-owned compose override; lock entries `source=sideload`, prod refused, `--list`, `--json`. Re-bases the never-merged prototype `2ba4e48`. [Spec](133-sideload.md). | — | implemented; live verification pending |
 | 134 | sideload-safety | DB checkpoint (deploy's policy) and code snapshot of `.echo/sideload/<addon>` (`createCodeSnapshot`) around the sideload run, restored through deploy's `rollbackDecision`. | 133 | pending, needs spec |
 | 135 | sideload-rm | `sideload --rm <addon>`: uninstall, unmount, delete, drop the lock entry; `--keep-installed` graduates an addon that now lives in the repo under the same name. | 133 | pending, needs spec |
 | 136 | sideload-local | Local mode: bind the addon's own path in a local compose override (live edits, no copy), then `-i`/`-u`. | 133 | pending, needs spec |
