@@ -9,7 +9,7 @@ var Registry = []string{
 	"init", "reset", "alias", "link", "doctor",
 	"install", "update", "uninstall", "test", "modules", "modinfo", "modstate", "view", "compare", "lint",
 	"i18n-export", "i18n-update", "i18n-pull",
-	"db-admin", "db-backup", "db-restore", "db-pull", "db-drop", "db-neutralize", "db-list", "db-use",
+	"db-admin", "db-backup", "db-restore", "db-pull", "db-push", "db-drop", "db-neutralize", "db-list", "db-use",
 	"bash", "psql", "shell", "shell-run", "connect",
 	"up", "down", "stop", "restart", "ps", "logs", "push", "deploy", "sideload", "watch", "checkpoint", "actions", "promote",
 	"copy-last", "report", "logview", "sequence",
@@ -42,6 +42,7 @@ var commandFlags = map[string][]string{
 	"db-backup":     {"--with-filestore"},
 	"db-restore":    {"--as", "--force", "--neutralize"},
 	"db-pull":       {"--from", "--remote", "--as", "--neutralize", "--no-neutralize", "--filestore", "--force", "--restore", "-E", "--env"},
+	"db-push":       {"--to", "--remote", "--filestore", "--as", "--neutralize", "--no-checkpoint", "--dry-run", "--force", "--json"},
 	"db-drop":       {"--force"},
 	"db-neutralize": {"--force"},
 	"up":            {"--from", "--remote", "-E", "--env"},
@@ -64,6 +65,7 @@ var commandFlags = map[string][]string{
 	"report":        {"--step", "--level", "--min-level", "--copy"},
 	"logview":       {"--list", "--last", "--clear", "--force", "--from", "--remote", "--json"},
 	"sequence":      {"--remote", "--from", "--last", "--continue-on-error", "-E", "--env"},
+	"help":          {"--json"},
 }
 
 func init() {

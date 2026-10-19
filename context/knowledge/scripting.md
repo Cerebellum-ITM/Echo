@@ -14,7 +14,7 @@ Code: `internal/repl/script.go`, `recipe.go`, `sequence.go`, `build.go`, `report
 
 ## Recipes (`echo run`)
 
-- `run` is a one-shot-only orchestrator: not in `Registry`/`dispatchNames`, never available inside the REPL. `main.go` routes it before `IsScriptCommand`. Its help sits in a "Scripting" footer outside `helpSections()` so the Registry<->help cross-check stays green (`repl.go`, `scriptingHelpEntries`).
+- `run` is a one-shot-only orchestrator: not in `Registry`/`dispatchNames`, never available inside the REPL. `main.go` routes it before `IsScriptCommand`. Its help is the `scripting` topic of `helpTopics` (`internal/repl/helpdocs.go`), outside the command docs.
 - **Trap: `run` itself needs a compose project.** It is not in `projectlessOneShot`, so outside a project it exits 2 even when every step is remote. `--pick`/`--last` search the resolved project ROOT (`FindRoot` result), not necessarily the shell's cwd (`main.go` passes `root` to `RunRecipe`). Search is top-level only, no recursion.
 - Format: one Echo command per line; `#` starts a comment at line start or after whitespace (a `#` inside a token is kept); conventional extension `*.echo`. Recipes are not Echo-managed config: they live wherever the user keeps them (only `--pick`/`--last` discover them). Source: `parseRecipeLines`, `stripComment`.
 - **Trap: steps are split with `strings.Fields`** (`runRecipeSteps`): there is no quoting, so an argument containing a space cannot be passed.

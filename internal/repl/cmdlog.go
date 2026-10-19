@@ -46,7 +46,10 @@ func reportLine(l Line) config.ReportLine {
 type recordExtras struct {
 	remote *cmd.RemoteResolution
 	script *scriptFields
+	dbPush *dbPushFields
 }
+
+type dbPushFields struct{ sourceDump, checkpoint string }
 
 // noteRemoteResolved is cmd.OnRemoteResolved for this session. The first
 // resolution of a dispatch wins, so `compare --targets a,b` records a.
@@ -93,6 +96,9 @@ func (sess *session) saveCmdLog(cmd string, args []string, started time.Time) {
 	}
 	if r := sess.extras.remote; r != nil {
 		rec.Target, rec.Host, rec.RemoteDB, rec.RemoteStage = r.Target, r.Host, r.DB, r.Stage
+	}
+	if dp := sess.extras.dbPush; dp != nil {
+		rec.SourceDump, rec.Checkpoint = dp.sourceDump, dp.checkpoint
 	}
 	if sc := sess.extras.script; sc != nil {
 		rec.ScriptPath = sc.path

@@ -160,29 +160,26 @@ func (m helpPager) View() string {
 	return b.String()
 }
 
-// helpPages builds the pager pages: one per help section, plus the
-// Scripting and Build-mode extras (which live outside helpSections() so the
-// registry cross-check stays clean).
+// helpPages builds the pager pages: one per help section, then one per
+// topic.
 func (sess *session) helpPages() []helpPage {
 	var pages []helpPage
 	for _, sec := range helpSections() {
 		pages = append(pages, helpPage{title: sec.title, lines: renderHelpEntries(sess.styles, sec.items)})
 	}
-	pages = append(pages,
-		helpPage{title: "Scripting", lines: renderHelpEntries(sess.styles, scriptingHelpEntries)},
-		helpPage{title: "Build", lines: renderHelpEntries(sess.styles, buildHelpEntries)},
-		helpPage{title: "Reverb", lines: renderHelpEntries(sess.styles, reverbHelpEntries)},
-	)
+	for _, t := range helpTopics {
+		pages = append(pages, helpPage{title: strings.ToUpper(t.name[:1]) + t.name[1:], lines: renderHelpEntries(sess.styles, topicEntries(t))})
+	}
 	return pages
 }
 
-// renderHelpEntries renders a section's rows in the same two-column style
-// the flat help uses: padded command label in Info, description in Out.
+// renderHelpEntries renders a page's rows in the two-column style the flat
+// help uses.
 func renderHelpEntries(s theme.Styles, items []helpEntry) []string {
+	width := helpLabelWidth(items)
 	out := make([]string, len(items))
 	for i, it := range items {
-		label := lipgloss.NewStyle().Width(22).Render(it.cmd)
-		out[i] = "  " + s.Info.Render(label) + s.Out.Render(it.desc)
+		out[i], _ = renderHelpEntry(s, it, width)
 	}
 	return out
 }

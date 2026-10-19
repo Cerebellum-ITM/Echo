@@ -288,7 +288,7 @@ func TestCreateCheckpointDBMethod(t *testing.T) {
 		return []byte(""), nil
 	}
 
-	entry, info, err := createCheckpoint(context.Background(), testRSC(), "db", []string{"deadbeef"}, nil, nil)
+	entry, info, err := createCheckpoint(context.Background(), testRSC(), testRSC().prof.DBName, "db", []string{"deadbeef"}, nil, nil)
 	if err != nil {
 		t.Fatalf("createCheckpoint: %v", err)
 	}
@@ -334,7 +334,7 @@ func TestCreateCheckpointDBMethodOldPGNoStrategy(t *testing.T) {
 		}
 		return []byte("0\n"), nil
 	}
-	if _, _, err := createCheckpoint(context.Background(), testRSC(), "db", nil, nil, nil); err != nil {
+	if _, _, err := createCheckpoint(context.Background(), testRSC(), testRSC().prof.DBName, "db", nil, nil, nil); err != nil {
 		t.Fatal(err)
 	}
 	iCreate := indexOfCall(calls, "CREATE DATABASE")
@@ -359,7 +359,7 @@ func TestCreateCheckpointDumpMethod(t *testing.T) {
 		return []byte("4096\n"), nil // file size
 	}
 
-	entry, info, err := createCheckpoint(context.Background(), testRSC(), "dump", nil, nil, nil)
+	entry, info, err := createCheckpoint(context.Background(), testRSC(), testRSC().prof.DBName, "dump", nil, nil, nil)
 	if err != nil {
 		t.Fatalf("createCheckpoint dump: %v", err)
 	}

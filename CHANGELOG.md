@@ -8,6 +8,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **`db-push`: load a local dump into a remote target.** Echo could pull
+  a remote database and restore it locally, but nothing loaded a dump into
+  a remote instance, so resetting a dev instance from a staging snapshot
+  meant manual SSH. `db-push <dump> --to <target>` (or `--remote`) uploads
+  a `db-pull` dump, and with `--filestore` its filestore archive, takes a
+  checkpoint of the database it replaces, restores, optionally neutralizes
+  (`--neutralize`) before Odoo starts, checks that the registry loads,
+  starts Odoo and reports module versions. The previous filestore is kept
+  as `<db>.pre-push-<ts>`. A prod or undeclared stage needs `--force`;
+  `--dry-run` prints the plan and changes nothing; `--json` reports the
+  steps reached even on failure. An operation lock on the server stops two
+  db-push runs from overlapping.
+- **Per-command help that agents can use without reading the repo.**
+  `help <command>` and `<command> --help` (or `-h` alone) print one page per
+  command: usage, every flag it accepts, notes on prerequisites, TTY and prod
+  gates and `--json` output, and copyable examples. `help agents` describes
+  headless use (stdout/stderr split, `ECHO_LOG_FORMAT=json`, exit codes, what
+  needs a flag without a TTY). `help <text>` searches command names, flags and
+  descriptions (no match exits 2), and `--json` turns any help form into one
+  JSON document on stdout. `<command> --help` works outside a project. Each
+  command's help now comes from one source that tests keep in sync with the
+  flags the command accepts, so flags missing from the old help (`deploy
+  --set-checkpoint`, `--consume-checkpoint`, `--rename`, …) are listed.
 - **`init --remote`: set up a remote host without installing Echo on it.**
   Echo never runs on the server, but every remote verb needs the server's
   Echo profile, which only `init` on the server could write. `init --remote`
@@ -53,6 +76,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   library module names after `sideload`.
 
 ### Changed
+- **`help` without a terminal prints a short index** (one line per command,
+  then the topics) instead of every flag row; the full rows stay in the
+  paginated viewer and in `help <command>`.
 - **`db-restore` no longer looks hung on a large backup.** The data load and
   the zip extraction report byte progress as INFO lines (one per 10 % of the
   input: `progress=40% read=1.1GB total=2.8GB`), and every long phase emits a
@@ -61,6 +87,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   beating until it ends; the filestore copy gets the heartbeat too. Works for
   Echo zips (`pg_restore`) and native Odoo zips (`psql`, previously silent for
   the whole load), and for `db-pull --restore`.
+
+### Fixed
+- **`db-pull --filestore` reads the server's `filestore_path`.** It used
+  the local project's setting for the remote container, so a server with a
+  non-default path pulled nothing.
 
 ## [0.27.0] - 2026-10-07
 

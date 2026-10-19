@@ -42,8 +42,9 @@ func main() {
 	// Global flags that never need a project, handled before any project
 	// detection: `--version`/`-v` prints the CLI version and exits;
 	// `--help`/`-h` are normalized to the `help` command (which runs
-	// projectless). These must work from anywhere, including outside a
-	// compose project.
+	// projectless), and so is `<cmd> --help`. These must work from anywhere,
+	// including outside a compose project, and before the direct `connect`
+	// mode below.
 	if len(args) > 0 {
 		switch args[0] {
 		case "--version", "-v":
@@ -52,6 +53,9 @@ func main() {
 		case "--help", "-h":
 			args[0] = "help"
 		}
+	}
+	if name, ok := repl.HelpRequest(args); ok {
+		args = []string{"help", name}
 	}
 
 	// A `-C` value that isn't an existing directory may be a project alias
@@ -248,7 +252,7 @@ func repoRoot(cwd string) string {
 
 func projectlessOneShot(name string, args []string) bool {
 	switch name {
-	case "help", "lint", "i18n-pull", "link", "doctor", "deploy", "sideload", "push", "watch", "checkpoint", "actions", "promote", "logview", "report", "db-pull", "modules":
+	case "help", "lint", "i18n-pull", "link", "doctor", "deploy", "sideload", "push", "watch", "checkpoint", "actions", "promote", "logview", "report", "db-pull", "db-push", "modules":
 		return true
 	case "init", "shell", "shell-run", "up", "down", "stop", "restart", "ps", "logs", "sequence", "update", "test", "view", "db-admin":
 		return hasRemoteFlag(args)

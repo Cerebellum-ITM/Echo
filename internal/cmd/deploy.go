@@ -1789,7 +1789,7 @@ func RunDeploy(ctx context.Context, opts DeployOpts) (DeployResult, error) {
 	// DB container still up. A creation failure aborts before the run so nothing
 	// is half-migrated.
 	if ckptEnabled {
-		entry, info, cerr := createCheckpoint(ctx, rsc, ckptMethod, deployedShas, opts.StreamOut, opts.Log)
+		entry, info, cerr := createCheckpoint(ctx, rsc, rsc.prof.DBName, ckptMethod, deployedShas, opts.StreamOut, opts.Log)
 		if cerr != nil {
 			return fail(cerr)
 		}

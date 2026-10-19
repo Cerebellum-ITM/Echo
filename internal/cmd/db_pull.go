@@ -208,17 +208,16 @@ func RunDBPull(ctx context.Context, opts DBOpts) error {
 // remoteFilestoreTarCmd builds the SSH command that tars the remote Odoo
 // container's filestore for remoteDB to stdout. Shared by the download-only
 // (pullFilestoreArchive) and restore (pullFilestore) paths.
-func remoteFilestoreTarCmd(rsc remoteShellContext, opts DBOpts, remoteDB string) string {
-	parent := opts.Cfg.FilestorePath // same in-container path convention both sides
+func remoteFilestoreTarCmd(rsc remoteShellContext, remoteDB string) string {
 	return remoteComposeCmd(rsc.remotePath, rsc.prof.ComposeCmd,
-		"exec", "-T", rsc.prof.OdooContainer, "tar", "-cf", "-", "-C", parent, remoteDB)
+		"exec", "-T", rsc.prof.OdooContainer, "tar", "-cf", "-", "-C", rsc.prof.FilestorePath, remoteDB)
 }
 
 // pullFilestoreArchive streams the remote filestore tar straight to outPath
 // without extracting it — the download-only counterpart of pullFilestore,
 // used when db-pull runs without --restore (no local container to copy into).
 func pullFilestoreArchive(ctx context.Context, opts DBOpts, rsc remoteShellContext, remoteDB, outPath string) error {
-	return runSSHToFile(ctx, rsc.sshHost, remoteFilestoreTarCmd(rsc, opts, remoteDB), outPath, nil)
+	return runSSHToFile(ctx, rsc.sshHost, remoteFilestoreTarCmd(rsc, remoteDB), outPath, nil)
 }
 
 // pullFilestore tars the remote Odoo container's filestore for remoteDB,
@@ -226,7 +225,7 @@ func pullFilestoreArchive(ctx context.Context, opts DBOpts, rsc remoteShellConte
 // local Odoo container under asName — reusing the restore path's
 // container-copy machinery.
 func pullFilestore(ctx context.Context, opts DBOpts, rsc remoteShellContext, remoteDB, asName string) error {
-	tarCmd := remoteFilestoreTarCmd(rsc, opts, remoteDB)
+	tarCmd := remoteFilestoreTarCmd(rsc, remoteDB)
 
 	tmpTar, err := os.CreateTemp("", "echo-fs-*.tar")
 	if err != nil {

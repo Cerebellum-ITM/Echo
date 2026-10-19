@@ -40,6 +40,10 @@ type CmdLogRecord struct {
 	Host        string `json:"host,omitempty"`
 	RemoteDB    string `json:"remote_db,omitempty"`
 	RemoteStage string `json:"remote_stage,omitempty"`
+	// SourceDump and Checkpoint describe a db-push: the dump it loaded and
+	// the checkpoint taken of the database it replaced.
+	SourceDump string `json:"source_dump,omitempty"`
+	Checkpoint string `json:"checkpoint,omitempty"`
 	// The script a `shell-run` or piped `shell` fed to Odoo. ScriptSHA256 is
 	// of the full body; ScriptBody is cut to 64 KiB.
 	ScriptPath          string   `json:"script_path,omitempty"`
@@ -71,6 +75,8 @@ type CmdLogMeta struct {
 	Host        string    `json:"host,omitempty"`
 	RemoteDB    string    `json:"remote_db,omitempty"`
 	RemoteStage string    `json:"remote_stage,omitempty"`
+	SourceDump  string    `json:"source_dump,omitempty"`
+	Checkpoint  string    `json:"checkpoint,omitempty"`
 }
 
 // CmdLogsDir returns the per-project command-log directory,
@@ -359,6 +365,8 @@ func ListCmdLogs(root string) ([]CmdLogMeta, error) {
 			Host:        rec.Host,
 			RemoteDB:    rec.RemoteDB,
 			RemoteStage: rec.RemoteStage,
+			SourceDump:  rec.SourceDump,
+			Checkpoint:  rec.Checkpoint,
 		})
 	}
 	return out, nil
