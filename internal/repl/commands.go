@@ -64,6 +64,7 @@ var commandFlags = map[string][]string{
 	"report":        {"--step", "--level", "--min-level", "--copy"},
 	"logview":       {"--list", "--last", "--clear", "--force", "--from", "--remote", "--json"},
 	"sequence":      {"--remote", "--from", "--last", "--continue-on-error", "-E", "--env"},
+	"help":          {"--json"},
 }
 
 func init() {

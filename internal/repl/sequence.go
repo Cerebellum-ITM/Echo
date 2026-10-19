@@ -603,26 +603,12 @@ func seqHasFlag(args []string, flag string) bool {
 	return false
 }
 
-// helpDescByName maps each top-level command to its one-line help
-// description, derived from helpSections so the sequence picker reuses the
-// existing copy. Flag rows and the first token's arg placeholders are
-// stripped; the first description wins on duplicates.
+// helpDescByName maps each top-level command to its one-line help summary,
+// so the sequence picker reuses the help copy.
 func helpDescByName() map[string]string {
-	out := map[string]string{}
-	for _, sec := range helpSections() {
-		for _, it := range sec.items {
-			if strings.HasPrefix(it.cmd, " ") || strings.HasPrefix(it.cmd, "-") {
-				continue
-			}
-			fields := strings.Fields(it.cmd)
-			if len(fields) == 0 {
-				continue
-			}
-			name := strings.TrimRight(fields[0], ",")
-			if _, ok := out[name]; !ok {
-				out[name] = it.desc
-			}
-		}
+	out := make(map[string]string, len(commandDocs))
+	for _, d := range commandDocs {
+		out[d.name] = d.summary
 	}
 	return out
 }

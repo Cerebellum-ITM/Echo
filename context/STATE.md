@@ -49,7 +49,7 @@ repository.
 
 | File | From → to | Status |
 |---|---|---|
-| — | — | none pending |
+| [REQUEST-odoo-probe-command-help](messages/REQUEST-odoo-probe-command-help.md) | Echo → odoo-probe skill | open; apply after the release with Unit 140 |
 
 ## Open questions for the user
 

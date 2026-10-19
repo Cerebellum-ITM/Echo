@@ -8,6 +8,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Per-command help that agents can use without reading the repo.**
+  `help <command>` and `<command> --help` (or `-h` alone) print one page per
+  command: usage, every flag it accepts, notes on prerequisites, TTY and prod
+  gates and `--json` output, and copyable examples. `help agents` describes
+  headless use (stdout/stderr split, `ECHO_LOG_FORMAT=json`, exit codes, what
+  needs a flag without a TTY). `help <text>` searches command names, flags and
+  descriptions (no match exits 2), and `--json` turns any help form into one
+  JSON document on stdout. `<command> --help` works outside a project. Each
+  command's help now comes from one source that tests keep in sync with the
+  flags the command accepts, so flags missing from the old help (`deploy
+  --set-checkpoint`, `--consume-checkpoint`, `--rename`, …) are listed.
 - **`init --remote`: set up a remote host without installing Echo on it.**
   Echo never runs on the server, but every remote verb needs the server's
   Echo profile, which only `init` on the server could write. `init --remote`
@@ -53,6 +64,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   library module names after `sideload`.
 
 ### Changed
+- **`help` without a terminal prints a short index** (one line per command,
+  then the topics) instead of every flag row; the full rows stay in the
+  paginated viewer and in `help <command>`.
 - **`db-restore` no longer looks hung on a large backup.** The data load and
   the zip extraction report byte progress as INFO lines (one per 10 % of the
   input: `progress=40% read=1.1GB total=2.8GB`), and every long phase emits a

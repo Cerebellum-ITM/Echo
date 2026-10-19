@@ -89,6 +89,20 @@ into your project repo.
 Once `init` is done the prompt updates to reflect the chosen stage and version,
 and every command is wired to the right containers.
 
+### Getting help
+
+The binary documents itself, so neither you nor an agent needs this README to
+drive a command:
+
+```sh
+echo_cli help                  # index (the paginated viewer on a terminal)
+echo_cli help deploy           # one command: usage, every flag, notes, examples
+echo_cli deploy --help         # the same page, from anywhere
+echo_cli help agents           # headless use: stdout/stderr, exit codes, no-TTY rules
+echo_cli help rollback         # search commands, flags and descriptions
+echo_cli help deploy --json    # any of the above as JSON
+```
+
 ## Command reference
 
 ### Project
