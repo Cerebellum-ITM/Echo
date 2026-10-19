@@ -52,7 +52,7 @@ Code: `internal/cmd/db.go`, `db_pull.go`, `db_remote.go`, `onepassword.go`, `int
 - Echo targets dockerized Odoo: the filestore is at `<filestore_path>/<db>` INSIDE the Odoo container (`filestore_path`, project config, default `/var/lib/odoo/filestore`). Handling it on the host (`~/.local/share/Odoo/filestore`) restored the SQL fine but raised `FileNotFoundError` on every attachment (seen on `habitta_prod`). Source: Unit 25, `internal/config/defaults.go`.
 - Restore: `mkdir -p` + `docker cp <src>/. <id>:<dst>` + best-effort chown. Backup: `test -d` + `docker cp` out to a temp dir, zipped (`copyFilestoreToContainer`, `pullContainerFilestore`).
 - `docker cp` leaves files root-owned. The fix is `docker exec -u 0 ... chown -R "$(stat -c '%u:%g' <filestore_path>)" <dst>` (owner copied from the base dir) through raw docker, not compose (`docker.ExecAsRoot`). A chown failure is a warning: Odoo can read but may not write new attachments.
-- **Trap: remote filestore path.** `db-pull` builds the remote `tar` against the LOCAL project's `filestore_path` (`remoteFilestoreTarCmd`, comment "same in-container path convention both sides"). A remote with a non-default path needs the same setting locally.
+- Remote filestore path: `RemoteProfile.FilestorePath`, read from the SERVER profile's `filestore_path` (default `/var/lib/odoo/filestore`); `db-pull` and `db-push` both use it (`remoteFilestoreTarCmd`, `dbPushFilestoreScript`). Source: Unit 141.
 
 ## Neutralize (`db-neutralize`, `db-restore --neutralize`)
 
@@ -72,6 +72,20 @@ Code: `internal/cmd/db.go`, `db_pull.go`, `db_remote.go`, `onepassword.go`, `int
   - Existing local target without `--force` -> `ErrDBExists`.
 - Filestore under `--restore`: remote `tar -cf - -C <filestore_path> <db>` through the remote Odoo container, extracted locally (`extractTarReader`, streaming) and copied into the local container. A missing remote filestore warns and continues.
 - A pulled dump is a normal backup (same dir and format); a later `db-restore` can pick it.
+
+## `db-push`
+
+Loads a local `db-pull` dump (and filestore tar) into a remote target (`internal/cmd/db_push.go`, Unit 141). Steps: preflight → operation lock → upload → stop Odoo → checkpoint → restore → filestore → neutralize → registry check → start Odoo → report → cleanup.
+
+- **Explicit target only**: `--to <target>` or `--remote` (the link binding); no picker, no implicit binding. A destructive command never guesses.
+- **Gate**: `prod` or undeclared stage needs `--force`; with `--force` a TTY still asks once (default No), no TTY means `--force` is the confirmation. Reverb environments are refused (their lifecycle is the Reverb API).
+- **Preflight** reads only: DB service reachable, whether the DB exists, host disk under `remote_path` ≥ dump + 2×tar + `checkpointNeed` (no `--force` override). `--dry-run` stops there and prints the plan; nothing is written on the server, not even the lock.
+- **Upload** streams each file over SSH stdin (`runSSHStreamReader`) to `<remote_path>/backups/db-push-<ts>/<name>.part`, then `mv`; progress through `progressReporter`; the server size must match. The directory is removed in cleanup, on success, failure, Ctrl+C or SIGTERM.
+- **Checkpoint** of the DB being replaced (`createCheckpoint(db=…)`, so `--as` is covered), method from the `[checkpoint]` policy, recorded and pruned like deploy's; skipped with `--no-checkpoint` or when the DB does not exist. A checkpoint failure restarts Odoo and changes nothing. The checkpoint covers the database only.
+- **Filestore, neutralize and registry check run in a one-off container** (`compose run --rm --no-deps -T <odoo service>`) while the Odoo service is stopped, so crons and mail never run on un-neutralized data. The filestore script runs as root with `sh` as entrypoint: the old `<fs>/<db>` is renamed to `<db>.pre-push-<ts>` (kept; deleting it is manual), the tar from stdin is extracted with `--strip-components=1` (its top folder is the source DB name) and `chown -R` to the owner of `<fs>`. **Hypothesis:** the one-off container needs the filestore on a volume of the Odoo service, which any persistent setup has; not yet verified live.
+- **Registry check**: `odoo -d <db> --stop-after-init --no-http` scanned with `deployFailureRe`. A failure from the restore on leaves Odoo stopped and prints `deploy --rollback --from <target> --force` when a checkpoint exists.
+- **Report**: installed count, `base` and up to five non-Odoo-S.A. modules with `latest_version`; `--json` lists every module.
+- **Command log**: `remote_db` is the DB actually replaced; `source_dump` and `checkpoint` are extra record fields.
 
 ## `db-admin`
 

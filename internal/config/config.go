@@ -764,6 +764,10 @@ type RemoteProfile struct {
 	Stage         string
 	OdooVersion   string
 
+	// FilestorePath is the filestore base dir inside the server's Odoo
+	// container (`filestore_path` of the server profile, else the default).
+	FilestorePath string
+
 	// Addons discovery (conf-mode), used by i18n-pull to list the remote
 	// project's own modules rather than every installed module.
 	AddonsMode  string
@@ -859,8 +863,13 @@ func ParseRemoteProfile(globalTOML, projectTOML []byte) (RemoteProfile, error) {
 			push.Mkdir = p.Push.Mkdir
 		}
 	}
+	filestore := p.FilestorePath
+	if filestore == "" {
+		filestore = Defaults.FilestorePath
+	}
 	return RemoteProfile{
 		ComposeCmd:        compose,
+		FilestorePath:     filestore,
 		OdooContainer:     p.OdooContainer,
 		DBContainer:       p.DBContainer,
 		DBName:            p.DBName,

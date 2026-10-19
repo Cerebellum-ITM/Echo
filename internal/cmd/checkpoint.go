@@ -262,7 +262,7 @@ func runCheckpointCreate(ctx context.Context, opts CheckpointOpts, rsc remoteShe
 			return CheckpointResult{}, fmt.Errorf("stop failed: %w", err)
 		}
 	}
-	entry, info, err := createCheckpoint(ctx, rsc, method, nil, opts.StreamOut, opts.Log)
+	entry, info, err := createCheckpoint(ctx, rsc, rsc.prof.DBName, method, nil, opts.StreamOut, opts.Log)
 	if stopStack {
 		// Bring the stack back up regardless of the checkpoint outcome.
 		_ = runSSHStream(ctx, rsc.sshHost, remoteComposeCmd(rsc.remotePath, rsc.target.composeCmd, "up", "-d"), nil, opts.StreamOut)

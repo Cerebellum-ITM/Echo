@@ -286,12 +286,11 @@ func ckptDBName(db, ts string) string {
 	return db + suffix + ts
 }
 
-// createCheckpoint takes a checkpoint of the remote target's database by the
-// given method ("db" template copy or "dump" pg_dump), returning the stored
-// entry and its metric summary. The caller runs it with the containers
+// createCheckpoint takes a checkpoint of database db on the remote target by
+// the given method ("db" template copy or "dump" pg_dump), returning the
+// stored entry and its metric summary. The caller runs it with the containers
 // already stopped for the "db" method (a template copy needs no connections).
-func createCheckpoint(ctx context.Context, rsc remoteShellContext, method string, shas []string, stream func(string), log logFn) (config.CheckpointEntry, CheckpointInfo, error) {
-	db := rsc.prof.DBName
+func createCheckpoint(ctx context.Context, rsc remoteShellContext, db, method string, shas []string, stream func(string), log logFn) (config.CheckpointEntry, CheckpointInfo, error) {
 	now := time.Now()
 	ts := now.Format("20060102_150405")
 

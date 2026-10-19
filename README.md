@@ -293,6 +293,14 @@ asks for a red confirmation unless `--force`; `--last` stays local-only. Like
 | `  --neutralize` / `--no-neutralize` | Force / skip neutralize (default: only when the source is `prod`) |
 | `  --filestore`                  | Also pull the DB's filestore attachments                         |
 | `  --force`                      | Replace an existing local DB of the target name                  |
+| `db-push <dump> --to <t>\|--remote` | Replace a **remote** target's database with a local dump: upload, checkpoint, restore, start Odoo |
+| `  --filestore[=<tar>]`          | Also replace the filestore (bare: the dump's sibling `.filestore.tar`); the old one is kept as `<db>.pre-push-<ts>` |
+| `  --as <db>`                    | Target database (default: the server profile's `db_name`)       |
+| `  --neutralize`                 | Neutralize before Odoo starts (mail, crons, payments off)        |
+| `  --no-checkpoint`              | Skip the checkpoint of the database being replaced               |
+| `  --dry-run`                    | Print the plan; change nothing on the server                     |
+| `  --force`                      | Allow a prod target (asks once on a TTY); take over a lock older than 6 h |
+| `  --json`                       | Summary as JSON on stdout (also on failure, with the steps reached) |
 | `db-drop [name] [--force]`       | Drop a database; red confirm unless `--force` (terminates active connections) |
 | `db-neutralize [name] [--force]` | Run Odoo's native `neutralize`; red confirm only on the active DB or `prod` |
 | `db-list`                        | Table of DBs with size and creation date; `●` marks the active one |

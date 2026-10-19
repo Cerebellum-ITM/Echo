@@ -22,6 +22,8 @@ Without push there is no code to restore; a checkpoint alone can still restore t
 
 ## Checkpoints
 
+`createCheckpoint` takes the database name explicitly: deploy and `checkpoint create` pass the profile's `db_name`, `db-push` passes the DB it replaces (Unit 141).
+
 A checkpoint is a restore point of the target's database taken inside a deploy (or manually), with the app stopped.
 
 - **Policy**: `mode` auto|on|off, `method` db|dump, `keep` N. Resolved server-first, field by field, then local, then defaults `auto/db/2` ([precedence](deploy.md#config-precedence)). `auto` = on for stage staging/prod, off for dev, using the stage read from the server profile. Per run: `--checkpoint[=db|dump]` / `--no-checkpoint` (exclusive).
@@ -86,6 +88,14 @@ A server-side copy of exactly what a deploy is about to overwrite (`deploy_codes
 - **Readers**: `deploy --lock [--json]` (read-only, no selection; mutually exclusive with deploy options), the `deploy lock modules=N unverified=N last=… overlay=…` line of `link --show` (`lockSummaryFields`, `deploy_lock.go:482`, also printed by `doctor`'s `lock` check, which warns on `unreadable`, `corrupt`, unverified entries and a repository tracking `.echo/`), the plan line per module (`ship=… locked=…`), `compare --targets <a>,<b>`, which sets two targets' locks side by side by module tree ([modules-and-odoo](modules-and-odoo.md#view-and-compare), Unit 130), `DeployModule.source/sha/version` in `deploy --json` (so `logview --json` shows what shipped), and a [saved plan](deploy.md#saved-plans), which records the sha256 of the raw lock bytes (or `absent`) so that any lock write between `deploy --dry-run --save-plan` and `deploy --apply`, even a `push` of an unrelated module, refuses the apply (Unit 129).
 - **It records what Echo shipped, not what is on disk**: there are no content hashes and no drift detection; a hand edit on the server is invisible to it. A drift check before the build was considered and declined (2026-09-30), as was an exclusive push destination per target.
 - **Exact sync**: content shipped from a commit tree or ref syncs with `--delete` scoped per module directory (per-module rsync, trailing slashes; excludes stay protected without `--delete-excluded`). Working-tree pushes stay no-delete; `push` without `--delete` never deletes.
+
+## Operation lock
+
+`<remote_path>/.echo/op.lock.d/op.lock` (`internal/cmd/op_lock.go`, Unit 141): mutual exclusion for operations that replace the target's state. Unlike the deploy lock above it blocks.
+
+- Taken with `mkdir .echo/op.lock.d` (atomic on the server) plus a JSON holder file `{command, pid, client_host, user, started}`; released with `rm -rf` of the directory. A held lock fails with `target busy: <command> from <host> since <started>` (exit 1).
+- `--force` takes over a lock older than 6 hours, or one whose holder file cannot be read, with a WARNING naming the old holder; a younger lock is never taken over.
+- **Only `db-push` takes and checks it today.** deploy, watch, sideload and checkpoint ignore it until Unit 142.
 
 ## Dependency check
 

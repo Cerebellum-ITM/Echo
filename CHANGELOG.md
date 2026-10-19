@@ -8,6 +8,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **`db-push`: load a local dump into a remote target.** Echo could pull
+  a remote database and restore it locally, but nothing loaded a dump into
+  a remote instance, so resetting a dev instance from a staging snapshot
+  meant manual SSH. `db-push <dump> --to <target>` (or `--remote`) uploads
+  a `db-pull` dump, and with `--filestore` its filestore archive, takes a
+  checkpoint of the database it replaces, restores, optionally neutralizes
+  (`--neutralize`) before Odoo starts, checks that the registry loads,
+  starts Odoo and reports module versions. The previous filestore is kept
+  as `<db>.pre-push-<ts>`. A prod or undeclared stage needs `--force`;
+  `--dry-run` prints the plan and changes nothing; `--json` reports the
+  steps reached even on failure. An operation lock on the server stops two
+  db-push runs from overlapping.
 - **Per-command help that agents can use without reading the repo.**
   `help <command>` and `<command> --help` (or `-h` alone) print one page per
   command: usage, every flag it accepts, notes on prerequisites, TTY and prod
@@ -75,6 +87,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   beating until it ends; the filestore copy gets the heartbeat too. Works for
   Echo zips (`pg_restore`) and native Odoo zips (`psql`, previously silent for
   the whole load), and for `db-pull --restore`.
+
+### Fixed
+- **`db-pull --filestore` reads the server's `filestore_path`.** It used
+  the local project's setting for the remote container, so a server with a
+  non-default path pulled nothing.
 
 ## [0.27.0] - 2026-10-07
 

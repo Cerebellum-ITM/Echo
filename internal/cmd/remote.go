@@ -106,9 +106,19 @@ func (p *progressWriter) Write(b []byte) (int, error) {
 // log to stderr. A non-zero exit returns an error carrying the last
 // non-blank stderr line for context; nil onLine discards the output.
 func runSSHStream(ctx context.Context, host, remoteCmd string, stdin []byte, onLine func(string)) error {
+	var in io.Reader
+	if stdin != nil {
+		in = bytes.NewReader(stdin)
+	}
+	return runSSHStreamReader(ctx, host, remoteCmd, in, onLine)
+}
+
+// runSSHStreamReader is runSSHStream with a streamed stdin, for payloads too
+// large to hold in memory (db-push uploads).
+func runSSHStreamReader(ctx context.Context, host, remoteCmd string, stdin io.Reader, onLine func(string)) error {
 	cmd := sshStreamCommand(ctx, host, remoteCmd)
 	if stdin != nil {
-		cmd.Stdin = bytes.NewReader(stdin)
+		cmd.Stdin = stdin
 	}
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {

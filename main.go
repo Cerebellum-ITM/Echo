@@ -252,7 +252,7 @@ func repoRoot(cwd string) string {
 
 func projectlessOneShot(name string, args []string) bool {
 	switch name {
-	case "help", "lint", "i18n-pull", "link", "doctor", "deploy", "sideload", "push", "watch", "checkpoint", "actions", "promote", "logview", "report", "db-pull", "modules":
+	case "help", "lint", "i18n-pull", "link", "doctor", "deploy", "sideload", "push", "watch", "checkpoint", "actions", "promote", "logview", "report", "db-pull", "db-push", "modules":
 		return true
 	case "init", "shell", "shell-run", "up", "down", "stop", "restart", "ps", "logs", "sequence", "update", "test", "view", "db-admin":
 		return hasRemoteFlag(args)
