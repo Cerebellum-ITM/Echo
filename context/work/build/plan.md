@@ -1,5 +1,5 @@
 # Build plan
-> The open units of Echo, in order. Everything not listed here is implemented; shipped units live in git, the CHANGELOG and [archive](../../archive/2026-09-30-original/specs/). Last verified: 2026-10-15.
+> The open units of Echo, in order. Everything not listed here is implemented; shipped units live in git, the CHANGELOG and [archive](../../archive/2026-09-30-original/specs/). Last verified: 2026-10-19.
 
 Order: unblocked first; a unit gets a spec (`/ctx spec build <NN-name>`) before any code.
 
@@ -7,8 +7,6 @@ Order: unblocked first; a unit gets a spec (`/ctx spec build <NN-name>`) before 
 |---|---|---|---|---|
 | 132 | db-restore-progress | Byte progress + 30 s heartbeat for `db-restore` load, unzip and filestore copy, so a working restore never looks hung. [Spec](132-db-restore-progress.md). | — | implemented; live verification pending |
 | 139 | init-remote | `init --remote` / `init --from <t>`: write the server-side Echo profile from the client over SSH (detect compose, services, DB, Odoo version; edit an existing profile in place; register and link the target), so a host without `echo_cli` installed works with every remote verb. Numbered after the sideload branch's 133-138. [Spec](139-init-remote.md). | — | implemented; live verification pending |
-| 140 | command-help | `help <cmd>`, `<cmd> --help`, `help agents`, `help <text>` search and `help … --json` from one `commandDoc` per command (every flag, notes, examples), so agents never read the repo to learn a command. [Spec](140-command-help.md). | — | implemented; fresh-agent check pending |
-| 141 | db-push | `db-push <dump> --to <target>`: load a local `db-pull` dump (and filestore tar) into a remote target under a checkpoint and an operation lock, neutralize, verify the registry and restart Odoo. [Spec](141-db-push.md). | — | implemented; live run on habitta_dev pending |
 | 142 | op-lock-respect | deploy, watch, sideload and checkpoint check and take the operation lock db-push introduces, so they never run while a db-push replaces the DB. | 141 | pending, needs spec |
 | 134 | sideload-safety | DB checkpoint (deploy's policy) and code snapshot of `.echo/sideload/<addon>` (`createCodeSnapshot`) around the sideload run, restored through deploy's `rollbackDecision`. | 133 | pending, needs spec |
 | 135 | sideload-rm | `sideload --rm <addon>`: uninstall, unmount, delete, drop the lock entry; `--keep-installed` graduates an addon that now lives in the repo under the same name. | 133 | pending, needs spec |
@@ -37,6 +35,7 @@ Defects read in the code (not run); each is described where its topic lives. One
 | `ResolveProjectAlias` swallows the `LoadGlobal` error: with `-C <alias>` and a `global.toml` that does not parse, Echo says "unknown project alias" instead of the Unit 127 `ERROR echo.config` line | `internal/config/project_alias.go:75` | [architecture-and-traps](../../knowledge/architecture-and-traps.md) |
 | `deploy --json` omits `code_sha` and `dependencies`: `deployJSON` leaves out `DeployResult.CodeSHA` and `.Dependencies`, which the README deploy section promises | `internal/repl/deploy.go:99` | [deploy](../../knowledge/deploy.md) |
 | `modules --addons-path` never runs: the REPL handler sends only `--config` to `cmd.RunModules`, everything else lists modules | `internal/repl/modules_list.go:22` | found writing Unit 140 help |
+| db-push logs under two loggers: progress as `echo.db_push.*` (`cmdOdooLogger("db_push")`), the closing line as `echo.db-push`; use `db-push` everywhere like `echo.db-pull` | `internal/repl/db_push.go` | found closing Unit 141 |
 | Flags the parsers accept but `commandFlags` lacks (so help cannot list them): `--force` on `bash`, `psql`, remote `update` and `test`; `--no-checkpoint` on Reverb `update`; `--from` on `down`; `-f`, `--follow`, `--tail` on `logs` | `internal/repl/commands.go` | found writing Unit 140 help |
 | Local `stop`/`restart --force` passes `--force` to compose (only the remote path strips it) | `internal/cmd/docker.go:93` | found writing Unit 140 help; not run |
 | `--remote` on `push`, `watch` and `db-pull` is parsed but unused (same as no target flag) | `internal/cmd/shell_remote.go:57` | found writing Unit 140 help |

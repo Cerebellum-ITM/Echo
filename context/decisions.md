@@ -66,6 +66,12 @@
 
 ## UI
 
+### 2026-10-19 · Command help comes from one doc per command, tied to the flags it accepts; `<cmd> --help` never runs the command
+- **Why:** Agents read the repo or the README to learn a flag, because `help <cmd>` ignored its argument and `<cmd> --help` failed or, on `db-pull`, ran the pull. One `commandDoc` per command feeds the pager, the flat index, the page and `--json`, and a test fails when a flag in `commandFlags` is undocumented or a documented flag is not accepted. `--help` is caught before project detection and before dispatch, so it works anywhere; for commands that forward their arguments (`bash`, `psql`, `shell`, `shell-run`, `connect`, `logs`) only a first-argument `--help` counts, and `-h` only alone. Without a terminal, bare `help` prints a short index instead of every flag row.
+- **Rejected:** Filtering the old hand-written rows per command (no notes or examples, and the flag gaps stay); notes and examples required on every command (only remote, `--json`, `promote` and `sequence`).
+- **Source:** Unit 140 (user choices 2026-10-19); `internal/repl/helpdocs.go`, `internal/repl/help.go`, `internal/repl/help_test.go`.
+- **Status:** active
+
 ### 2026-06-19 · The header banner uses two figlet styles of the wordmark, picked at random and coloured by stage
 - **Why:** Each environment looks distinct and consistent with the prompt and pickers; shades are derived in code with `theme.Lighten`. The two-column header stays.
 - **Rejected:** A full-width banner above the header; hardcoded hex colours. The planet/python/anchor logos were never built (see [Unit 14 (`theme`, `logo`, `version`, `stage` meta-commands) is closed without implementation](#2026-09-30--unit-14-theme-logo-version-stage-meta-commands-is-closed-without-implementation)).
