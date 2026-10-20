@@ -149,11 +149,13 @@ var commandDocs = []commandDoc{
 	{
 		name:    "update",
 		section: "Modules",
-		usage:   "update <mod...> [--all | --last] [--i18n] [--installed] [--level <lvl>] [--from <target> | --remote]",
+		usage:   "update <mod...> [--all | --last] [--i18n] [--installed] [--level <lvl>] [--from <target> | --remote] [--force] [--no-checkpoint]",
 		summary: "Update modules",
 		flags: []helpItem{
 			{"--from", "<target>", "Update on a remote instance (named connect target)"},
 			{"--remote", "", "Update on this directory's linked remote (see link)"},
+			{"--force", "", "Skip the confirm on a remote prod-stage target"},
+			{"--no-checkpoint", "", "On a Reverb environment, skip the pre-update checkpoint"},
 			{"--all", "", "Update every installed module"},
 			{"--last", "", "Repeat the last update for this database"},
 			{"--i18n", "", "Overwrite the modules' translations from their .po (all langs)"},
@@ -163,7 +165,8 @@ var commandDocs = []commandDoc{
 		notes: []string{
 			"With no module names, --all or --last it opens a picker, which exits 2 without a TTY",
 			"Remote runs odoo -u in the target's running container over SSH and needs no local compose project",
-			"A remote prod-stage target asks for a confirm, which exits 2 without a TTY; the parser accepts --force to skip it",
+			"A remote prod-stage target asks for a confirm, which exits 2 without a TTY; --force skips it",
+			"On a Reverb environment the update takes a pre_update checkpoint first unless --no-checkpoint",
 			"--last is local-only and is a usage error with --from or --remote",
 		},
 		examples: []helpExample{
@@ -188,18 +191,19 @@ var commandDocs = []commandDoc{
 	{
 		name:    "test",
 		section: "Modules",
-		usage:   "test <mod...> [--update] [--tags <spec>] [--from <target> | --remote]",
+		usage:   "test <mod...> [--update] [--tags <spec>] [--from <target> | --remote] [--force]",
 		summary: "Run tests for installed modules (filters to /<mod>)",
 		flags: []helpItem{
 			{"--from", "<target>", "Run the suite on a remote target (named connect target)"},
 			{"--remote", "", "Run the suite on this directory's linked remote"},
+			{"--force", "", "Skip the confirm on a remote prod-stage target"},
 			{"--update", "", "Reload modules first (adds -u; needed for XML/schema changes)"},
 			{"--tags", "<spec>", "Override --test-tags (e.g. :TestX.test_y)"},
 		},
 		notes: []string{
 			"Without --update the modules are not reloaded, so view and schema changes are not picked up",
 			"With no module names it opens a picker over the local modules, which exits 2 without a TTY",
-			"A remote prod-stage target asks for a confirm, which exits 2 without a TTY; the parser accepts --force to skip it",
+			"A remote prod-stage target asks for a confirm, which exits 2 without a TTY; --force skips it",
 			"Unknown flags are ignored, not rejected",
 		},
 		examples: []helpExample{
@@ -586,8 +590,11 @@ var commandDocs = []commandDoc{
 	{
 		name:    "bash",
 		section: "Shell",
-		usage:   "bash",
+		usage:   "bash [--force]",
 		summary: "Bash session inside the Odoo container",
+		flags: []helpItem{
+			{"--force", "", "Skip the prod-stage confirmation prompt"},
+		},
 		notes: []string{
 			"Local stack only; extra arguments are ignored",
 			"On a prod-stage project it confirms first (exits 2 without a TTY); --force skips it",
@@ -596,8 +603,11 @@ var commandDocs = []commandDoc{
 	{
 		name:    "psql",
 		section: "Shell",
-		usage:   "psql",
+		usage:   "psql [--force]",
 		summary: "PostgreSQL client against the configured DB",
+		flags: []helpItem{
+			{"--force", "", "Skip the prod-stage confirmation prompt"},
+		},
 		notes: []string{
 			"Opens on the active DB as POSTGRES_USER from .env; switch DBs with db-use; extra arguments are ignored",
 			"Local stack only; on a prod-stage project it confirms first (exits 2 without a TTY); --force skips it",
@@ -768,12 +778,15 @@ var commandDocs = []commandDoc{
 	{
 		name:    "logs",
 		section: "Docker",
-		usage:   "logs [service...] [-t <N>] [--no-follow | -c] [--all] [--from <target> | --remote]",
+		usage:   "logs [service...] [-t <N>] [-f | --no-follow | -c] [--all] [--from <target> | --remote]",
 		summary: "Follow logs of Odoo (or [service]) — Ctrl+C to exit",
 		flags: []helpItem{
 			{"--from", "<target>", "Follow logs on a remote instance (named connect target)"},
 			{"--remote", "", "Follow logs on this directory's linked remote"},
 			{"-t", "<N>", "Tail last N lines (default 100)"},
+			{"--tail", "<N>", "Same as -t"},
+			{"-f", "", "Follow the log (the default; undoes an earlier --no-follow)"},
+			{"--follow", "", "Same as -f"},
 			{"--no-follow", "", "Disable follow; print bounded output"},
 			{"-c", "", "Bounded output and copy to clipboard"},
 			{"--copy", "", "Bounded output and copy to clipboard (same as -c)"},

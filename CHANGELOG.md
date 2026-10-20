@@ -114,6 +114,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   copies (`copy-last`, `--copy`) are unchanged.
 
 ### Fixed
+- **Flags the commands accepted but Echo did not know.** `--force` on `bash`,
+  `psql`, remote `update` and `test`, `--no-checkpoint` on a Reverb `update`,
+  and `-f`, `--follow` and `--tail` on `logs` worked but were missing from
+  the flag list, so `help` did not show them, Tab did not complete them and
+  the prompt dimmed them as unknown. They are listed and documented now.
 - **`db-pull --filestore` reads the server's `filestore_path`.** It used
   the local project's setting for the remote container, so a server with a
   non-default path pulled nothing.
