@@ -46,7 +46,8 @@ func parseTestArgs(args []string) (modules []string, tags string, update bool, f
 			tags = strings.TrimPrefix(a, "--tags=")
 		case a == "--update":
 			update = true
-		case a == "--force":
+		case a == "--force", a == "--json":
+			// read by the remote prod confirm and the REPL
 		case strings.HasPrefix(a, "-"):
 			return nil, "", false, "", false, fmt.Errorf("%w: unknown flag: %s", ErrUsage, a)
 		default:

@@ -154,6 +154,8 @@ func RunInstall(ctx context.Context, opts ModulesOpts) ([]string, error) {
 		switch {
 		case a == "--with-demo":
 			withDemo = true
+		case a == "--json":
+			// output mode, read by the REPL
 		case strings.HasPrefix(a, "-"):
 			return nil, fmt.Errorf("%w: unknown flag: %s", ErrUsage, a)
 		default:
@@ -202,6 +204,8 @@ func RunUpdate(ctx context.Context, opts ModulesOpts) ([]string, error) {
 			i18n = true
 		case a == "--installed":
 			installed = true
+		case a == "--json":
+			// output mode, read by the REPL
 		case a == "--force", a == "--no-checkpoint":
 			// only meaningful on a remote target; inert here
 		case a == "--from", a == "-E", a == "--env":
@@ -329,13 +333,19 @@ func RunUninstall(ctx context.Context, opts ModulesOpts) ([]string, error) {
 	if err := requireOdooConfig(opts.Cfg); err != nil {
 		return nil, err
 	}
-	level, modules, err := extractLevel(opts.Args)
+	level, rest, err := extractLevel(opts.Args)
 	if err != nil {
 		return nil, err
 	}
-	for _, a := range modules {
-		if strings.HasPrefix(a, "-") {
+	var modules []string
+	for _, a := range rest {
+		switch {
+		case a == "--json":
+			// output mode, read by the REPL
+		case strings.HasPrefix(a, "-"):
 			return nil, fmt.Errorf("%w: unknown flag: %s", ErrUsage, a)
+		default:
+			modules = append(modules, a)
 		}
 	}
 	if len(modules) == 0 {

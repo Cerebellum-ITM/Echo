@@ -22,6 +22,7 @@ func TestParseRemoteUpdateFlags(t *testing.T) {
 		{"--from value not a module", []string{"--from", "prod", "sale"}, false, false, false, false, []string{"sale"}, false},
 		{"--from= and --remote consumed", []string{"--from=prod", "--remote", "sale"}, false, false, false, false, []string{"sale"}, false},
 		{"--force consumed", []string{"sale", "--force"}, false, false, false, false, []string{"sale"}, false},
+		{"--json consumed", []string{"sale", "--json"}, false, false, false, false, []string{"sale"}, false},
 		{"--last rejected", []string{"--last"}, false, false, false, false, nil, true},
 		{"unknown flag rejected", []string{"--nope"}, false, false, false, false, nil, true},
 		{"--no-checkpoint consumed", []string{"sale", "--no-checkpoint"}, false, false, false, true, []string{"sale"}, false},

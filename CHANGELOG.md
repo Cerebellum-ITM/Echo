@@ -33,6 +33,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   gates use, so an undeclared stage reads `prod` with
   `stage_declared=false`. An unlinked directory exits 2 and an unreadable
   server profile exits 1, both with nothing on stdout.
+- **`install`, `update`, `uninstall` and `test` report their outcome as
+  data.** An agent learned which test failed, or why an update broke, only by
+  reading the whole log. With `--json` the log goes to stderr and stdout gets
+  one object: command, target, database, modules, exit code, duration, the
+  errors (logger, message, exception and the traceback frames with file and
+  line), warnings (first 50, the rest counted), the migrations and, for
+  `test` or when Odoo printed a test report, the tally with each failing
+  test (kind, test, module, file, line, message). A usage error prints
+  nothing on stdout. Without `--json`, `test` closes with `run= failed=
+  errored=` and prints one `echo.test.failure` line per failing test.
 - **`db-push`: load a local dump into a remote target.** Echo could pull
   a remote database and restore it locally, but nothing loaded a dump into
   a remote instance, so resetting a dev instance from a staging snapshot

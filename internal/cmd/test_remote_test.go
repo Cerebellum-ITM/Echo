@@ -90,6 +90,11 @@ func TestParseTestArgs(t *testing.T) {
 			from:    "prod",
 		},
 		{
+			name:    "json is an output mode, not a module",
+			args:    []string{"sale", "--json"},
+			modules: []string{"sale"},
+		},
+		{
 			name:    "exclusion tag spec is a value, not a flag",
 			args:    []string{"sale", "--tags", "-/sale:TestSlow"},
 			modules: []string{"sale"},

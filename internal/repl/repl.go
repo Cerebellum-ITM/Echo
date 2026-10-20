@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -417,10 +419,23 @@ func confLine(icon, label, value string) string {
 // reprints the welcome banner. Any command can call this to reset the
 // visible context.
 func (sess *session) runModules(ctx context.Context, name string, args []string) {
+	started := time.Now()
+	wantJSON := name != "modules" && slices.Contains(args, "--json")
 	lc := &logColorer{}
 	stats := &runStats{}
 	migs := &migrationTracker{}
-	testsRun := 0
+	outcome := &odoo.Outcome{}
+	// --json keeps stdout for the one result object: the run's lines go to
+	// stderr, still captured for the run record.
+	logOut := io.Writer(os.Stdout)
+	render := func(line string) { sess.emitStreamLine(lc, line) }
+	if wantJSON {
+		logOut = os.Stderr
+		render = func(line string) {
+			sess.capture(Line{Kind: lc.classify(line), Text: line})
+			os.Stderr.WriteString(line + "\n")
+		}
+	}
 	opts := cmd.ModulesOpts{
 		Cfg:         sess.cfg,
 		Root:        sess.projectDir,
@@ -429,15 +444,13 @@ func (sess *session) runModules(ctx context.Context, name string, args []string)
 		Interactive: sess.interactive,
 		StreamOut: stats.wrap(func(line string) {
 			migs.observe(line)
-			if t, ok := odoo.ParseTestTally(stripANSISeq(line)); ok {
-				testsRun += t.Run
-			}
-			sess.emitStreamLine(lc, line)
+			outcome.Feed(stripANSISeq(line))
+			render(line)
 		}),
 		// The start line is emitted here, once the module set is resolved
 		// (after picker / --last), so it names the actual modules and the
 		// flags the user passed (e.g. --i18n, --level).
-		OnResolve: func(resolved []string) { sess.startResolved(name, args, resolved) },
+		OnResolve: func(resolved []string) { sess.startResolved(logOut, name, args, resolved) },
 	}
 
 	var err error
@@ -457,11 +470,20 @@ func (sess *session) runModules(ctx context.Context, name string, args []string)
 	}
 	// A clean exit without a report, or with `of 0 tests`, is a typo'd tag
 	// or module: Odoo calls that a success.
-	if name == "test" && err == nil && testsRun == 0 {
-		emitOdooLog("ERROR", "echo.test", "no tests ran",
+	if name == "test" && err == nil && outcome.Tests.Run == 0 {
+		emitOdooLogTo(logOut, "ERROR", "echo.test", "no tests ran",
 			[]logField{{"modules", moduleField(resolved)}, {"tags", cmd.TestTags(args, resolved)}},
 			sess.styles, sess.palette, sess.cfg.DBName)
 		stats.errors++
+	}
+	if wantJSON {
+		sess.finishModulesJSON(name, resolved, err, stats, outcome, migs.migrations(), time.Since(started))
+		return
+	}
+
+	var closing []logField
+	if name == "test" {
+		closing = testTallyFields(outcome.Tests)
 	}
 	switch {
 	case errors.Is(err, cmd.ErrCancelled), errors.Is(err, huh.ErrUserAborted),
@@ -471,10 +493,11 @@ func (sess *session) runModules(ctx context.Context, name string, args []string)
 		sess.finalize(name, stats.errors, stats.warnings, err)
 		sess.exitCode = exitUsage
 	case err != nil, stats.errors > 0:
-		sess.copyFailureLog(name, resolved, err, stats.errors, stats.warnings)
+		sess.copyFailureLog(name, resolved, err, stats.errors, stats.warnings, closing...)
 	default:
-		sess.successLog(name, resolved, stats.warnings)
+		sess.successLog(name, resolved, stats.warnings, closing...)
 	}
+	sess.emitTestFailures(outcome.Failures)
 	// Migration summary closes the run, after the success/failure recap.
 	sess.emitMigrations(name, resolved, migs.migrations())
 }

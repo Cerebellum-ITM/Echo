@@ -225,6 +225,7 @@ echo restart --from staging    # ad-hoc: a different named target
 | `test <mod>...`          | Run the modules' Odoo test suite (filters `--test-tags`) |
 | `  --update`             | Reload modules first (`-u`; for view/schema changes) |
 | `  --tags <spec>`        | Override the auto test-tags filter                   |
+| `  --json`               | One outcome object on stdout, logs on stderr — on install/update/uninstall/test |
 | `modules`                | List modules from the configured addons paths        |
 | `  --config`             | Interactive form to pick which folders are addons paths |
 | `  --addons-path <a,b>`  | Set the addons paths without the form (empty string clears) |
@@ -268,6 +269,37 @@ module names it opens a picker over the remote's own addons (or, with
 `--installed`, every module installed in the remote DB). A `prod`-stage target
 asks for a red confirmation unless `--force`; `--last` stays local-only. Like
 `deploy`, it works from a pure addons repo with no local `docker-compose.yml`.
+
+#### Run outcome as data (`--json`)
+
+`install`, `update`, `uninstall` and `test` take `--json`: the run's log goes
+to stderr and stdout gets one object when it ends, so an agent learns what
+broke without reading the log:
+
+```json
+{"command": "test", "target": "staging", "db": "odoo", "modules": ["sale_custom"],
+ "exit": 1, "duration_ms": 48211,
+ "errors": [{"logger": "odoo.modules.registry", "message": "Failed to load registry",
+             "exception": "ValueError: bad total",
+             "frames": [{"file": "/mnt/extra-addons/sale_custom/models/sale_order.py",
+                         "line": 30, "func": "_compute_total"}]}],
+ "warnings": [{"logger": "odoo.fields", "message": "…"}], "warnings_truncated": 0,
+ "tests": {"run": 12, "failed": 1, "errors": 0,
+           "failures": [{"kind": "FAIL", "test": "TestOrder.test_confirm", "module": "sale_custom",
+                         "file": "/mnt/extra-addons/sale_custom/tests/test_order.py", "line": 88,
+                         "message": "AssertionError: 'draft' != 'sale'"}]},
+ "migrations": [{"module": "sale_custom", "version": "18.0.1.2.0", "phases": ["pre", "post"]}]}
+```
+
+`target` is `null` on a local run; `modules` is `["all"]` for `update --all`.
+`tests` appears for `test`, and for `install`/`update` when Odoo printed a test
+report; failing tests are not repeated under `errors`. Warnings stop at 50,
+the rest counted in `warnings_truncated`. The exit code is the usual one; a
+usage error (unknown flag, unknown module) prints nothing on stdout and exits
+2, and `--json` never copies to the clipboard. Without `--json`, `test` closes
+with `run= failed= errored=` and adds one `echo.test.failure` line per failing
+test (`test= module= file= line=`); a `test` that ran nothing logs
+`no tests ran` and exits 1.
 
 `modinfo` compares the version Odoo recorded as installed against the manifest —
 `up to date` stays INFO, a pending upgrade is flagged WARN:

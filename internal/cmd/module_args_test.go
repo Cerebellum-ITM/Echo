@@ -37,10 +37,10 @@ func TestModuleCommandsRejectUsageErrors(t *testing.T) {
 		run  run
 		args []string
 	}{
-		{"install unknown flag", RunInstall, []string{"sale", "--json"}},
+		{"install unknown flag", RunInstall, []string{"sale", "--jsn"}},
 		{"install bad level", RunInstall, []string{"sale", "--level", "loud"}},
 		{"install bare level", RunInstall, []string{"sale", "--level"}},
-		{"update unknown flag", RunUpdate, []string{"sale", "--json"}},
+		{"update unknown flag", RunUpdate, []string{"sale", "--jsn"}},
 		{"update valueless --from", RunUpdate, []string{"sale", "--from"}},
 		{"update last with modules", RunUpdate, []string{"--last", "sale"}},
 		{"update last without record", RunUpdate, []string{"--last"}},

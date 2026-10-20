@@ -3,6 +3,7 @@ package repl
 import (
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"strconv"
 	"strings"
@@ -102,7 +103,7 @@ func (sess *session) printCopyError(err error) {
 // INFO lines emitted as Odoo unwinds. The final REPL line is a single
 // Odoo-style log line (emitOdooLog) so success and failure share the
 // exact same visual frame and slot in next to Odoo's own log stream.
-func (sess *session) copyFailureLog(name string, resolved []string, runErr error, errCount, warnCount int) {
+func (sess *session) copyFailureLog(name string, resolved []string, runErr error, errCount, warnCount int, extra ...logField) {
 	sess.exitCode = scriptExitCode(runErr, errCount)
 	sess.lastErrors, sess.lastWarnings = errCount, warnCount
 	sess.print(Line{Kind: "out", Text: ""})
@@ -120,7 +121,7 @@ func (sess *session) copyFailureLog(name string, resolved []string, runErr error
 
 	copyField, copyErr := autoCopy(buf.String())
 
-	var fields []logField
+	fields := append([]logField(nil), extra...)
 	if runErr != nil {
 		fields = append(fields, logField{"err", runErr.Error()})
 	}
@@ -311,13 +312,13 @@ func (sess *session) startLog(name string, args []string) {
 // modules= field always spells out the full set, and a flags= field names
 // the flags the user passed (e.g. --i18n, --level) so the run records how
 // it was invoked.
-func (sess *session) startResolved(name string, args, resolved []string) {
+func (sess *session) startResolved(w io.Writer, name string, args, resolved []string) {
 	logger := echoCommandLogger(name, resolved) + ".start"
 	fields := []logField{{"modules", moduleField(resolved)}}
 	if flags := flagArgs(args); flags != "" {
 		fields = append(fields, logField{"flags", flags})
 	}
-	emitOdooLog("INFO", logger, name, fields,
+	emitOdooLogTo(w, "INFO", logger, name, fields,
 		sess.styles, sess.palette, sess.cfg.DBName)
 }
 
@@ -337,11 +338,11 @@ func flagArgs(args []string) string {
 // successLog emits the post-command ✓ entry for module commands as
 // the Odoo-style INFO line, with the hierarchical logger naming the
 // module(s) targeted (echo.update.module.<mod> / .modules / .all).
-func (sess *session) successLog(name string, resolved []string, warnCount int) {
+func (sess *session) successLog(name string, resolved []string, warnCount int, extra ...logField) {
 	sess.exitCode = exitOK
 	sess.lastWarnings = warnCount
 	sess.print(Line{Kind: "out", Text: ""})
-	var fields []logField
+	fields := append([]logField(nil), extra...)
 	if warnCount > 0 {
 		fields = append(fields, logField{"warnings", strconv.Itoa(warnCount)})
 	}

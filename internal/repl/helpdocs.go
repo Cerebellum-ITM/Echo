@@ -135,24 +135,27 @@ var commandDocs = []commandDoc{
 	{
 		name:    "install",
 		section: "Modules",
-		usage:   "install <mod...> [--with-demo] [--level <lvl>]",
+		usage:   "install <mod...> [--with-demo] [--level <lvl>] [--json]",
 		summary: "Install modules in the current DB",
 		flags: []helpItem{
 			{"--with-demo", "", "Include demo data"},
 			{"--level", "<lvl>", "Odoo --log-level (debug…critical; default info)"},
+			{"--json", "", "One outcome object on stdout (errors, warnings, tests, migrations), lines on stderr"},
 		},
 		notes: []string{
 			"Local only; with no module names it opens a picker, which exits 2 without a TTY",
 			"An unknown flag, or a module name that is neither a project addon nor known to the database, exits 2 before Odoo runs",
+			"--json prints {command, target, db, modules, exit, duration_ms, errors, warnings, warnings_truncated, tests, migrations}; errors carry exception and frames; a usage error prints nothing on stdout",
 		},
 		examples: []helpExample{
 			{"install sale_custom stock_custom", "Install two modules in the local database"},
+			{"install sale_custom --json", "Install a module and print the outcome as JSON"},
 		},
 	},
 	{
 		name:    "update",
 		section: "Modules",
-		usage:   "update <mod...> [--all | --last] [--i18n] [--installed] [--level <lvl>] [--from <target> | --remote] [--force] [--no-checkpoint]",
+		usage:   "update <mod...> [--all | --last] [--i18n] [--installed] [--level <lvl>] [--from <target> | --remote] [--force] [--no-checkpoint] [--json]",
 		summary: "Update modules",
 		flags: []helpItem{
 			{"--from", "<target>", "Update on a remote instance (named connect target)"},
@@ -164,6 +167,7 @@ var commandDocs = []commandDoc{
 			{"--i18n", "", "Overwrite the modules' translations from their .po (all langs)"},
 			{"--installed", "", "Pick from all installed modules (e.g. base), not just the repo"},
 			{"--level", "<lvl>", "Odoo --log-level (debug…critical; default info)"},
+			{"--json", "", "One outcome object on stdout (errors, warnings, tests, migrations), lines on stderr"},
 		},
 		notes: []string{
 			"With no module names, --all or --last it opens a picker, which exits 2 without a TTY",
@@ -172,31 +176,37 @@ var commandDocs = []commandDoc{
 			"On a Reverb environment the update takes a pre_update checkpoint first unless --no-checkpoint",
 			"--last is local-only and is a usage error with --from or --remote",
 			"An unknown flag exits 2 on every path; locally, so does a module name that is neither a project addon nor known to the database",
+			"--json prints {command, target, db, modules, exit, duration_ms, errors, warnings, warnings_truncated, tests, migrations}; errors carry exception and frames; a usage error prints nothing on stdout",
 		},
 		examples: []helpExample{
 			{"update sale_custom --i18n", "Update a local module and overwrite its translations"},
-			{"update sale_custom stock_custom --from staging", "Update two modules on the staging target"},
+			{"update sale_custom stock_custom --from staging --json", "Update two modules on staging; the outcome as JSON"},
 			{"update --last --level=debug", "Repeat the last local update with debug logs"},
 		},
 	},
 	{
 		name:    "uninstall",
 		section: "Modules",
-		usage:   "uninstall <mod...> [--level <lvl>]",
+		usage:   "uninstall <mod...> [--level <lvl>] [--json]",
 		summary: "Uninstall modules",
 		flags: []helpItem{
 			{"--level", "<lvl>", "Odoo --log-level (debug…critical; default info)"},
+			{"--json", "", "One outcome object on stdout (errors, warnings, tests, migrations), lines on stderr"},
 		},
 		notes: []string{
 			"Local only and destructive: the modules' data is removed from the database",
 			"With no module names it opens a picker, which exits 2 without a TTY",
 			"An unknown flag exits 2 before Odoo runs",
+			"--json prints {command, target, db, modules, exit, duration_ms, errors, warnings, warnings_truncated, tests, migrations}; errors carry exception and frames; a usage error prints nothing on stdout",
+		},
+		examples: []helpExample{
+			{"uninstall sale_custom --json", "Uninstall a module and print the outcome as JSON"},
 		},
 	},
 	{
 		name:    "test",
 		section: "Modules",
-		usage:   "test <mod...> [--update] [--tags <spec>] [--from <target> | --remote] [--force]",
+		usage:   "test <mod...> [--update] [--tags <spec>] [--from <target> | --remote] [--force] [--json]",
 		summary: "Run tests for installed modules (filters to /<mod>)",
 		flags: []helpItem{
 			{"--from", "<target>", "Run the suite on a remote target (named connect target)"},
@@ -204,6 +214,7 @@ var commandDocs = []commandDoc{
 			{"--force", "", "Skip the confirm on a remote prod-stage target"},
 			{"--update", "", "Reload modules first (adds -u; needed for XML/schema changes)"},
 			{"--tags", "<spec>", "Override --test-tags (e.g. :TestX.test_y)"},
+			{"--json", "", "One outcome object on stdout (errors, warnings, tests, migrations), lines on stderr"},
 		},
 		notes: []string{
 			"Without --update the modules are not reloaded, so view and schema changes are not picked up",
@@ -211,10 +222,12 @@ var commandDocs = []commandDoc{
 			"A remote prod-stage target asks for a confirm, which exits 2 without a TTY; --force skips it",
 			"An unknown flag exits 2 on every path; locally, so does a module name that is neither a project addon nor known to the database",
 			"A run that executes no test (no Odoo test report, or of 0 tests) logs `no tests ran` and exits 1",
+			"Each failing test gets an echo.test.failure line (test, module, file, line) after the closing line, which carries run, failed and errored",
+			"--json prints {command, target, db, modules, exit, duration_ms, errors, warnings, warnings_truncated, tests, migrations}; errors carry exception and frames; a usage error prints nothing on stdout; tests.failures lists kind, test, module, file, line and message",
 		},
 		examples: []helpExample{
 			{"test sale_custom --update", "Reload and test a module in the local stack"},
-			{"test sale_custom --from staging", "Run a module's tests on the staging target"},
+			{"test sale_custom --from staging --json", "Run a module's tests on staging; failures as JSON"},
 			{"test sale_custom --tags :TestSaleCustom.test_confirm", "Run a single test method"},
 		},
 	},
