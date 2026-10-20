@@ -223,7 +223,7 @@ var dispatchNames = []string{
 	"help", "clear", "copy-last", "report", "logview", "sequence",
 	"init", "reset", "alias", "link", "doctor",
 	"up", "down", "stop", "restart", "ps", "logs", "push", "deploy", "sideload", "watch", "checkpoint", "actions", "promote",
-	"install", "update", "uninstall", "test", "modules", "modinfo", "modstate", "view", "compare", "lint",
+	"install", "update", "uninstall", "test", "modules", "modinfo", "modstate", "probe", "view", "compare", "lint",
 	"i18n-export", "i18n-update", "i18n-pull",
 	"db-admin", "db-backup", "db-restore", "db-pull", "db-push", "db-drop", "db-neutralize", "db-list", "db-use",
 	"shell", "shell-run", "bash", "psql", "connect",
@@ -322,6 +322,8 @@ func (sess *session) dispatchParsed(ctx context.Context, cmd string, args []stri
 		sess.runModinfo(ctx, args)
 	case "modstate":
 		sess.runModstate(ctx, args)
+	case "probe":
+		sess.runProbe(ctx, args)
 	case "view":
 		sess.runView(ctx, args)
 	case "compare":

@@ -8,6 +8,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **`probe`: read-only questions to a live database, answered as data.**
+  Reading live data meant piping a hand-written Python heredoc through
+  `shell-run`, trusting it never committed, and digging its JSON line out
+  of the Odoo boot log. `probe -c <expr>` (repeatable, `name=expr` keys the
+  result), `probe -` (a script on stdin that sets `result`) and the presets
+  `ref <xmlid>`, `read <model>` (`--domain`, `--fields`, `--limit`,
+  `--order`, `--count`), `fields <model>`, `param [key|prefix]` and
+  `arch <xmlid|model>` (`--type`) evaluate through `odoo shell` in a
+  read-only transaction: `commit` raises and Postgres refuses every write,
+  so there is no prod gate. Recordsets, dates and bytes are converted to
+  JSON, the code's own prints are returned apart, and a Python error comes
+  back with its type, file, line and traceback (exit 1). The result travels
+  in base64 frames that survive SSH and log noise; `--json` prints one
+  payload on stdout with `db`, `stage`, `target` and `duration_ms`. Works
+  locally and with `--from`/`--remote`; secret-looking parameters print as
+  `***` unless `--reveal`.
 - **`db-push`: load a local dump into a remote target.** Echo could pull
   a remote database and restore it locally, but nothing loaded a dump into
   a remote instance, so resetting a dev instance from a staging snapshot
