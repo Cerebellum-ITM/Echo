@@ -664,6 +664,12 @@
 
 ## Database
 
+### 2026-10-20 · A restored filestore takes the owner of Odoo's data_dir, not of the filestore root
+- **Why:** The root does not exist on an instance that never stored an attachment; created by a root shell it is `root:root`, and copying its owner made every restored file unwritable for Odoo (`habitta_prod`, 2026-10-20). The root's parent is Odoo's `data_dir`, which always exists and must be the Odoo user's (sessions live there). The root is also handed back on every restore, non-recursively, so an instance an older push left with a root-owned root is repaired.
+- **Rejected:** Hardcoding `odoo` or uid 100 (images differ); using the root's owner only when it already existed (keeps a root-owned root broken).
+- **Source:** `a570425`; `internal/cmd/db.go` `filestoreOwner`, `internal/cmd/db_push.go` `dbPushFilestoreScript`.
+- **Status:** active
+
 ### 2026-10-19 · `db-push` stops Odoo itself and takes a blocking operation lock
 - **Why:** Replacing a remote database is a whole-target flow like deploy, never run on the active local stack, so it stops and starts the Odoo service itself; this is an exception to "destructive DB commands abort rather than auto-stopping Odoo" (2026-05-13), which stays for the local db-* commands. Several minutes of drop, restore and filestore swap must not overlap another db-push, so it takes a new operation lock (`.echo/op.lock.d`) that fails a second holder; the deploy lock stays metadata. The previous filestore is renamed, not deleted, because the checkpoint covers only the database. The target is named explicitly (`--to` or `--remote`), with no picker and no implicit binding.
 - **Rejected:** No lock (a documented warning only); making deploy and watch respect the lock in the same unit (deferred to Unit 142 to keep deploy untouched); deleting the old filestore or tarring it into `backups/checkpoints/`; `--from` as the target flag.
