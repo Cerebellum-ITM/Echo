@@ -21,7 +21,8 @@ instead of scraped from logs.
   - `bfaf2cd` fix: a failing test's `ValidationError`/`UserError` text no longer comes back empty (found on a real
     `test sale` run on `develop`: 231 tests, 69 failed, 24 errors).
   - Unit 148 `modstate`/`modinfo` remote and JSON (`9bb9dda`), verified on `develop`.
-  - Unit 142 operation lock in deploy, watch, sideload and checkpoint (`9eced71`); live check pending.
+  - Unit 142 operation lock in deploy, watch, sideload and checkpoint (`9eced71`), verified on `develop`
+    2026-10-20 (refusal, stale takeover, release after Ctrl+C); `watch` and Reverb unchecked.
   - `go build`, `go vet`, `go test ./...` green.
 - Live checks done 2026-10-19/20 (user's go): `probe` fully on Odoo 17 (`form-dev`), 18 (`habitta_dev`) and 19
   (`develop`), writes refused on all three; `link --show --json` and `logs --errors --json` on `develop`;
@@ -40,8 +41,7 @@ instead of scraped from logs.
 
 ## Next
 
-1. Release 0.29.0 (minor: new flags) when the user decides; live-check Unit 142 first if possible (ledger row
-   142).
+1. Release 0.29.0 (minor: new flags) when the user decides.
 2. echo-console: recognise `echo_cli -C <dir> <cmd>` as a run. Its `parseEchoCommand`
    (`~/Documents/Projects/echo-console/hooks/echo/command.ts`) rejects a command that does not start with a
    letter, so `-C` runs get no card; the odoo-probe skill keeps `cd <project> &&` until it does.
