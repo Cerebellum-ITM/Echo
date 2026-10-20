@@ -274,8 +274,7 @@ func RunProbe(ctx context.Context, opts ProbeOpts) (ProbeResult, error) {
 		}
 		res.DB, res.Stage, res.Target = rsc.target.dbName, rsc.target.stage, rsc.fromName
 		if res.Target == "" {
-			// --remote resolves through the link binding and carries no name.
-			res.Target = targetNameAt(opts.Cfg, rsc.sshHost, rsc.remotePath)
+			res.Target = rsc.targetName
 		}
 		req.Major = odoo.Major(rsc.target.odooVersion)
 		script, err := odoo.ProbeScript(req)

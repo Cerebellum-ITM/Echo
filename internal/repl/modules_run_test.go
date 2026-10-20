@@ -212,3 +212,18 @@ func TestTestWithTestsPasses(t *testing.T) {
 		t.Fatalf("exit %d, want %d\n%s", sess.exitCode, exitOK, out)
 	}
 }
+
+func TestModuleJSONCarriesTheRunError(t *testing.T) {
+	sess := fakeOdoo(t, "Port 8189 is in use by another program.\n", 1)
+	out, _ := dispatchCaptured(t, sess, "test", "sale_custom", "--json")
+	var got moduleRunJSON
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatalf("stdout: %v\n%s", err, out)
+	}
+	if got.Exit != exitError || got.Error == "" {
+		t.Fatalf("exit %d error %q, want %d and the run error", got.Exit, got.Error, exitError)
+	}
+	if got.Target != nil {
+		t.Errorf("a local run has no target, got %q", *got.Target)
+	}
+}

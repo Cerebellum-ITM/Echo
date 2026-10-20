@@ -53,6 +53,7 @@ type moduleRunJSON struct {
 	DB                string            `json:"db"`
 	Modules           []string          `json:"modules"`
 	Exit              int               `json:"exit"`
+	Error             string            `json:"error,omitempty"`
 	DurationMS        int64             `json:"duration_ms"`
 	Errors            []*odoo.LogError  `json:"errors"`
 	Warnings          []odoo.LogWarning `json:"warnings"`
@@ -101,8 +102,14 @@ func (sess *session) finishModulesJSON(name string, resolved []string, err error
 		WarningsTruncated: outcome.WarningsTruncated,
 		Migrations:        []migrationJSON{},
 	}
+	if err != nil {
+		out.Error = err.Error()
+	}
 	if r := sess.extras.remote; r != nil {
-		out.Target, out.DB = &r.Target, r.DB
+		out.DB = r.DB
+		if r.Target != "" {
+			out.Target = &r.Target
+		}
 	}
 	for _, m := range resolved {
 		if m == "--all" {

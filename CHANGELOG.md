@@ -47,7 +47,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`install`, `update`, `uninstall` and `test` report their outcome as
   data.** An agent learned which test failed, or why an update broke, only by
   reading the whole log. With `--json` the log goes to stderr and stdout gets
-  one object: command, target, database, modules, exit code, duration, the
+  one object: command, target, database, modules, exit code, the run's
+  `error` when Odoo itself failed (a busy port, a dead container), duration, the
   errors (logger, message, exception and the traceback frames with file and
   line), warnings (first 50, the rest counted), the migrations and, for
   `test` or when Odoo printed a test report, the tally with each failing

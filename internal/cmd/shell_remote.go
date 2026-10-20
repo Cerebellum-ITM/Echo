@@ -16,6 +16,9 @@ type remoteShellContext struct {
 	sshHost    string
 	remotePath string
 	fromName   string
+	// targetName is the connect target registered at sshHost/remotePath,
+	// set even when fromName is empty (--remote through the link binding).
+	targetName string
 	target     connectTarget
 	prof       config.RemoteProfile
 	conn       odoo.Conn
@@ -38,8 +41,13 @@ var OnRemoteResolved func(RemoteResolution)
 
 func reportRemoteResolved(rsc remoteShellContext) {
 	if OnRemoteResolved != nil {
+		name := rsc.fromName
+		if name == "" {
+			// --remote resolves through the link binding and carries no name.
+			name = rsc.targetName
+		}
 		OnRemoteResolved(RemoteResolution{
-			Target: rsc.fromName,
+			Target: name,
 			Host:   rsc.sshHost,
 			DB:     rsc.target.dbName,
 			Stage:  rsc.target.stage,
@@ -137,6 +145,7 @@ func resolveRemoteShell(ctx context.Context, cfg *config.Config, palette theme.P
 		sshHost:    sshHost,
 		remotePath: remotePath,
 		fromName:   fromName,
+		targetName: targetNameAt(cfg, sshHost, remotePath),
 		target:     target,
 		prof:       prof,
 		conn:       conn,
