@@ -103,6 +103,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   beating until it ends; the filestore copy gets the heartbeat too. Works for
   Echo zips (`pg_restore`) and native Odoo zips (`psql`, previously silent for
   the whole load), and for `db-pull --restore`.
+- **No automatic clipboard copy without a terminal.** A failing command and
+  a successful `shell-run` copied their output to the clipboard even when
+  Echo ran headless, and with no `/dev/tty` the OSC 52 fallback wrote its
+  escape sequence to stderr, into an agent's or CI job's output. Automatic
+  copies now run only when stdin and stdout are both terminals, and
+  `ECHO_NO_CLIPBOARD=1` turns them off on a terminal too; the closing
+  `failed` line then carries no `copied=` field. OSC 52 never writes to
+  stderr or stdout any more: without a terminal it is an error. Explicit
+  copies (`copy-last`, `--copy`) are unchanged.
 
 ### Fixed
 - **`db-pull --filestore` reads the server's `filestore_path`.** It used

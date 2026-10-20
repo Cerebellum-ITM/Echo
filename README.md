@@ -1516,6 +1516,11 @@ echo -C my-shop ps                 # …or by a registered alias (see `alias`)
 Exit codes: `0` success, `1` execution error (or `ERROR`/`CRITICAL` lines),
 `2` usage / a prompt that can't run without a TTY, `3` cancelled.
 
+Environment variables: `ECHO_LOG_FORMAT=json` prints every log line as one
+JSON object; `ECHO_NO_CLIPBOARD=1` turns off the automatic clipboard copy of a
+failure (or of `shell-run` output) on a terminal. Without a terminal (stdin or
+stdout piped) that copy never happens; `copy-last` and `--copy` still copy.
+
 `echo --version` / `-v` prints the CLI version and `echo --help` / `-h` prints
 the command list — both work from anywhere, including outside a project. The
 remote forms of most commands (`--from <target>` / `--remote`) also run from a
@@ -1593,7 +1598,7 @@ so `sequence --last` replays it headlessly.
 - **DB-name truncation.** A long database name (e.g. an odoo.sh dump) in the log lines' `db` column is middle-truncated on screen past `log_db_max` chars (default 20) — `mycompany-…_23-42-53` — so it doesn't wrap the rest of the line. Display-only: `copy-last` and `echo run --log` keep the full name.
 - **Foreign-line normalization.** `docker compose` progress and loose-severity tool stderr (e.g. wkhtmltopdf's `Warn: Can't find .pfb …`) are reformatted into the same Odoo log style instead of leaking as raw text. The `shell` command also recolors Odoo's own startup logs (which arrive raw over the PTY) and dims the Python/IPython banner.
 - **Migration detection.** `install` / `update` / `uninstall` passively watch the stream for Odoo migrations and close with one `echo.<cmd>.migration` line per migrated module (`module=… version=… phases=…`); `report` reconstructs the same summary from the last run.
-- **Action result line.** Every long-running command finishes with `✓ <name> completed` or `✗ <name> failed: …`. Silent failures — exit 0 with `ERROR`/`CRITICAL` log lines — render as `✗ <name> finished with N error(s)`. A failure auto-copies the relevant log slice to the clipboard.
+- **Action result line.** Every long-running command finishes with `✓ <name> completed` or `✗ <name> failed: …`. Silent failures — exit 0 with `ERROR`/`CRITICAL` log lines — render as `✗ <name> finished with N error(s)`. A failure auto-copies the relevant log slice to the clipboard (on a terminal only; `ECHO_NO_CLIPBOARD=1` turns it off).
 - **Fuzzy picker.** Filter is always active; type to narrow, `Tab` to toggle, `Enter` to confirm, scrollable for long lists. Single-select variants are used for restore, drop, connect, and recipe selection.
 - **Live editing.** The first token is highlighted green/red as you type (valid command or not); known flags get an accent color and Tab-complete.
 - **History.** ↑/↓ navigation across sessions, persisted to `~/.config/echo/history` (cap 1000 entries, consecutive duplicates collapsed).

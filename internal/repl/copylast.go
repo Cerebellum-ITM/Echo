@@ -3,6 +3,7 @@ package repl
 import (
 	"errors"
 	"fmt"
+	"os"
 	"strconv"
 	"strings"
 
@@ -60,6 +61,38 @@ func (sess *session) runCopyLast(args []string) {
 	sess.print(Line{Kind: "ok", Text: fmt.Sprintf("copied %d %s%s to clipboard", count, label, plural)})
 }
 
+// autoCopyEnabled reports whether Echo may copy to the clipboard on its own
+// (failure payloads, shell-run output). A headless run, stdin or stdout not a
+// terminal, never does: an agent or CI job has no clipboard worth filling, and
+// the OSC 52 fallback would only leak escape bytes into its output.
+// ECHO_NO_CLIPBOARD=1 turns it off on a terminal too. Explicit copies
+// (copy-last, --copy) do not consult it.
+func autoCopyEnabled() bool {
+	return os.Getenv("ECHO_NO_CLIPBOARD") != "1" && stdinIsTTY() && stdoutIsTTY()
+}
+
+// autoCopy copies payload when autoCopyEnabled allows it and returns the
+// copied= field for the closing log line, empty when the copy was skipped.
+func autoCopy(payload string) ([]logField, error) {
+	if !autoCopyEnabled() {
+		return nil, nil
+	}
+	err := clipboard.WriteAll(payload)
+	return []logField{{"copied", strconv.FormatBool(err == nil)}}, err
+}
+
+// printCopyError explains a failed auto-copy below the closing log line: a
+// missing helper is informational, anything else a warning.
+func (sess *session) printCopyError(err error) {
+	switch {
+	case err == nil:
+	case errors.Is(err, clipboard.ErrUnavailable):
+		sess.print(Line{Kind: "info", Text: err.Error()})
+	default:
+		sess.print(Line{Kind: "warn", Text: "copy failed: " + err.Error()})
+	}
+}
+
 // copyFailureLog handles the auto-copy-on-failure path for module
 // commands. It is called instead of finalize() when err != nil or
 // errCount > 0 (cancellation is handled separately in runModules).
@@ -85,8 +118,7 @@ func (sess *session) copyFailureLog(name string, resolved []string, runErr error
 		buf.WriteByte('\n')
 	}
 
-	copyErr := clipboard.WriteAll(buf.String())
-	copied := copyErr == nil
+	copyField, copyErr := autoCopy(buf.String())
 
 	var fields []logField
 	if runErr != nil {
@@ -98,16 +130,12 @@ func (sess *session) copyFailureLog(name string, resolved []string, runErr error
 	if warnCount > 0 {
 		fields = append(fields, logField{"warnings", strconv.Itoa(warnCount)})
 	}
-	fields = append(fields, logField{"copied", strconv.FormatBool(copied)})
+	fields = append(fields, copyField...)
 
 	emitOdooLog("ERROR", logger, name+" failed",
 		fields, sess.styles, sess.palette, sess.cfg.DBName)
 
-	if !copied && errors.Is(copyErr, clipboard.ErrUnavailable) {
-		sess.print(Line{Kind: "info", Text: copyErr.Error()})
-	} else if !copied && copyErr != nil {
-		sess.print(Line{Kind: "warn", Text: "copy failed: " + copyErr.Error()})
-	}
+	sess.printCopyError(copyErr)
 }
 
 // connectFailureLog auto-copies failures from `connect`. The error
@@ -123,23 +151,12 @@ func (sess *session) connectFailureLog(runErr error) {
 	header := plainOdooLog("ERROR", logger, "connect failed", sess.cfg.DBName)
 	payload := header + "\nerr: " + runErr.Error() + "\n"
 
-	copyErr := clipboard.WriteAll(payload)
-	copied := copyErr == nil
-
-	fields := []logField{
-		{"err", runErr.Error()},
-		{"copied", strconv.FormatBool(copied)},
-	}
+	copyField, copyErr := autoCopy(payload)
+	fields := append([]logField{{"err", runErr.Error()}}, copyField...)
 	emitOdooLog("ERROR", logger, "connect failed",
 		fields, sess.styles, sess.palette, sess.cfg.DBName)
 
-	if !copied && copyErr != nil {
-		if errors.Is(copyErr, clipboard.ErrUnavailable) {
-			sess.print(Line{Kind: "info", Text: copyErr.Error()})
-		} else {
-			sess.print(Line{Kind: "warn", Text: "copy failed: " + copyErr.Error()})
-		}
-	}
+	sess.printCopyError(copyErr)
 }
 
 // shellFailureLog auto-copies failures from interactive shell-style
@@ -154,25 +171,18 @@ func (sess *session) shellFailureLog(name, captured string, runErr error) {
 	header := plainOdooLog("ERROR", logger, name+" failed", sess.cfg.DBName)
 	payload := header + "\n" + captured
 
-	copyErr := clipboard.WriteAll(payload)
-	copied := copyErr == nil
+	copyField, copyErr := autoCopy(payload)
 
 	var fields []logField
 	if runErr != nil {
 		fields = append(fields, logField{"err", runErr.Error()})
 	}
-	fields = append(fields, logField{"copied", strconv.FormatBool(copied)})
+	fields = append(fields, copyField...)
 
 	emitOdooLog("ERROR", logger, name+" failed",
 		fields, sess.styles, sess.palette, sess.cfg.DBName)
 
-	if !copied && copyErr != nil {
-		if errors.Is(copyErr, clipboard.ErrUnavailable) {
-			sess.print(Line{Kind: "info", Text: copyErr.Error()})
-		} else {
-			sess.print(Line{Kind: "warn", Text: "copy failed: " + copyErr.Error()})
-		}
-	}
+	sess.printCopyError(copyErr)
 }
 
 // commandFailureLog auto-copies failures from non-module commands that
@@ -201,8 +211,7 @@ func (sess *session) commandFailureLog(name string, runErr error, errCount, warn
 		buf.WriteByte('\n')
 	}
 
-	copyErr := clipboard.WriteAll(buf.String())
-	copied := copyErr == nil
+	copyField, copyErr := autoCopy(buf.String())
 
 	var fields []logField
 	if runErr != nil {
@@ -214,18 +223,12 @@ func (sess *session) commandFailureLog(name string, runErr error, errCount, warn
 	if warnCount > 0 {
 		fields = append(fields, logField{"warnings", strconv.Itoa(warnCount)})
 	}
-	fields = append(fields, logField{"copied", strconv.FormatBool(copied)})
+	fields = append(fields, copyField...)
 
 	emitOdooLog("ERROR", logger, name+" failed",
 		fields, sess.styles, sess.palette, sess.cfg.DBName)
 
-	if !copied && copyErr != nil {
-		if errors.Is(copyErr, clipboard.ErrUnavailable) {
-			sess.print(Line{Kind: "info", Text: copyErr.Error()})
-		} else {
-			sess.print(Line{Kind: "warn", Text: "copy failed: " + copyErr.Error()})
-		}
-	}
+	sess.printCopyError(copyErr)
 }
 
 // shellExitLog emits the Odoo-style INFO line printed when an

@@ -185,7 +185,8 @@ func parseShellRunArgs(args []string) (noCopy bool, from string, remote bool, po
 
 // runShellRun implements `shell-run [<file>] [--no-copy]`: pipe a local .py
 // through the Odoo shell (stdin), stream the output Odoo-colored like
-// `update`, and auto-copy the captured output to the clipboard on success.
+// `update`, and auto-copy the captured output to the clipboard on success
+// (on a terminal only, see autoCopyEnabled).
 func (sess *session) runShellRun(ctx context.Context, args []string) {
 	sess.startLog("shell-run", args)
 
@@ -237,7 +238,7 @@ func (sess *session) runShellRun(ctx context.Context, args []string) {
 	})
 	sess.extras.script = newScriptFields(scriptPath, body, sess.lastOutput.lines)
 
-	if runErr == nil && !noCopy && !sess.lastOutput.IsEmpty() {
+	if runErr == nil && !noCopy && autoCopyEnabled() && !sess.lastOutput.IsEmpty() {
 		sess.copyShellRunOutput()
 	}
 	sess.readonlyFinalize("shell-run", runErr)

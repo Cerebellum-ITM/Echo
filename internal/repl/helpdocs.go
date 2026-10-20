@@ -639,7 +639,7 @@ var commandDocs = []commandDoc{
 			"No file opens a picker, which exits 2 without a TTY; a lone - reads the script from piped stdin",
 			"The script runs with the target's DB loaded; it is sent from this machine, so nothing is copied to the server",
 			"A prod-stage target (the remote profile's stage when remote) confirms first; headless runs need --force",
-			"On success the output is copied to the clipboard unless --no-copy",
+			"On success the output is copied to the clipboard unless --no-copy (on a terminal only; see help agents)",
 		},
 		examples: []helpExample{
 			{"shell-run fix_taxes.py --from staging --no-copy", "Run scripts/fix_taxes.py on staging without touching the clipboard"},
@@ -1177,6 +1177,7 @@ var helpTopics = []helpTopic{
 		{"-C <dir|alias>", "", "Run against a project from anywhere (`alias` registers names)"},
 		{"stdout / stderr", "", "With --json, stdout carries only the JSON payload; every log line goes to stderr"},
 		{"ECHO_LOG_FORMAT=json", "", "Every log line becomes one JSON object {time,level,logger,msg,fields,text}"},
+		{"clipboard", "", "No automatic copy without a TTY; ECHO_NO_CLIPBOARD=1 disables it on a terminal too"},
 		{"exit codes", "", "0 ok · 1 error or ERROR/CRITICAL lines · 2 usage, or a picker/confirm without a TTY · 3 cancelled"},
 		{"no TTY", "", "Every picker needs its flag (--commits, --modules, --auto, <mod...>); prod confirms need --force"},
 		{"remote targets", "", "--from <target> names a connect target; --remote uses this directory's link (see link)"},
