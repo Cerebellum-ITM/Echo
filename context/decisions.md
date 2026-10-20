@@ -408,6 +408,12 @@
 
 ## Deploy safety
 
+### 2026-10-20 · Every command that writes to a target takes the operation lock once, after its confirms
+- **Why:** A deploy, watch cycle, sideload or checkpoint started during a `db-push` wrote under it, and two deploys from two machines could interleave. Taking the lock after the confirms keeps a refused confirm from leaving a lock behind; taking it once at the top level keeps deploy's own checkpoint and rollback from blocking on themselves. While it is held, Ctrl+C and SIGTERM cancel the command's context instead of killing the process (the same `signal.NotifyContext` pattern db-push uses), so the release always runs. A busy target skips a `watch` cycle and retries on the next poll instead of ending the watch; `deploy --dry-run` only warns.
+- **Rejected:** Checking without taking (two deploys could still interleave); locking `push` (it is the building block deploy uses); a `withOpLock(fn)` wrapper (it would have re-indented deploy's whole write phase).
+- **Source:** Unit 142 (`9eced71`); `internal/cmd/op_lock.go` `holdOpLock`; verified on `develop` 2026-10-20.
+- **Status:** active
+
 ### 2026-09-30 · A saved deploy plan runs exactly as reviewed or refuses; it keeps every gate and never expires
 - **Why:** A dry-run and the run after it were two independent resolutions, so a moved ref, an edit on disk or another machine's push in between silently changed what shipped. `deploy --dry-run --save-plan <file>` records the resolved modules with their content identity, the effective run decisions, the actions digest, the lock digest and the dependency findings; `deploy --apply <file>` re-resolves through the normal path with every decision pinned and refuses before the first server write when anything differs. Four choices: `--save-plan` requires a path (nothing implicit to clean up); `--save-plan` without `--dry-run` is `ErrUsage` (the plan is the review artifact, and a flag that silently stops or records a deploy surprises); `--apply` keeps the prod confirm and the dependency confirm on staging/prod, `--force` skipping both and no TTY failing closed (the plan adds a guarantee and removes no gate, and an agent can make and apply a plan nobody read); no expiry, the `plan matches` line prints the age in red from one hour on like `deploy --rollback` (the comparison gives correctness, time does not).
 - **Rejected:** A default plan path under `~/.config/echo/plans/` or `./deploy-plan.json`; `--save-plan` implying `--dry-run`, or a real run that also writes its plan; no prompts on apply, or skipping only the dependency confirm when the findings equal the plan's; refusing plans older than 24 h without `--force`, or a `[deploy] plan_max_age` key; a disk drift check on the server (declined with the lock, see below).
@@ -505,6 +511,12 @@
 - **Status:** active
 
 ## Modules and Odoo
+
+### 2026-10-20 · Remote `modinfo` compares the target's database with the local manifest and adds the deploy lock's version
+- **Why:** The question an agent asks is "which of my modules still need `-u` there", so the reference is the local working tree (what would ship), not the server's file; the version the deploy lock records is shown beside it as `deployed_version`. Remote rows reuse the module-state query deploy runs, so they inherit the DB exec transport and its fallback. One query serves every module, so `--all` costs one call.
+- **Rejected:** Reading the manifest on the server (a container path per target, one SSH call per module); a separate remote command.
+- **Source:** Unit 148 (`9bb9dda`); verified on `develop` 2026-10-20.
+- **Status:** active
 
 ### 2026-10-19 · `probe` is read-only by a Postgres `READ ONLY` transaction, so it has no prod gate
 - **Why:** Agents ask a live database dozens of questions per session; a confirm on prod made every read need `--force`, and "never call commit" was only a rule the agent had to follow. The template rolls back the shell's transaction, sets the session and the transaction `READ ONLY`, and makes `env.cr.commit` raise until the frame is printed (the shell's cursor commits on exit, so the real commit is restored after). It still runs arbitrary Python: files, HTTP and other side effects are not blocked, and the help says so.
