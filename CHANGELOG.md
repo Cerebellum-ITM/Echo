@@ -8,6 +8,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **`probe`: read-only questions to a live database, answered as data.**
+  Reading live data meant piping a hand-written Python heredoc through
+  `shell-run`, trusting it never committed, and digging its JSON line out
+  of the Odoo boot log. `probe -c <expr>` (repeatable, `name=expr` keys the
+  result), `probe -` (a script on stdin that sets `result`) and the presets
+  `ref <xmlid>`, `read <model>` (`--domain`, `--fields`, `--limit`,
+  `--order`, `--count`), `fields <model>`, `param [key|prefix]` and
+  `arch <xmlid|model>` (`--type`) evaluate through `odoo shell` in a
+  read-only transaction: `commit` raises and Postgres refuses every write,
+  so there is no prod gate. Recordsets, dates and bytes are converted to
+  JSON, the code's own prints are returned apart, and a Python error comes
+  back with its type, file, line and traceback (exit 1). The result travels
+  in base64 frames that survive SSH and log noise; `--json` prints one
+  payload on stdout with `db`, `stage`, `target` and `duration_ms`. Works
+  locally and with `--from`/`--remote`; secret-looking parameters print as
+  `***` unless `--reveal`.
+- **`link --show --json`: the linked target as data.** An agent's pre-flight
+  had to parse the `echo.system.status` line to learn the stage, database
+  and Odoo version of the target it was about to touch. `link --show --json`
+  prints one object on stdout (`target`, `ssh_host`, `remote_path`, `stage`,
+  `stage_declared`, `db`, `odoo_version`, `compose`, `reverb`, `deployed`,
+  `containers`) and every log line on stderr. `stage` is the stage the prod
+  gates use, so an undeclared stage reads `prod` with
+  `stage_declared=false`. An unlinked directory exits 2 and an unreadable
+  server profile exits 1, both with nothing on stdout.
+- **`logs --errors`: the last errors of the Odoo log, with tracebacks.**
+  Finding why an instance breaks meant paging through the service log.
+  `logs --errors` (local, `--from` or `--remote`; read-only) reads the last
+  2000 lines (`-t` changes the window) without following, groups each
+  ERROR/CRITICAL line with its traceback and prints the last five (`-n`),
+  then `errors=` and `scanned=`; finding none is an INFO line. It always
+  exits 0. `--json` prints `{scanned, errors}` with each error's time,
+  database, logger, message, exception and frames. `--follow` or `--copy`
+  with `--errors`, and `-n` or `--json` without it, are usage errors. The
+  errors and warnings of `install`/`update`/`uninstall`/`test --json` gain
+  `time` and `db` too.
+- **`install`, `update`, `uninstall` and `test` report their outcome as
+  data.** An agent learned which test failed, or why an update broke, only by
+  reading the whole log. With `--json` the log goes to stderr and stdout gets
+  one object: command, target, database, modules, exit code, duration, the
+  errors (logger, message, exception and the traceback frames with file and
+  line), warnings (first 50, the rest counted), the migrations and, for
+  `test` or when Odoo printed a test report, the tally with each failing
+  test (kind, test, module, file, line, message). A usage error prints
+  nothing on stdout. Without `--json`, `test` closes with `run= failed=
+  errored=` and prints one `echo.test.failure` line per failing test.
 - **`db-push`: load a local dump into a remote target.** Echo could pull
   a remote database and restore it locally, but nothing loaded a dump into
   a remote instance, so resetting a dev instance from a staging snapshot
@@ -76,6 +122,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   library module names after `sideload`.
 
 ### Changed
+- **`help agents` points to the new headless reads.** It now names
+  `link --show --json` for pre-flight, `--json` on the module commands and
+  `logs --errors --json`, next to `probe`, so an agent finds them from the
+  binary without opening the README.
 - **`help` without a terminal prints a short index** (one line per command,
   then the topics) instead of every flag row; the full rows stay in the
   paginated viewer and in `help <command>`.
@@ -87,11 +137,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   beating until it ends; the filestore copy gets the heartbeat too. Works for
   Echo zips (`pg_restore`) and native Odoo zips (`psql`, previously silent for
   the whole load), and for `db-pull --restore`.
+- **No automatic clipboard copy without a terminal.** A failing command and
+  a successful `shell-run` copied their output to the clipboard even when
+  Echo ran headless, and with no `/dev/tty` the OSC 52 fallback wrote its
+  escape sequence to stderr, into an agent's or CI job's output. Automatic
+  copies now run only when stdin and stdout are both terminals, and
+  `ECHO_NO_CLIPBOARD=1` turns them off on a terminal too; the closing
+  `failed` line then carries no `copied=` field. OSC 52 never writes to
+  stderr or stdout any more: without a terminal it is an error. Explicit
+  copies (`copy-last`, `--copy`) are unchanged.
 
 ### Fixed
+- **Flags the commands accepted but Echo did not know.** `--force` on `bash`,
+  `psql`, remote `update` and `test`, `--no-checkpoint` on a Reverb `update`,
+  and `-f`, `--follow` and `--tail` on `logs` worked but were missing from
+  the flag list, so `help` did not show them, Tab did not complete them and
+  the prompt dimmed them as unknown. They are listed and documented now.
+- **`modules` headless.** `modules --addons-path <a,b>` never ran: the
+  command only handed `--config` to the setter and listed modules for
+  anything else; it now saves the paths. `modules --config` opened its form
+  without a terminal check and now fails closed (exit 2, pointing at
+  `--addons-path`). A module discovery that fails (the container's
+  `odoo.conf` cannot be read) ends with `echo.modules.error ... err=` and
+  exit 1 instead of "no modules" and exit 0.
 - **`db-pull --filestore` reads the server's `filestore_path`.** It used
   the local project's setting for the remote container, so a server with a
   non-default path pulled nothing.
+- **`install`, `update`, `uninstall` and `test` no longer report green when
+  nothing useful ran.** An unknown flag was read as a module name
+  (`update sale --json` ran `-u sale,--json`) or, for `test`, silently
+  dropped; it is now a usage error (exit 2) on the local, remote and Reverb
+  paths. A local module name that is neither a project addon nor known to
+  the database exits 2 before Odoo runs, with a `hint=` naming up to three
+  close names. A `test` that ran no test (no Odoo test report, or `of 0
+  tests`, as with a misspelled `--tags`) logs `no tests ran` with the modules
+  and tags and exits 1. A bad `--level`, `--last` with module names, a
+  missing `--last` record and a valueless `--tags` now exit 2 instead of 1
+  and no longer overwrite the clipboard. `update` and `test` list `--force`
+  (and `update` `--no-checkpoint`) among their flags, which their parsers
+  already accepted.
 
 ## [0.27.0] - 2026-10-07
 

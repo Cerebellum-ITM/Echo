@@ -2,7 +2,10 @@ package cmd
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -39,9 +42,11 @@ func TestParseLinkArgs(t *testing.T) {
 		{[]string{"--add", "--list"}, linkArgs{}, true},
 		{[]string{"--add", "--show"}, linkArgs{}, true},
 		{[]string{"--add", "prod"}, linkArgs{}, true},
-		// --json only decorates --list
+		// --json only decorates --list and --show
+		{[]string{"--show", "--json"}, linkArgs{show: true, jsonOut: true}, false},
 		{[]string{"--json"}, linkArgs{}, true},
 		{[]string{"--next", "--json"}, linkArgs{}, true},
+		{[]string{"prod", "--json"}, linkArgs{}, true},
 	}
 	for _, tc := range cases {
 		got, err := parseLinkArgs(tc.in)
@@ -211,6 +216,118 @@ func TestRunLinkListMarksCurrent(t *testing.T) {
 	}
 	if !strings.Contains(lines[1], "beta") || !strings.HasPrefix(lines[1], "●") {
 		t.Errorf("beta is the current binding, got %q", lines[1])
+	}
+}
+
+// fakeLinkRemote puts a fake `ssh` first on PATH: `cat` of the server
+// profile runs locally against a temp HOME, and `compose ps --format json`
+// answers with one container, or fails when FAKE_PS_FAIL is set.
+func fakeLinkRemote(t *testing.T, projectTOML string) *config.Config {
+	t.Helper()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	remotePath := "/srv/shop"
+	mustWrite(t, filepath.Join(home, ".config/echo/projects", config.ProjectKey(remotePath)+".toml"), projectTOML)
+	bin := t.TempDir()
+	mustWrite(t, filepath.Join(bin, "ssh"), `#!/bin/sh
+while [ "$1" = "-o" ]; do shift 2; done
+shift
+cmd="$*"
+case "$cmd" in
+  *--format*) [ -z "$FAKE_PS_FAIL" ] || exit 1
+    printf '%s\n' '{"Service":"odoo","State":"running","Health":"healthy","Status":"Up 3 hours"}' ;;
+  cat*) exec sh -c "$cmd" ;;
+  *) exit 1 ;;
+esac
+`)
+	if err := os.Chmod(filepath.Join(bin, "ssh"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	return &config.Config{
+		ConnectSSHHost:    "shop-host",
+		ConnectRemotePath: remotePath,
+		ConnectTargets:    []config.ConnectTarget{{Name: "develop", SSHHost: "shop-host", RemotePath: remotePath}},
+	}
+}
+
+func runLinkShowJSONFor(t *testing.T, cfg *config.Config) (*LinkShowResult, error) {
+	t.Helper()
+	var got *LinkShowResult
+	err := RunLink(context.Background(), LinkOpts{
+		Cfg:    cfg,
+		Args:   []string{"--show", "--json"},
+		Log:    func(string, string, string, string, ...[2]string) {},
+		OnShow: func(res LinkShowResult) { got = &res },
+	})
+	return got, err
+}
+
+func TestLinkShowJSONAssemblesReport(t *testing.T) {
+	cfg := fakeLinkRemote(t, "stage = \"Staging\"\ndb_name = \"shop\"\nodoo_version = \"18.0\"\n"+
+		"[reverb]\nproject = \"p\"\nenv = \"e\"\n")
+
+	got, err := runLinkShowJSONFor(t, cfg)
+	if err != nil || got == nil {
+		t.Fatalf("RunLink --show --json = %v, %v", got, err)
+	}
+	b, _ := json.Marshal(got)
+	want := `{"target":"develop","ssh_host":"shop-host","remote_path":"/srv/shop","stage":"staging",` +
+		`"stage_declared":true,"db":"shop","odoo_version":"18.0","compose":"docker compose",` +
+		`"reverb":{"project":"p","env":"e"},"deployed":null,` +
+		`"containers":[{"service":"odoo","state":"running","health":"healthy","status":"Up 3 hours"}]}`
+	if string(b) != want {
+		t.Fatalf("report\n got: %s\nwant: %s", b, want)
+	}
+}
+
+func TestLinkShowJSONUndeclaredStageAndFailedPS(t *testing.T) {
+	cfg := fakeLinkRemote(t, "db_name = \"shop\"\n")
+	t.Setenv("FAKE_PS_FAIL", "1")
+
+	got, err := runLinkShowJSONFor(t, cfg)
+	if err != nil || got == nil {
+		t.Fatalf("RunLink --show --json = %v, %v", got, err)
+	}
+	if got.Stage != "prod" || got.StageDeclared {
+		t.Errorf("stage = %q declared=%v, want prod/false", got.Stage, got.StageDeclared)
+	}
+	if got.Containers != nil || got.Reverb != nil {
+		t.Errorf("containers = %v reverb = %v, want both nil", got.Containers, got.Reverb)
+	}
+}
+
+func TestLinkShowJSONDeployedCode(t *testing.T) {
+	cfg := fakeLinkRemote(t, "stage = \"dev\"\n")
+	cfg.ConnectTargets[0].GitDeploy = true
+	orig := gitRunSSH
+	t.Cleanup(func() { gitRunSSH = orig })
+	gitRunSSH = func(_ context.Context, _, remoteCmd string, _ []byte) ([]byte, error) {
+		if strings.Contains(remoteCmd, deployedSHAKey) {
+			return []byte("0123456789abcdef\n"), nil
+		}
+		return nil, errors.New("unset")
+	}
+
+	got, err := runLinkShowJSONFor(t, cfg)
+	if err != nil || got == nil {
+		t.Fatalf("RunLink --show --json = %v, %v", got, err)
+	}
+	want := &LinkShowDeployed{Branch: defaultDeployBranch, SHA: "0123456789abcdef"}
+	if got.Deployed == nil || *got.Deployed != *want {
+		t.Fatalf("deployed = %+v, want %+v", got.Deployed, want)
+	}
+}
+
+func TestLinkShowJSONFailures(t *testing.T) {
+	if _, err := runLinkShowJSONFor(t, &config.Config{}); !errors.Is(err, ErrUsage) {
+		t.Errorf("unbound: err = %v, want ErrUsage", err)
+	}
+	cfg := fakeLinkRemote(t, "stage = \"dev\"\n")
+	cfg.ConnectRemotePath = "/srv/elsewhere"
+	got, err := runLinkShowJSONFor(t, cfg)
+	if err == nil || errors.Is(err, ErrUsage) || got != nil {
+		t.Errorf("missing server profile: got %v, err = %v; want an execution error and no report", got, err)
 	}
 }
 

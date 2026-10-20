@@ -30,7 +30,7 @@ func helpersFor() []helper {
 		return []helper{{"pbcopy", nil}}
 	case "linux":
 		return []helper{
-			{"wl-copy", nil},                            // Wayland
+			{"wl-copy", nil}, // Wayland
 			{"xclip", []string{"-selection", "clipboard"}}, // X11 (xclip)
 			{"xsel", []string{"--clipboard", "--input"}},   // X11 (xsel)
 		}
@@ -95,16 +95,16 @@ func isRemote() bool {
 
 // writeOSC52 emits the OSC 52 escape sequence to the controlling
 // terminal. Modern terminals decode the base64 payload and place it in
-// the host clipboard.
+// the host clipboard. Without a controlling terminal it fails rather than
+// fall back to stderr or stdout: there the sequence is only noise in a
+// pipe or a log file.
 func writeOSC52(text string) error {
-	encoded := base64.StdEncoding.EncodeToString([]byte(text))
-	seq := fmt.Sprintf("\x1b]52;c;%s\x07", encoded)
-
-	if f, err := os.OpenFile("/dev/tty", os.O_WRONLY, 0); err == nil {
-		defer f.Close()
-		_, err := f.WriteString(seq)
-		return err
+	f, err := os.OpenFile("/dev/tty", os.O_WRONLY, 0)
+	if err != nil {
+		return fmt.Errorf("OSC 52 needs a terminal: %w", err)
 	}
-	_, err := os.Stderr.WriteString(seq)
+	defer f.Close()
+	encoded := base64.StdEncoding.EncodeToString([]byte(text))
+	_, err = fmt.Fprintf(f, "\x1b]52;c;%s\x07", encoded)
 	return err
 }

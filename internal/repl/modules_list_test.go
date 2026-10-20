@@ -1,6 +1,8 @@
 package repl
 
 import (
+	"context"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -51,6 +53,49 @@ func TestRenderModuleListWraps(t *testing.T) {
 		if w := lipgloss.Width(l); w > 80 {
 			t.Fatalf("row %d visible width %d exceeds 80:\n%q", i, w, l)
 		}
+	}
+}
+
+func TestModulesAddonsPathIsSaved(t *testing.T) {
+	sess := cmdLogSession(t)
+	sess.projectDir = t.TempDir()
+	sess.cfg.ProjectKey = "modules-test"
+
+	sess.dispatchParsed(context.Background(), "modules", []string{"--addons-path", "addons,custom"})
+
+	if sess.exitCode != exitOK {
+		t.Fatalf("exit = %d, want %d", sess.exitCode, exitOK)
+	}
+	if want := []string{"addons", "custom"}; !reflect.DeepEqual(sess.cfg.AddonsPaths, want) {
+		t.Fatalf("addons paths = %v, want %v", sess.cfg.AddonsPaths, want)
+	}
+}
+
+func TestModulesAddonsPathWithoutValueIsUsage(t *testing.T) {
+	sess := cmdLogSession(t)
+	sess.projectDir = t.TempDir()
+
+	sess.dispatchParsed(context.Background(), "modules", []string{"--addons-path"})
+
+	if sess.exitCode != exitUsage {
+		t.Fatalf("exit = %d, want %d", sess.exitCode, exitUsage)
+	}
+}
+
+// A conf-mode discovery that cannot read odoo.conf is an execution error;
+// `false` stands in for the compose command so nothing reaches docker.
+func TestModulesDiscoveryFailureExitsOne(t *testing.T) {
+	sess := cmdLogSession(t)
+	sess.projectDir = t.TempDir()
+	sess.cfg.AddonsMode = "conf"
+	sess.cfg.ConfPath = "/etc/odoo/odoo.conf"
+	sess.cfg.ComposeCmd = "false"
+	sess.cfg.OdooContainer = "odoo"
+
+	sess.dispatchParsed(context.Background(), "modules", nil)
+
+	if sess.exitCode != exitError {
+		t.Fatalf("exit = %d, want %d", sess.exitCode, exitError)
 	}
 }
 

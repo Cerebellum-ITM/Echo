@@ -109,8 +109,8 @@ func parseRemoteUpdateFlags(rest []string) (all, i18n, installed, noCheckpoint b
 			// Only meaningful on a Reverb environment, where the update takes a
 			// pre_update checkpoint by default.
 			noCheckpoint = true
-		case a == "--force", a == "--remote":
-			// consumed by confirmRemoteProd / remoteFlagsIn
+		case a == "--force", a == "--remote", a == "--json":
+			// consumed by confirmRemoteProd / remoteFlagsIn / the REPL
 		case a == "--from", a == "-E", a == "--env":
 			i++ // skip the target value; captured by remoteFlagsIn
 		case strings.HasPrefix(a, "--from="), strings.HasPrefix(a, "-E="),

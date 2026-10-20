@@ -4,11 +4,13 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/pascualchavez/echo/internal/clipboard"
 	"github.com/pascualchavez/echo/internal/config"
 	"github.com/pascualchavez/echo/internal/docker"
+	"github.com/pascualchavez/echo/internal/odoo"
 	"github.com/pascualchavez/echo/internal/theme"
 )
 
@@ -132,6 +134,9 @@ func RunPS(ctx context.Context, opts DockerOpts, onTable func(rows []docker.PSCo
 //	-c, --copy        bounded + copy output to clipboard
 //	--all             include every compose service (overrides default)
 func RunLogs(ctx context.Context, opts DockerOpts) error {
+	if _, err := parseLogErrorsArgs(opts.Args); err != nil {
+		return err
+	}
 	follow, copyMode, all, tail, services := parseLogsArgs(opts.Args)
 
 	if from, remote := remoteFlagsIn(opts.Args); from != "" || remote {
@@ -177,8 +182,10 @@ func parseLogsArgs(args []string) (follow, copyMode, all bool, tail string, serv
 				tail = args[i+1]
 				i++
 			}
-		case a == "--remote":
-			// remote-mode switch, not a service
+		case a == "--remote", a == "--errors", a == "--json":
+			// mode switches, not services
+		case a == "-n":
+			i++ // the error count, read by parseLogErrorsArgs
 		case a == "--from", a == "-E", a == "--env":
 			i++ // skip the target name
 		case strings.HasPrefix(a, "--from="), strings.HasPrefix(a, "-E="),
@@ -189,6 +196,103 @@ func parseLogsArgs(args []string) (follow, copyMode, all bool, tail string, serv
 		}
 	}
 	return follow, copyMode, all, tail, services
+}
+
+// logErrorsArgs are the `logs --errors` settings: how many errors to keep
+// and how many log lines to scan.
+type logErrorsArgs struct {
+	enabled bool
+	count   int
+	tail    string
+}
+
+// parseLogErrorsArgs reads `--errors`, `-n <count>` and `--json`, which only
+// exist together. `--errors` reads a bounded window, 2000 lines unless
+// `-t` says otherwise, so following or copying with it is a usage error.
+func parseLogErrorsArgs(args []string) (logErrorsArgs, error) {
+	la := logErrorsArgs{count: 5, tail: "2000"}
+	var follow, copyMode, jsonOut, countGiven bool
+	for i := 0; i < len(args); i++ {
+		switch a := args[i]; a {
+		case "--errors":
+			la.enabled = true
+		case "--json":
+			jsonOut = true
+		case "-f", "--follow":
+			follow = true
+		case "-c", "--copy":
+			copyMode = true
+		case "-t", "--tail":
+			if i+1 < len(args) {
+				la.tail = args[i+1]
+				i++
+			}
+		case "-n":
+			if i+1 >= len(args) {
+				return la, fmt.Errorf("%w: -n requires a count", ErrUsage)
+			}
+			n, err := strconv.Atoi(args[i+1])
+			if err != nil || n < 1 {
+				return la, fmt.Errorf("%w: -n %q is not a positive count", ErrUsage, args[i+1])
+			}
+			la.count, countGiven = n, true
+			i++
+		case "--from", "-E", "--env":
+			i++
+		}
+	}
+	switch {
+	case !la.enabled && (countGiven || jsonOut):
+		return la, fmt.Errorf("%w: -n and --json need --errors", ErrUsage)
+	case la.enabled && follow:
+		return la, fmt.Errorf("%w: --errors reads a bounded window and cannot --follow", ErrUsage)
+	case la.enabled && copyMode:
+		return la, fmt.Errorf("%w: --errors cannot be combined with --copy", ErrUsage)
+	}
+	return la, nil
+}
+
+// LogErrors is what `logs --errors` found: the last errors of the scanned
+// window, oldest first.
+type LogErrors struct {
+	Scanned int
+	Errors  []*odoo.LogError
+}
+
+// RunLogErrors reads the last lines of the Odoo service log, local or
+// remote, without following, and keeps each ERROR/CRITICAL record with its
+// traceback. Read-only.
+func RunLogErrors(ctx context.Context, opts DockerOpts) (LogErrors, error) {
+	la, err := parseLogErrorsArgs(opts.Args)
+	if err != nil {
+		return LogErrors{}, err
+	}
+	_, _, all, _, services := parseLogsArgs(opts.Args)
+
+	var res LogErrors
+	var outcome odoo.Outcome
+	feed := func(line string) {
+		res.Scanned++
+		outcome.Feed(line)
+	}
+	if from, remote := remoteFlagsIn(opts.Args); from != "" || remote {
+		remoteOpts := opts
+		remoteOpts.StreamOut = feed
+		err = runRemoteLogs(ctx, remoteOpts, from, false, false, all, la.tail, services)
+	} else {
+		if !all && len(services) == 0 && opts.Cfg.OdooContainer != "" {
+			services = []string{opts.Cfg.OdooContainer}
+		}
+		err = docker.Logs(ctx, opts.Cfg.ComposeCmd, opts.Root, la.tail, services, feed)
+	}
+	if err != nil {
+		return res, err
+	}
+	res.Errors = outcome.Errors
+	if len(res.Errors) > la.count {
+		res.Errors = res.Errors[len(res.Errors)-la.count:]
+	}
+	return res, nil
 }
 
 // runLogsAndCopy captures bounded log output, prints each line via the

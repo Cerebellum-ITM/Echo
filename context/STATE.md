@@ -5,51 +5,54 @@
 
 Make Echo safe and cheap to point at any remote Odoo, and drivable by agents from the binary alone: link mode as
 the one way to reach a target, a `deploy` whose shipped code is known and undone on failure, hosts that need
-nothing of Echo installed (`init --remote`), private modules from a local library (`sideload`), complete
-per-command help, and remote database replacement (`db-push`) without manual SSH.
+nothing of Echo installed, complete per-command help, and live data, run outcomes and errors returned as JSON
+instead of scraped from logs.
 
 ## Where we are
 
-- **v0.27.0 is the last release** (2026-10-07, `3f62780`). `main` is at `2765830`, **13 commits ahead of
-  `origin/main`, not pushed and not released**. Unreleased on `main`, all in `CHANGELOG.md` `[Unreleased]`:
-  - Unit 132 `db-restore` progress and heartbeat (`35810b7`).
-  - Unit 139 `init --remote` / `init --from` (`7fced0f`, merged `561907d`).
-  - Units 133 and 137 `sideload` and its library (merged `891fe9d`); lock label of library sideloads
-    (merged `8643a1d`).
-  - Unit 140 per-command help: `help <cmd>`, `<cmd> --help`, `help agents`, search, `--json` (`cd7312d`).
-  - Unit 141 `db-push` plus the operation lock, and `db-pull` reading the server's `filestore_path`
-    (`40779ce`). Both merged as `2765830` (branch `feature/command-help-db-push`, kept locally).
-- `go build`, `go vet`, `go test ./...` green at `2765830`.
-- The installed `~/.local/bin/echo_cli` is `0.27.0+40779ce` (2026-10-19): it has everything above.
-- `db-push` was confirmed working on a real target by another session (per the user, 2026-10-19); the dry run
-  against `habitta_dev` was checked here. Rows 140 and 141 of the
-  [ledger](knowledge/operations.md#live-verification-ledger).
-- fuentebuena-dev: its `etc/odoo.conf` carried an `addons_path` entry from another project
-  (`/mnt/extra-addons/oehealth_modules_19`), which made every Odoo run warn; removed on 2026-10-19 (backup
-  `etc/odoo.conf.bak-20261019` on the server), Odoo restarted clean.
+- **v0.27.0 is the last release** (2026-10-07, `3f62780`). `main` is at `418ac94`, 14 commits ahead of
+  `origin/main`, not pushed. Everything unreleased is in `CHANGELOG.md` `[Unreleased]`.
+- **Branch `feature/agent-inspection-tooling`** (from `418ac94`, not pushed, not merged) carries the agent
+  tooling of 2026-10-19, one commit per unit/fix:
+  - Unit 143 `probe` (`a47c55e`): read-only live-data command in a Postgres `READ ONLY` transaction.
+  - Unit 145 headless hygiene: no auto-copy without a TTY (`1be8a7b`), missing `commandFlags` (`9091a31`),
+    `modules --config` TTY guard and `--addons-path` (`498b87a`).
+  - Unit 146 `link --show --json` (`26c366a`).
+  - Unit 144 module commands: validation and zero-test failure (`0219002`), `--json` outcome (`ee60610`).
+  - Unit 147 `logs --errors [--json]` (`fb56ac6`).
+  - `help agents` rows for the new JSON reads (`357159b`).
+  - Live-check fix: `probe --remote` named its target (`0ce2552`).
+- `go build`, `go vet`, `go test ./...` green; touched files gofmt-clean.
+- **Live-verified read-only on `develop`** (muutrade, Odoo 19, 2026-10-19, user's go): every `probe` form, the
+  refused write, `link --show --json`, `logs --errors --json`. Not run live: Odoo 17/18, module `--json`
+  (`test`/`update` were excluded on purpose), the headless clipboard. Ledger rows 143-147.
+- The installed `~/.local/bin/echo_cli` is still `0.27.0+40779ce`: it has none of the branch.
 
 ## Blockers
 
 | Blocker | Detail |
 |---|---|
-| none | Push and release wait only on the user. |
+| none | Live checks, merge, push and release wait on the user. |
 
 ## Next
 
-1. Release 0.28.0 (minor: new commands): promote `[Unreleased]` and bump `Version` in `internal/repl/repl.go` in
-   one commit ([operations](knowledge/operations.md#release-and-versioning)), push `main`, then reinstall
-   `echo_cli`. Then apply the odoo-probe request below.
-2. Unit 142 `op-lock-respect` needs its spec (a proposal card for it was left in the 2026-10-19 session).
-3. Live checks still open: the fresh-agent help check (140); the `init --remote` form, prod-downgrade and link
-   confirms in tmux; the `sideload` picker in a TTY; `db-restore` progress on a local stack (132).
-4. Sideload follow-ups 134, 135, 136; 138 needs a decision. Then 122 (remove `-E`), E8, E5, E6
-   ([plan](work/build/plan.md)).
+1. Remaining live checks ([ledger](knowledge/operations.md#live-verification-ledger) rows 143-147): `probe` on an
+   Odoo 17 and an 18 target, and a failing `test --json` / `update --json` on a dev stack (needs the user's go:
+   it runs Odoo on the target).
+2. Merge `feature/agent-inspection-tooling` into `main` (`branch-flow`, `[MERGE]`), then release 0.28.0 (minor):
+   promote `[Unreleased]` and bump `Version` in one commit, push, reinstall `echo_cli`.
+3. After the install, apply both odoo-probe requests (below).
+4. Unit 142 `op-lock-respect` needs its spec; then the 2026-10-19 audit proposals in the
+   [plan](work/build/plan.md#proposed-by-the-2026-10-19-agent-audit-not-specced) (remote `modstate`/`modinfo`
+   first).
+5. Older live checks (140, 139, 137 picker, 132) and sideload follow-ups 134-136; 138 needs a decision.
 
 ## Messages
 
 | File | From → to | Status |
 |---|---|---|
 | [REQUEST-odoo-probe-command-help](messages/REQUEST-odoo-probe-command-help.md) | Echo → odoo-probe skill | open; apply after the release with Unit 140 |
+| [REQUEST-odoo-probe-agent-inspection](messages/REQUEST-odoo-probe-agent-inspection.md) | Echo → odoo-probe skill | open; apply after the release with Units 143-147, together with the one above |
 
 ## Open questions for the user
 
@@ -59,10 +62,9 @@ per-command help, and remote database replacement (`db-push`) without manual SSH
 ## Pending, not blocking
 
 - Small fixes, one commit each ([plan](work/build/plan.md#small-fixes-found-during-the-2026-09-30-store-adoption)),
-  now including the defects found while writing the Unit 140 help (`modules --addons-path` unreachable, flags
-  parsers accept but `commandFlags` lacks, unused `--remote` on `push`/`watch`/`db-pull`) and the two db-push
-  logger names.
+  now including `down --from` (not a real remote form).
+- Specs 143, 144, 146 and 147 stay in `work/build/` until their live check; then archive them.
 - Merged branches kept locally: `feature/command-help-db-push`; three old worktrees in `.claude/worktrees/` and
   about twenty merged `feat/*` branches remain; untouched.
 - `ctx_audit.py` flags `messages/README.md` as a stale message; it is the folder's index, a false positive.
-- `gofmt -l` flags 7 pre-existing files (e.g. `internal/cmd/actions_test.go`); untouched on purpose.
+- `gofmt -l` flags pre-existing files (e.g. `internal/cmd/actions_test.go`); untouched on purpose.

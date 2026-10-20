@@ -532,14 +532,15 @@ func (sess *session) seqStepLog(level, msg string, fields ...logField) {
 
 // isFollowLogs reports whether a step is a `logs` command in follow mode
 // (the default): it blocks until Ctrl+C, so it can only be the terminal
-// step. `--no-follow` / `--copy` / `-c` make logs bounded, not following.
+// step. `--no-follow` / `--copy` / `-c` / `--errors` make logs bounded, not
+// following.
 func isFollowLogs(step string) bool {
 	fields := strings.Fields(step)
 	if len(fields) == 0 || fields[0] != "logs" {
 		return false
 	}
 	for _, a := range fields[1:] {
-		if a == "--no-follow" || a == "--copy" || a == "-c" {
+		if a == "--no-follow" || a == "--copy" || a == "-c" || a == "--errors" {
 			return false
 		}
 	}

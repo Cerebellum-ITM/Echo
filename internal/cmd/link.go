@@ -37,6 +37,9 @@ type LinkOpts struct {
 	// a failed structured read) falls back to streaming the raw
 	// `compose ps` through StreamOut.
 	OnPS func(rows []docker.PSContainer, db string)
+	// OnShow receives the `link --show --json` report once the server
+	// profile is read; the caller owns printing it.
+	OnShow func(LinkShowResult)
 }
 
 // log emits a progress line when a logger is set; a no-op otherwise.
@@ -59,7 +62,8 @@ type linkArgs struct {
 
 // parseLinkArgs extracts the mode flags and the optional target positional.
 // At most one mode may be named: --show, --rm, --next, --list, --add or a
-// target (bare `link` is the switcher). --json only decorates --list.
+// target (bare `link` is the switcher). --json only decorates --list and
+// --show.
 func parseLinkArgs(args []string) (linkArgs, error) {
 	var out linkArgs
 	for _, a := range args {
@@ -94,8 +98,8 @@ func parseLinkArgs(args []string) (linkArgs, error) {
 	if modes > 1 {
 		return out, fmt.Errorf("%w: --show/--rm/--next/--list/--add and a target name are mutually exclusive", ErrUsage)
 	}
-	if out.jsonOut && !out.list {
-		return out, fmt.Errorf("%w: --json only applies to --list", ErrUsage)
+	if out.jsonOut && !out.list && !out.show {
+		return out, fmt.Errorf("%w: --json only applies to --list and --show", ErrUsage)
 	}
 	return out, nil
 }
@@ -114,6 +118,8 @@ func RunLink(ctx context.Context, opts LinkOpts) error {
 	switch {
 	case p.rm:
 		return runLinkRm(opts)
+	case p.show && p.jsonOut:
+		return runLinkShowJSON(ctx, opts)
 	case p.show:
 		return runLinkShow(ctx, opts)
 	case p.list:
@@ -277,11 +283,13 @@ func runLinkShow(ctx context.Context, opts LinkOpts) error {
 		fields = append([][2]string{{"target", name}}, fields...)
 	}
 	opts.log("INFO", "", "linked to", "", fields...)
-	prof, ok := probeLink(ctx, opts, name)
-	if !ok {
+	prof, err := probeLink(ctx, opts, name)
+	if err != nil {
 		return nil
 	}
-	reportDeployedCode(ctx, opts, name, prof.DBName)
+	if code, ok := readLinkDeployedCode(ctx, opts, name); ok {
+		reportDeployedCode(opts, code, prof.DBName)
+	}
 	reportDeployLock(ctx, opts, prof.DBName)
 	reportReverbEnv(opts, prof)
 	opts.log("INFO", "remote", "remote containers", prof.DBName)
@@ -292,7 +300,7 @@ func runLinkShow(ctx context.Context, opts LinkOpts) error {
 		}
 		return nil
 	}
-	err := remotePSTable(ctx, opts.Cfg.ConnectSSHHost, opts.Cfg.ConnectRemotePath, prof.ComposeCmd,
+	err = remotePSTable(ctx, opts.Cfg.ConnectSSHHost, opts.Cfg.ConnectRemotePath, prof.ComposeCmd,
 		func(rows []docker.PSContainer) { opts.OnPS(rows, prof.DBName) }, opts.StreamOut)
 	if err != nil {
 		return fmt.Errorf("remote ps: %w", err)
@@ -300,23 +308,33 @@ func runLinkShow(ctx context.Context, opts LinkOpts) error {
 	return nil
 }
 
-// reportDeployedCode adds the git-deploy line to `link --show`: which branch
-// the server's code lives on, the SHA it is at, and the ref it came from
-// (Unit 113). Non-git targets print nothing, and fields the checkout does not
-// carry are omitted rather than shown empty — an older deploy simply reports
-// less.
-func reportDeployedCode(ctx context.Context, opts LinkOpts, name, db string) {
+// linkDeployedCode is what `link --show` knows about a git-deploy target's
+// code: the branch it lives on, the SHA it is at, the ref it came from and
+// when it was deployed (Unit 113). An older deploy leaves ref and at empty.
+type linkDeployedCode struct {
+	branch, sha, ref, at string
+}
+
+// readLinkDeployedCode reads the deployed code of the bound target; ok is
+// false for a target without git deploy.
+func readLinkDeployedCode(ctx context.Context, opts LinkOpts, name string) (linkDeployedCode, bool) {
 	g := resolveGitDeploy(opts.Cfg, name, opts.Cfg.ConnectSSHHost, opts.Cfg.ConnectRemotePath)
 	if !g.enabled {
-		return
+		return linkDeployedCode{}, false
 	}
 	absDir := absGitDir(opts.Cfg.ConnectRemotePath, g.path)
-	fields := [][2]string{{"branch", g.branch}}
 	ref, sha, at := readDeployedCode(ctx, opts.Cfg.ConnectSSHHost, absDir)
 	if sha == "" {
 		sha, _ = remoteGitOut(ctx, remoteShellContext{sshHost: opts.Cfg.ConnectSSHHost}, absDir, "rev-parse", "HEAD")
 	}
-	for _, f := range [][2]string{{"sha", shortSHA(sha)}, {"ref", ref}, {"at", at}} {
+	return linkDeployedCode{branch: g.branch, sha: sha, ref: ref, at: at}, true
+}
+
+// reportDeployedCode adds the git-deploy line to `link --show`. Fields the
+// checkout does not carry are omitted rather than shown empty.
+func reportDeployedCode(opts LinkOpts, code linkDeployedCode, db string) {
+	fields := [][2]string{{"branch", code.branch}}
+	for _, f := range [][2]string{{"sha", shortSHA(code.sha)}, {"ref", code.ref}, {"at", code.at}} {
 		if f[1] != "" {
 			fields = append(fields, f)
 		}
@@ -344,6 +362,90 @@ func reportReverbEnv(opts LinkOpts, prof config.RemoteProfile) {
 	opts.log("INFO", "", "reverb env", prof.DBName, append(fields, [2]string{"api", api})...)
 }
 
+// LinkShowResult is the `link --show --json` report: the binding and the
+// remote target as the server profile declares it. Stage is the normalized
+// gate stage (undeclared reads as prod, StageDeclared false). Deployed is nil
+// for a target without git deploy, Containers nil when the structured
+// `compose ps` read fails.
+type LinkShowResult struct {
+	Target        string              `json:"target"`
+	SSHHost       string              `json:"ssh_host"`
+	RemotePath    string              `json:"remote_path"`
+	Stage         string              `json:"stage"`
+	StageDeclared bool                `json:"stage_declared"`
+	DB            string              `json:"db"`
+	OdooVersion   string              `json:"odoo_version"`
+	Compose       string              `json:"compose"`
+	Reverb        *LinkShowReverb     `json:"reverb"`
+	Deployed      *LinkShowDeployed   `json:"deployed"`
+	Containers    []LinkShowContainer `json:"containers"`
+}
+
+type LinkShowReverb struct {
+	Project string `json:"project"`
+	Env     string `json:"env"`
+}
+
+type LinkShowDeployed struct {
+	Branch string `json:"branch"`
+	SHA    string `json:"sha"`
+}
+
+type LinkShowContainer struct {
+	Service string `json:"service"`
+	State   string `json:"state"`
+	Health  string `json:"health"`
+	Status  string `json:"status"`
+}
+
+// runLinkShowJSON is `link --show --json`: the same probe as --show, handed
+// to opts.OnShow as one object instead of the deploy and container lines.
+// An unbound directory is a usage error and an unreachable profile an
+// execution error, so a caller never gets a half-filled report.
+func runLinkShowJSON(ctx context.Context, opts LinkOpts) error {
+	if opts.Cfg.ConnectSSHHost == "" || opts.Cfg.ConnectRemotePath == "" {
+		return fmt.Errorf("%w: not linked — run `link <target>` to bind this directory", ErrUsage)
+	}
+	name := linkTargetName(opts.Cfg)
+	prof, err := probeLink(ctx, opts, name)
+	if err != nil {
+		return err
+	}
+	target := remoteConnectTarget(prof)
+	res := LinkShowResult{
+		Target:        name,
+		SSHHost:       opts.Cfg.ConnectSSHHost,
+		RemotePath:    opts.Cfg.ConnectRemotePath,
+		Stage:         target.stage,
+		StageDeclared: target.stageDeclared,
+		DB:            prof.DBName,
+		OdooVersion:   prof.OdooVersion,
+		Compose:       prof.ComposeCmd,
+	}
+	if m := prof.Reverb; m != nil {
+		res.Reverb = &LinkShowReverb{Project: m.Project, Env: m.Env}
+	}
+	if code, ok := readLinkDeployedCode(ctx, opts, name); ok {
+		res.Deployed = &LinkShowDeployed{Branch: code.branch, SHA: code.sha}
+	}
+	rows, err := remotePSRows(ctx, opts.Cfg.ConnectSSHHost, opts.Cfg.ConnectRemotePath, prof.ComposeCmd)
+	if err != nil {
+		opts.log("WARNING", "remote", "could not read the remote containers", prof.DBName,
+			[2]string{"err", err.Error()})
+	} else {
+		res.Containers = make([]LinkShowContainer, 0, len(rows))
+		for _, r := range rows {
+			res.Containers = append(res.Containers, LinkShowContainer{
+				Service: r.Service, State: r.State, Health: r.Health, Status: r.Status,
+			})
+		}
+	}
+	if opts.OnShow != nil {
+		opts.OnShow(res)
+	}
+	return nil
+}
+
 // runLinkRm clears the per-project [connect] binding. Idempotent.
 func runLinkRm(opts LinkOpts) error {
 	if opts.Cfg.ConnectSSHHost == "" && opts.Cfg.ConnectRemotePath == "" &&
@@ -364,15 +466,16 @@ func runLinkRm(opts LinkOpts) error {
 // probeLink reads the remote Echo profile over SSH and reports it. The
 // system-status line doubles as the "reachable" signal (same shape as
 // connect / i18n-pull). Failure is a WARNING — the binding is config, not
-// a connection — and reports ok=false so callers skip remote follow-ups.
-func probeLink(ctx context.Context, opts LinkOpts, fromName string) (config.RemoteProfile, bool) {
+// a connection — and the error is returned so callers skip remote
+// follow-ups.
+func probeLink(ctx context.Context, opts LinkOpts, fromName string) (config.RemoteProfile, error) {
 	opts.log("INFO", "remote", "probing remote", "",
 		[2]string{"host", opts.Cfg.ConnectSSHHost})
 	prof, err := fetchRemoteProfile(ctx, ConnectOpts{Cfg: opts.Cfg, Root: opts.Root})
 	if err != nil {
 		opts.log("WARNING", "remote", "linked but unreachable", "",
 			[2]string{"err", err.Error()})
-		return config.RemoteProfile{}, false
+		return config.RemoteProfile{}, err
 	}
 	opts.log("INFO", "system", "system", prof.DBName,
 		statusFields(prof.OdooVersion, prof.Stage,
@@ -382,7 +485,7 @@ func probeLink(ctx context.Context, opts LinkOpts, fromName string) (config.Remo
 	opts.log("INFO", "", "linked", prof.DBName,
 		[2]string{"stage", prof.Stage},
 		[2]string{"db", prof.DBName})
-	return prof, true
+	return prof, nil
 }
 
 // resolveLinkTarget picks the connect target to bind: an explicit name is
@@ -488,8 +591,14 @@ func connectTargetNames(targets []config.ConnectTarget) []string {
 // binding by matching host+path against the global targets; "" when the
 // binding was written by hand and matches none.
 func linkTargetName(cfg *config.Config) string {
+	return targetNameAt(cfg, cfg.ConnectSSHHost, cfg.ConnectRemotePath)
+}
+
+// targetNameAt names the connect target registered at host and path, or ""
+// when none is.
+func targetNameAt(cfg *config.Config, host, path string) string {
 	for _, t := range cfg.ConnectTargets {
-		if t.SSHHost == cfg.ConnectSSHHost && t.RemotePath == cfg.ConnectRemotePath {
+		if t.SSHHost == host && t.RemotePath == path {
 			return t.Name
 		}
 	}

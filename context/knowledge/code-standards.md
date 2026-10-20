@@ -28,7 +28,7 @@ What enforces it: `internal/repl/registry_test.go` (Registry unique; Registry ==
 ## Errors and exits
 
 - Wrap with `fmt.Errorf("context: %w", err)`. Sentinels in `internal/cmd`: `ErrUsage` (caller mistake, exit 2), `ErrNonInteractive` (exit 2), `ErrCancelled` (exit 3), `ErrQuit` (exit 0, Ctrl+X even inside pickers), `ErrNotConfigured` (promote). Wrap validation failures with `ErrUsage` so handlers can tell them from execution failures (exit 1). Exit-code table: [architecture-and-traps](architecture-and-traps.md#invariants).
-- Failures that matter close with the Odoo-style `echo.<cmd>.error` line and auto-copy the failing output; usage errors, cancellations and read-only commands do not auto-copy.
+- Failures that matter close with the Odoo-style `echo.<cmd>.error` line and auto-copy the failing output; usage errors, cancellations and read-only commands do not auto-copy, and a headless run never does ([ui](ui.md#copy-and-clipboard)).
 - A destructive step guarded by a confirm takes `--force` to skip it and still fails closed without a TTY. Which stage decides: [prod-gate rule](architecture-and-traps.md#prod-gate-rule).
 - Best-effort metadata (lock write, provenance stamp, deploy-history, cmd-log) must not fail the operation it annotates: warn and continue. Owner of the deploy case: [deploy-safety](deploy-safety.md).
 

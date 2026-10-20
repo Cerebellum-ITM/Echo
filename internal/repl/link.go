@@ -2,6 +2,7 @@ package repl
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"slices"
@@ -14,28 +15,40 @@ import (
 // runLink implements `link [<target>] [--show] [--rm]`: bind the current
 // project directory to a named connect target (per-project [connect]),
 // inspect the binding, or remove it. Progress is rendered as `echo.link`
-// log lines; `--show` additionally streams the remote `compose ps`.
+// log lines; `--show` additionally streams the remote `compose ps`. With
+// `--json` the log lines go to stderr and stdout carries only the JSON.
 func (sess *session) runLink(ctx context.Context, args []string) {
 	lc := &logColorer{}
 	stats := &runStats{}
+	wantJSON := slices.Contains(args, "--json")
+	logFn := sess.cmdOdooLogger("link")
+	if wantJSON {
+		logFn = sess.stderrOdooLogger("link")
+	}
+	var show *cmd.LinkShowResult
 	err := cmd.RunLink(ctx, cmd.LinkOpts{
 		Cfg:     sess.cfg,
 		Root:    sess.projectDir,
 		Args:    args,
 		Palette: sess.palette,
-		Log:     sess.cmdOdooLogger("link"),
+		Log:     logFn,
 		StreamOut: stats.wrap(func(line string) {
 			sess.emitStreamLine(lc, line)
 		}),
 		OnPS: func(rows []docker.PSContainer, db string) {
 			sess.emitPSTableAs(rows, "echo.link.ps", db)
 		},
+		OnShow: func(res cmd.LinkShowResult) { show = &res },
 	})
 
 	// `--list --json` is machine output already written to stdout; the
 	// blank line and the completion line of finalize would corrupt it.
-	if err == nil && slices.Contains(args, "--list") && slices.Contains(args, "--json") {
+	if err == nil && slices.Contains(args, "--list") && wantJSON {
 		sess.exitCode = exitOK
+		return
+	}
+	if slices.Contains(args, "--show") && wantJSON {
+		sess.finishLinkShowJSON(show, err)
 		return
 	}
 
@@ -50,6 +63,30 @@ func (sess *session) runLink(ctx context.Context, args []string) {
 		sess.commandFailureLog("link", err, stats.errors, stats.warnings)
 	default:
 		sess.finalize("link", stats.errors, stats.warnings, nil)
+	}
+}
+
+// finishLinkShowJSON writes the `link --show --json` report to stdout and any
+// error to stderr: usage and non-interactive exit 2, cancelled 3, any other
+// failure 1.
+func (sess *session) finishLinkShowJSON(res *cmd.LinkShowResult, err error) {
+	if err == nil {
+		var b []byte
+		if b, err = json.Marshal(res); err == nil {
+			os.Stdout.Write(append(b, '\n'))
+			sess.exitCode = exitOK
+			return
+		}
+	}
+	emitOdooLogTo(os.Stderr, "ERROR", "echo.link.error", "link failed",
+		[]logField{{"err", err.Error()}}, sess.styles, sess.palette, sess.cfg.DBName)
+	switch {
+	case errors.Is(err, cmd.ErrUsage), errors.Is(err, cmd.ErrNonInteractive):
+		sess.exitCode = exitUsage
+	case errors.Is(err, cmd.ErrCancelled), errors.Is(err, huh.ErrUserAborted):
+		sess.exitCode = exitCancelled
+	default:
+		sess.exitCode = exitError
 	}
 }
 

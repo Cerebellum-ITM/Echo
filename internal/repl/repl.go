@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -14,6 +16,7 @@ import (
 	"github.com/pascualchavez/echo/internal/banner"
 	"github.com/pascualchavez/echo/internal/cmd"
 	"github.com/pascualchavez/echo/internal/config"
+	"github.com/pascualchavez/echo/internal/odoo"
 	"github.com/pascualchavez/echo/internal/theme"
 )
 
@@ -223,7 +226,7 @@ var dispatchNames = []string{
 	"help", "clear", "copy-last", "report", "logview", "sequence",
 	"init", "reset", "alias", "link", "doctor",
 	"up", "down", "stop", "restart", "ps", "logs", "push", "deploy", "sideload", "watch", "checkpoint", "actions", "promote",
-	"install", "update", "uninstall", "test", "modules", "modinfo", "modstate", "view", "compare", "lint",
+	"install", "update", "uninstall", "test", "modules", "modinfo", "modstate", "probe", "view", "compare", "lint",
 	"i18n-export", "i18n-update", "i18n-pull",
 	"db-admin", "db-backup", "db-restore", "db-pull", "db-push", "db-drop", "db-neutralize", "db-list", "db-use",
 	"shell", "shell-run", "bash", "psql", "connect",
@@ -322,6 +325,8 @@ func (sess *session) dispatchParsed(ctx context.Context, cmd string, args []stri
 		sess.runModinfo(ctx, args)
 	case "modstate":
 		sess.runModstate(ctx, args)
+	case "probe":
+		sess.runProbe(ctx, args)
 	case "view":
 		sess.runView(ctx, args)
 	case "compare":
@@ -414,9 +419,23 @@ func confLine(icon, label, value string) string {
 // reprints the welcome banner. Any command can call this to reset the
 // visible context.
 func (sess *session) runModules(ctx context.Context, name string, args []string) {
+	started := time.Now()
+	wantJSON := name != "modules" && slices.Contains(args, "--json")
 	lc := &logColorer{}
 	stats := &runStats{}
 	migs := &migrationTracker{}
+	outcome := &odoo.Outcome{}
+	// --json keeps stdout for the one result object: the run's lines go to
+	// stderr, still captured for the run record.
+	logOut := io.Writer(os.Stdout)
+	render := func(line string) { sess.emitStreamLine(lc, line) }
+	if wantJSON {
+		logOut = os.Stderr
+		render = func(line string) {
+			sess.capture(Line{Kind: lc.classify(line), Text: line})
+			os.Stderr.WriteString(line + "\n")
+		}
+	}
 	opts := cmd.ModulesOpts{
 		Cfg:         sess.cfg,
 		Root:        sess.projectDir,
@@ -425,12 +444,13 @@ func (sess *session) runModules(ctx context.Context, name string, args []string)
 		Interactive: sess.interactive,
 		StreamOut: stats.wrap(func(line string) {
 			migs.observe(line)
-			sess.emitStreamLine(lc, line)
+			outcome.Feed(line)
+			render(line)
 		}),
 		// The start line is emitted here, once the module set is resolved
 		// (after picker / --last), so it names the actual modules and the
 		// flags the user passed (e.g. --i18n, --level).
-		OnResolve: func(resolved []string) { sess.startResolved(name, args, resolved) },
+		OnResolve: func(resolved []string) { sess.startResolved(logOut, name, args, resolved) },
 	}
 
 	var err error
@@ -448,15 +468,36 @@ func (sess *session) runModules(ctx context.Context, name string, args []string)
 		sess.runModulesList(ctx, opts, args)
 		return
 	}
+	// A clean exit without a report, or with `of 0 tests`, is a typo'd tag
+	// or module: Odoo calls that a success.
+	if name == "test" && err == nil && outcome.Tests.Run == 0 {
+		emitOdooLogTo(logOut, "ERROR", "echo.test", "no tests ran",
+			[]logField{{"modules", moduleField(resolved)}, {"tags", cmd.TestTags(args, resolved)}},
+			sess.styles, sess.palette, sess.cfg.DBName)
+		stats.errors++
+	}
+	if wantJSON {
+		sess.finishModulesJSON(name, resolved, err, stats, outcome, migs.migrations(), time.Since(started))
+		return
+	}
+
+	var closing []logField
+	if name == "test" {
+		closing = testTallyFields(outcome.Tests)
+	}
 	switch {
 	case errors.Is(err, cmd.ErrCancelled), errors.Is(err, huh.ErrUserAborted),
 		errors.Is(err, cmd.ErrNonInteractive):
 		sess.finalize(name, stats.errors, stats.warnings, err)
+	case errors.Is(err, cmd.ErrUsage):
+		sess.finalize(name, stats.errors, stats.warnings, err)
+		sess.exitCode = exitUsage
 	case err != nil, stats.errors > 0:
-		sess.copyFailureLog(name, resolved, err, stats.errors, stats.warnings)
+		sess.copyFailureLog(name, resolved, err, stats.errors, stats.warnings, closing...)
 	default:
-		sess.successLog(name, resolved, stats.warnings)
+		sess.successLog(name, resolved, stats.warnings, closing...)
 	}
+	sess.emitTestFailures(outcome.Failures)
 	// Migration summary closes the run, after the success/failure recap.
 	sess.emitMigrations(name, resolved, migs.migrations())
 }
@@ -495,6 +536,10 @@ func (sess *session) runI18n(ctx context.Context, name string, args []string) {
 }
 
 func (sess *session) runDocker(ctx context.Context, name string, args []string) {
+	if name == "logs" && slices.Contains(args, "--errors") {
+		sess.runLogErrors(ctx, args)
+		return
+	}
 	sess.startLog(name, args)
 
 	lc := &logColorer{}
@@ -537,7 +582,11 @@ func (sess *session) runDocker(ctx context.Context, name string, args []string) 
 		sess.runPSTable(ctx, opts)
 		return
 	case "logs":
-		sess.readonlyFinalize("logs", cmd.RunLogs(ctx, opts))
+		err = cmd.RunLogs(ctx, opts)
+		sess.readonlyFinalize("logs", err)
+		if errors.Is(err, cmd.ErrUsage) {
+			sess.exitCode = exitUsage
+		}
 		return
 	}
 	switch {
@@ -584,9 +633,13 @@ func (sess *session) finalize(name string, errorCount, warnCount int, err error)
 		emitOdooLog("WARNING", logger, name+" cancelled by user",
 			nil, sess.styles, sess.palette, sess.cfg.DBName)
 	case err != nil:
+		fields := []logField{{"err", err.Error()}}
+		var hinted interface{ Hint() string }
+		if errors.As(err, &hinted) {
+			fields = append(fields, logField{"hint", hinted.Hint()})
+		}
 		emitOdooLog("ERROR", failureLogger(name, nil), name+" failed",
-			[]logField{{"err", err.Error()}},
-			sess.styles, sess.palette, sess.cfg.DBName)
+			fields, sess.styles, sess.palette, sess.cfg.DBName)
 	case errorCount > 0:
 		emitOdooLog("ERROR", failureLogger(name, nil), name+" finished with errors",
 			[]logField{{"errors", strconv.Itoa(errorCount)}},

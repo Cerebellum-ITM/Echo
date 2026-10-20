@@ -91,9 +91,9 @@ var (
 	ErrNoDB               = errors.New("no database configured — run `init` first")
 	ErrNoModulesGiven     = errors.New("no module names given")
 	ErrNoModulesAvailable = errors.New("no modules found — configure addons paths with `modules --config`")
-	ErrInvalidLogLevel    = errors.New("invalid --level")
-	ErrNoLastUpdate       = errors.New("no previous update to repeat for this database")
-	ErrLastExclusive      = errors.New("--last takes no module names and can't combine with --all")
+	ErrInvalidLogLevel    = fmt.Errorf("%w: invalid --level", ErrUsage)
+	ErrNoLastUpdate       = fmt.Errorf("%w: no previous update to repeat for this database", ErrUsage)
+	ErrLastExclusive      = fmt.Errorf("%w: --last takes no module names and can't combine with --all", ErrUsage)
 )
 
 // validLogLevel reports whether lvl is one of Odoo's accepted --log-level
@@ -118,7 +118,7 @@ func extractLevel(args []string) (level string, rest []string, err error) {
 		switch {
 		case a == "--level":
 			if i+1 >= len(args) {
-				return "", nil, fmt.Errorf("--level requires a value")
+				return "", nil, fmt.Errorf("%w: --level requires a value", ErrUsage)
 			}
 			level = args[i+1]
 			i++
@@ -151,9 +151,13 @@ func RunInstall(ctx context.Context, opts ModulesOpts) ([]string, error) {
 	withDemo := false
 	modules := make([]string, 0, len(rest))
 	for _, a := range rest {
-		switch a {
-		case "--with-demo":
+		switch {
+		case a == "--with-demo":
 			withDemo = true
+		case a == "--json":
+			// output mode, read by the REPL
+		case strings.HasPrefix(a, "-"):
+			return nil, fmt.Errorf("%w: unknown flag: %s", ErrUsage, a)
 		default:
 			modules = append(modules, a)
 		}
@@ -164,6 +168,8 @@ func RunInstall(ctx context.Context, opts ModulesOpts) ([]string, error) {
 			return nil, err
 		}
 		modules = picked
+	} else if err := validateModuleNames(ctx, opts, modules); err != nil {
+		return nil, err
 	}
 	emitResolved(opts, modules)
 	return modules, runOdoo(ctx, opts, odoo.WithLogLevel(odoo.Install(buildConn(opts), modules, withDemo), level))
@@ -189,15 +195,25 @@ func RunUpdate(ctx context.Context, opts ModulesOpts) ([]string, error) {
 	all, last, i18n, installed := false, false, false, false
 	modules := make([]string, 0, len(rest))
 	for _, a := range rest {
-		switch a {
-		case "--all":
+		switch {
+		case a == "--all":
 			all = true
-		case "--last":
+		case a == "--last":
 			last = true
-		case "--i18n":
+		case a == "--i18n":
 			i18n = true
-		case "--installed":
+		case a == "--installed":
 			installed = true
+		case a == "--json":
+			// output mode, read by the REPL
+		case a == "--force", a == "--no-checkpoint":
+			// only meaningful on a remote target; inert here
+		case a == "--from", a == "-E", a == "--env":
+			// remoteFlagsIn routes a valued selector to the remote path, so
+			// one that reaches here had no value
+			return nil, fmt.Errorf("%w: %s requires a value", ErrUsage, a)
+		case strings.HasPrefix(a, "-"):
+			return nil, fmt.Errorf("%w: unknown flag: %s", ErrUsage, a)
 		default:
 			modules = append(modules, a)
 		}
@@ -231,6 +247,11 @@ func RunUpdate(ctx context.Context, opts ModulesOpts) ([]string, error) {
 		return []string{"--all"}, runOdoo(ctx, opts, odoo.WithI18nOverwrite(odoo.WithLogLevel(odoo.UpdateAll(buildConn(opts)), level), i18n))
 	}
 
+	if len(modules) > 0 {
+		if err := validateModuleNames(ctx, opts, modules); err != nil {
+			return nil, err
+		}
+	}
 	prev, hasPrev := config.LoadLastUpdate(opts.Cfg.ProjectKey, opts.Cfg.DBName)
 	if len(modules) == 0 {
 		picked, canceled, err := pickModulesForUpdate(ctx, opts, prev.Modules, installed)
@@ -312,9 +333,20 @@ func RunUninstall(ctx context.Context, opts ModulesOpts) ([]string, error) {
 	if err := requireOdooConfig(opts.Cfg); err != nil {
 		return nil, err
 	}
-	level, modules, err := extractLevel(opts.Args)
+	level, rest, err := extractLevel(opts.Args)
 	if err != nil {
 		return nil, err
+	}
+	var modules []string
+	for _, a := range rest {
+		switch {
+		case a == "--json":
+			// output mode, read by the REPL
+		case strings.HasPrefix(a, "-"):
+			return nil, fmt.Errorf("%w: unknown flag: %s", ErrUsage, a)
+		default:
+			modules = append(modules, a)
+		}
 	}
 	if len(modules) == 0 {
 		picked, err := pickModulesInteractive(ctx, opts, "Modules to uninstall", nil)
@@ -364,6 +396,10 @@ func RunTest(ctx context.Context, opts ModulesOpts) ([]string, error) {
 			return nil, err
 		}
 		modules = picked
+	} else if !isRemote {
+		if err := validateModuleNames(ctx, opts, modules); err != nil {
+			return nil, err
+		}
 	}
 	emitResolved(opts, modules)
 
@@ -624,7 +660,11 @@ func equalStrings(a, b []string) bool {
 // the styled `modules` listing rendered by the REPL. The `--config`
 // addons-path picker stays in RunModules.
 func ModulesList(ctx context.Context, opts ModulesOpts) ([]string, error) {
-	return resolveModules(ctx, opts)
+	found, err := resolveModules(ctx, opts)
+	if err != nil {
+		return nil, fmt.Errorf("module discovery: %w", err)
+	}
+	return found, nil
 }
 
 // RunModules lists modules from the configured addons paths. With
@@ -707,6 +747,9 @@ func setAddonsPaths(opts ModulesOpts, list string) error {
 // project root are addons paths. Auto-detected paths are pre-selected and
 // marked with a star icon.
 func runModulesConfig(opts ModulesOpts) error {
+	if err := requireTTY("pass --addons-path <a,b> to set the addons paths"); err != nil {
+		return err
+	}
 	candidates, err := scanRootFolders(opts.Root)
 	if err != nil {
 		return err

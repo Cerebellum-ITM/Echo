@@ -121,7 +121,7 @@ echo_cli help deploy --json    # any of the above as JSON
 | `  --add`  | Register a new target (SSH host + remote project) and bind to it |
 | `  --next` | Switch to the next target, wrapping — the two-target toggle      |
 | `  --list [--json]` | List the targets, marking the current one (no SSH, no write) |
-| `  --show` | Show the binding, probe the remote, stream its `compose ps`     |
+| `  --show [--json]` | Show the binding, probe the remote, stream its `compose ps`; `--json`: one object on stdout (target, stage, db, Odoo version, deployed code, containers), lines on stderr |
 | `  --rm`   | Remove this directory's `[connect]` binding                     |
 | `doctor [--from <target>]` | Check a remote target is ready for deploy, push and checkpoints (read-only) |
 | `  --remote` | Check this directory's linked remote                          |
@@ -179,6 +179,9 @@ INFO    echo.doctor: doctor summary target=habitta_prod ok=5 warn=1 failed=1 ski
 | `  --no-follow`    | Disable follow mode, bounded output                  |
 | `  -c, --copy`     | Bounded output **and** copy to system clipboard      |
 | `  --all`          | All compose services instead of just Odoo            |
+| `  --errors`       | Only the ERROR/CRITICAL records of the last 2000 lines (or `-t N`), each with its traceback; no follow |
+| `  -n N`           | With `--errors`: keep the last `N` errors (default `5`) |
+| `  --json`         | With `--errors`: `{scanned, errors}` on stdout, logs on stderr |
 | `  --from <target>`| Follow logs on a **remote** instance (named connect target) |
 | `  --remote`       | Follow logs on this directory's linked remote (see `link`) |
 
@@ -208,6 +211,20 @@ echo ps --remote               # styled container table of the linked remote
 echo restart --from staging    # ad-hoc: a different named target
 ```
 
+`logs --errors` answers "why does it break" in one call: it reads the last
+lines of the Odoo service log (2000 unless `-t` says otherwise), keeps each
+ERROR/CRITICAL record with its traceback and prints the last five (`-n`),
+newest last, then `echo.logs errors=<shown> scanned=<lines>`. It exits 0
+whether or not it finds errors. `--json` prints
+`{"scanned": 2000, "errors": [{"time", "db", "logger", "message", "exception",
+"frames": [{"file", "line", "func"}]}]}`. It cannot follow, and `-n`/`--json`
+need `--errors`.
+
+```sh
+echo logs --remote --errors            # the last 5 errors of the linked remote
+echo logs --from staging --errors -n 1 --json
+```
+
 ### Modules
 
 | Command                  | Description                                          |
@@ -225,6 +242,7 @@ echo restart --from staging    # ad-hoc: a different named target
 | `test <mod>...`          | Run the modules' Odoo test suite (filters `--test-tags`) |
 | `  --update`             | Reload modules first (`-u`; for view/schema changes) |
 | `  --tags <spec>`        | Override the auto test-tags filter                   |
+| `  --json`               | One outcome object on stdout, logs on stderr — on install/update/uninstall/test |
 | `modules`                | List modules from the configured addons paths        |
 | `  --config`             | Interactive form to pick which folders are addons paths |
 | `  --addons-path <a,b>`  | Set the addons paths without the form (empty string clears) |
@@ -268,6 +286,38 @@ module names it opens a picker over the remote's own addons (or, with
 `--installed`, every module installed in the remote DB). A `prod`-stage target
 asks for a red confirmation unless `--force`; `--last` stays local-only. Like
 `deploy`, it works from a pure addons repo with no local `docker-compose.yml`.
+
+#### Run outcome as data (`--json`)
+
+`install`, `update`, `uninstall` and `test` take `--json`: the run's log goes
+to stderr and stdout gets one object when it ends, so an agent learns what
+broke without reading the log:
+
+```json
+{"command": "test", "target": "staging", "db": "odoo", "modules": ["sale_custom"],
+ "exit": 1, "duration_ms": 48211,
+ "errors": [{"time": "2026-10-19 11:00:01,000", "db": "odoo",
+             "logger": "odoo.modules.registry", "message": "Failed to load registry",
+             "exception": "ValueError: bad total",
+             "frames": [{"file": "/mnt/extra-addons/sale_custom/models/sale_order.py",
+                         "line": 30, "func": "_compute_total"}]}],
+ "warnings": [{"time": "…", "db": "odoo", "logger": "odoo.fields", "message": "…"}], "warnings_truncated": 0,
+ "tests": {"run": 12, "failed": 1, "errors": 0,
+           "failures": [{"kind": "FAIL", "test": "TestOrder.test_confirm", "module": "sale_custom",
+                         "file": "/mnt/extra-addons/sale_custom/tests/test_order.py", "line": 88,
+                         "message": "AssertionError: 'draft' != 'sale'"}]},
+ "migrations": [{"module": "sale_custom", "version": "18.0.1.2.0", "phases": ["pre", "post"]}]}
+```
+
+`target` is `null` on a local run; `modules` is `["all"]` for `update --all`.
+`tests` appears for `test`, and for `install`/`update` when Odoo printed a test
+report; failing tests are not repeated under `errors`. Warnings stop at 50,
+the rest counted in `warnings_truncated`. The exit code is the usual one; a
+usage error (unknown flag, unknown module) prints nothing on stdout and exits
+2, and `--json` never copies to the clipboard. Without `--json`, `test` closes
+with `run= failed= errored=` and adds one `echo.test.failure` line per failing
+test (`test= module= file= line=`); a `test` that ran nothing logs
+`no tests ran` and exits 1.
 
 `modinfo` compares the version Odoo recorded as installed against the manifest —
 `up to date` stays INFO, a pending upgrade is flagged WARN:
@@ -1516,6 +1566,11 @@ echo -C my-shop ps                 # …or by a registered alias (see `alias`)
 Exit codes: `0` success, `1` execution error (or `ERROR`/`CRITICAL` lines),
 `2` usage / a prompt that can't run without a TTY, `3` cancelled.
 
+Environment variables: `ECHO_LOG_FORMAT=json` prints every log line as one
+JSON object; `ECHO_NO_CLIPBOARD=1` turns off the automatic clipboard copy of a
+failure (or of `shell-run` output) on a terminal. Without a terminal (stdin or
+stdout piped) that copy never happens; `copy-last` and `--copy` still copy.
+
 `echo --version` / `-v` prints the CLI version and `echo --help` / `-h` prints
 the command list — both work from anywhere, including outside a project. The
 remote forms of most commands (`--from <target>` / `--remote`) also run from a
@@ -1593,7 +1648,7 @@ so `sequence --last` replays it headlessly.
 - **DB-name truncation.** A long database name (e.g. an odoo.sh dump) in the log lines' `db` column is middle-truncated on screen past `log_db_max` chars (default 20) — `mycompany-…_23-42-53` — so it doesn't wrap the rest of the line. Display-only: `copy-last` and `echo run --log` keep the full name.
 - **Foreign-line normalization.** `docker compose` progress and loose-severity tool stderr (e.g. wkhtmltopdf's `Warn: Can't find .pfb …`) are reformatted into the same Odoo log style instead of leaking as raw text. The `shell` command also recolors Odoo's own startup logs (which arrive raw over the PTY) and dims the Python/IPython banner.
 - **Migration detection.** `install` / `update` / `uninstall` passively watch the stream for Odoo migrations and close with one `echo.<cmd>.migration` line per migrated module (`module=… version=… phases=…`); `report` reconstructs the same summary from the last run.
-- **Action result line.** Every long-running command finishes with `✓ <name> completed` or `✗ <name> failed: …`. Silent failures — exit 0 with `ERROR`/`CRITICAL` log lines — render as `✗ <name> finished with N error(s)`. A failure auto-copies the relevant log slice to the clipboard.
+- **Action result line.** Every long-running command finishes with `✓ <name> completed` or `✗ <name> failed: …`. Silent failures — exit 0 with `ERROR`/`CRITICAL` log lines — render as `✗ <name> finished with N error(s)`. A failure auto-copies the relevant log slice to the clipboard (on a terminal only; `ECHO_NO_CLIPBOARD=1` turns it off).
 - **Fuzzy picker.** Filter is always active; type to narrow, `Tab` to toggle, `Enter` to confirm, scrollable for long lists. Single-select variants are used for restore, drop, connect, and recipe selection.
 - **Live editing.** The first token is highlighted green/red as you type (valid command or not); known flags get an accent color and Tab-complete.
 - **History.** ↑/↓ navigation across sessions, persisted to `~/.config/echo/history` (cap 1000 entries, consecutive duplicates collapsed).

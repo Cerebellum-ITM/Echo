@@ -23,10 +23,11 @@ func stripBuildFlag(args []string) (clean []string, build bool) {
 }
 
 // buildFlagAliases lists flags to drop from a command's build-mode picker
-// because they duplicate another offered flag. logs' `-c` is the short
-// alias of `--copy` (both live in commandFlags["logs"]); offering both
-// would invite a duplicate token in the composed line.
-var buildFlagAliases = map[string][]string{"logs": {"-c"}}
+// because they duplicate another offered flag. In logs, `-c` is the short
+// alias of `--copy`, `--tail` the long form of `-t` (the one with a value
+// prompt) and `-f`/`--follow` restate the default; offering them would
+// invite duplicate or valueless tokens in the composed line.
+var buildFlagAliases = map[string][]string{"logs": {"-c", "--tail", "-f", "--follow"}}
 
 // buildGlobalAliases are dropped from every command's build-mode picker:
 // `-E` is the short alias of `--env` (Reverb mode, Unit 107) and both are
