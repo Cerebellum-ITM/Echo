@@ -25,6 +25,8 @@ instead of scraped from logs.
   `test --json` parsed real runs (67 and 17 tests) and the zero-test path. Two bugs found live and fixed before
   the release: `probe --remote` named no target (`0ce2552`), module JSON lacked the target and the run error
   (`73402b0`). Ledger rows 143-147.
+- echo-console draws cards for `echo_cli -C` runs (`e9e4963` in its repo) and the `odoo-probe` skill accepts `-C`
+  (`15093bc`); both are loaded at session start.
 - The `odoo-probe` skill now teaches `probe`, the JSON reads and `help <cmd>` (`2e9d26a` in its repo, branch
   `docs/echo-console-cards`, not pushed; no remote). Both requests are archived in
   `archive/2026-10-20-odoo-probe-requests/`.
@@ -37,16 +39,14 @@ instead of scraped from logs.
 
 ## Next
 
-1. echo-console: recognise `echo_cli -C <dir> <cmd>` as a run. Its `parseEchoCommand`
-   (`~/Documents/Projects/echo-console/hooks/echo/command.ts`) rejects a command that does not start with a
-   letter, so `-C` runs get no card; the odoo-probe skill keeps `cd <project> &&` until it does.
-2. Remaining live checks ([ledger](knowledge/operations.md#live-verification-ledger)): a raising
-   `update --json`, `link --show --json` on a Reverb target and an undeclared stage, local `logs --errors`, the
+1. Remaining live checks ([ledger](knowledge/operations.md#live-verification-ledger)): a raising
+   `update --json` (its error path is the parser verified live by `logs --errors` and `test`), `link --show --json`
+   on an undeclared stage, local `logs --errors` (needs Docker running), the
    headless clipboard (145), `deployed_version` from a lock with module versions (148).
-3. The rest of the 2026-10-19 audit proposals in the
+2. The rest of the 2026-10-19 audit proposals in the
    [plan](work/build/plan.md#proposed-by-the-2026-10-19-agent-audit-not-specced) (headless `view`, `logview --last
    --json`, `ps`/`db-list --json` next).
-4. Older live checks (140, 139, 137 picker, 132) and sideload follow-ups 134-136; 138 needs a decision.
+3. Older live checks (140, 139, 137 picker, 132) and sideload follow-ups 134-136; 138 needs a decision.
 
 ## Messages
 
