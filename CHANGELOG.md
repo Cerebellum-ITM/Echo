@@ -5,6 +5,15 @@ All notable changes to Echo are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+- **A failing test's message no longer comes back empty.** Odoo prints the
+  text of a `ValidationError` or `UserError` on the line after
+  `odoo.exceptions.ValidationError:`, so `test --json` (and the error list of
+  the other module commands and `logs --errors`) reported only the exception
+  type. The first line of that text is now part of `message`.
+
 ## [0.28.0] - 2026-10-20
 
 ### Added

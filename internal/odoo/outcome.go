@@ -52,7 +52,10 @@ var (
 // is a TTY; `compose logs` replays them as stored.
 var ansiSeq = regexp.MustCompile(`\x1b\[[0-9;?]*[ -/]*[@-~]`)
 
-const maxWarnings = 50
+const (
+	maxWarnings     = 50
+	maxExceptionLen = 300
+)
 
 // Frame is one traceback frame.
 type Frame struct {
@@ -182,11 +185,20 @@ func (o *Outcome) continueEntry(line string) {
 		return
 	}
 	text := strings.TrimSpace(line)
-	if o.excDone || text == "" || line[0] == ' ' || line[0] == '\t' || len(o.open.Frames) == 0 {
+	if text == "" || len(o.open.Frames) == 0 {
 		return
 	}
-	o.open.Exception, o.excDone = text, true
+	switch {
+	case !o.excDone && line[0] != ' ' && line[0] != '\t':
+		o.open.Exception, o.excDone = text, true
+	case o.excDone && strings.HasSuffix(o.open.Exception, ":") && len(o.open.Exception) < maxExceptionLen:
+		// Odoo's UserError and ValidationError print their message on the
+		// lines after `Type:`.
+		o.open.Exception += " " + text
+	default:
+		return
+	}
 	if o.failure != nil {
-		o.failure.Message = text
+		o.failure.Message = o.open.Exception
 	}
 }
