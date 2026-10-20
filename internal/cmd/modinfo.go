@@ -21,6 +21,7 @@ type ModinfoOpts struct {
 	Root    string
 	Args    []string
 	Palette theme.Palette
+	Log     func(level, sub, msg, db string, fields ...[2]string)
 }
 
 // ModinfoResult is the outcome of comparing a module's DB-registered
@@ -32,8 +33,57 @@ type ModinfoResult struct {
 	DBFound   bool
 	Manifest  string // raw manifest version, "" if absent
 	Adapted   string // manifest version normalized via Odoo's adapt_version
+	Deployed  string // version the target's deploy lock records; remote only
 	Status    string // in sync | update pending | db ahead | not installed | no version
-	Copy      bool
+}
+
+// ModinfoReport is the outcome of one `modinfo` run over one or more modules.
+type ModinfoReport struct {
+	Modules []ModinfoResult
+	Remote  bool
+	DB      string // the database that answered, local or remote
+	JSON    bool
+	Copy    bool
+}
+
+type modinfoArgs struct {
+	modules         []string
+	from            string
+	remote          bool
+	all, json, copy bool
+}
+
+func parseModinfoArgs(args []string) (modinfoArgs, error) {
+	var p modinfoArgs
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		switch {
+		case a == "--copy":
+			p.copy = true
+		case a == "--json":
+			p.json = true
+		case a == "--all":
+			p.all = true
+		case a == "--remote":
+			p.remote = true
+		case a == "--from":
+			if i+1 >= len(args) {
+				return p, fmt.Errorf("%w: --from needs a target", ErrUsage)
+			}
+			i++
+			p.from = args[i]
+		case strings.HasPrefix(a, "--from="):
+			p.from = strings.TrimPrefix(a, "--from=")
+		case strings.HasPrefix(a, "-"):
+			return p, fmt.Errorf("%w: unknown flag: %s", ErrUsage, a)
+		default:
+			p.modules = append(p.modules, a)
+		}
+	}
+	if p.all && len(p.modules) > 0 {
+		return p, fmt.Errorf("%w: --all takes no module names", ErrUsage)
+	}
+	return p, nil
 }
 
 // manifestVersionRe extracts the `version` value from a __manifest__.py
@@ -169,64 +219,110 @@ func moduleManifest(ctx context.Context, opts ModinfoOpts, module string) (strin
 	return "", nil
 }
 
-// RunModinfo compares a module's DB-installed version against its manifest
-// version and returns the verdict. With no module name a single-select
-// picker chooses one; a non-TTY caller without a module fails closed.
-func RunModinfo(ctx context.Context, opts ModinfoOpts) (ModinfoResult, error) {
+// RunModinfo compares each module's version in the local database (or, with
+// --from/--remote, the target's) against the local manifest version and
+// returns one verdict per module. Without names, --all inspects every module
+// of the project's addons and no flag opens a single-select picker, which
+// fails closed without a TTY. A remote run also reports the version the
+// target's deploy lock records.
+func RunModinfo(ctx context.Context, opts ModinfoOpts) (ModinfoReport, error) {
+	p, err := parseModinfoArgs(opts.Args)
+	if err != nil {
+		return ModinfoReport{}, err
+	}
+	rep := ModinfoReport{DB: opts.Cfg.DBName, JSON: p.json, Copy: p.copy}
+	if p.from != "" || p.remote {
+		return runModinfoRemote(ctx, opts, p, rep)
+	}
+
 	if opts.Cfg.OdooContainer == "" {
-		return ModinfoResult{}, ErrNoOdooContainer
+		return rep, ErrNoOdooContainer
 	}
 	if opts.Cfg.DBName == "" || opts.Cfg.DBContainer == "" {
-		return ModinfoResult{}, ErrNoDB
+		return rep, ErrNoDB
 	}
-
-	var module string
-	copyFlag := false
-	for _, a := range opts.Args {
-		switch {
-		case a == "--copy":
-			copyFlag = true
-		case strings.HasPrefix(a, "-"):
-			return ModinfoResult{}, fmt.Errorf("unknown flag: %s", a)
-		default:
-			if module == "" {
-				module = a
-			}
-		}
+	modules, err := modinfoModules(ctx, opts, p)
+	if err != nil {
+		return rep, err
 	}
-
-	if module == "" {
-		names, err := resolveModules(ctx, ModulesOpts{Cfg: opts.Cfg, Root: opts.Root, Palette: opts.Palette})
-		if err != nil || len(names) == 0 {
-			return ModinfoResult{}, ErrNoModulesAvailable
-		}
-		picked, err := runSingleFuzzyPicker("Module to inspect", names, opts.Palette)
-		if err != nil {
-			return ModinfoResult{}, err
-		}
-		module = picked
-	}
-
-	res := ModinfoResult{Module: module, Copy: copyFlag}
-
 	user := env.Load(opts.Root)["POSTGRES_USER"]
-	_, ver, state, found, err := docker.ModuleVersion(ctx,
-		opts.Cfg.ComposeCmd, opts.Root, opts.Cfg.DBContainer, user, opts.Cfg.DBName, module)
+	rows, err := docker.ModuleStates(ctx,
+		opts.Cfg.ComposeCmd, opts.Root, opts.Cfg.DBContainer, user, opts.Cfg.DBName, false)
 	if err != nil {
-		return ModinfoResult{}, fmt.Errorf("query ir_module_module: %w", err)
+		return rep, fmt.Errorf("query ir_module_module: %w", err)
 	}
-	if found {
-		res.DBFound = true
-		res.DBVersion = ver
-		res.DBState = state
-	}
+	rep.Modules, err = inspectModules(ctx, opts, modules, rows, odooSerie(opts.Cfg.OdooVersion))
+	return rep, err
+}
 
-	manifest, err := moduleManifest(ctx, opts, module)
+func runModinfoRemote(ctx context.Context, opts ModinfoOpts, p modinfoArgs, rep ModinfoReport) (ModinfoReport, error) {
+	rsc, err := resolveRemoteShell(ctx, opts.Cfg, opts.Palette, opts.Root, p.from, opts.Log)
 	if err != nil {
-		return ModinfoResult{}, fmt.Errorf("read manifest: %w", err)
+		return rep, err
 	}
-	res.Manifest = manifestVersion(manifest)
-	res.Adapted = adaptVersion(res.Manifest, odooSerie(opts.Cfg.OdooVersion))
-	res.computeStatus()
-	return res, nil
+	rep.Remote, rep.DB = true, rsc.target.dbName
+	modules, err := modinfoModules(ctx, opts, p)
+	if err != nil {
+		return rep, err
+	}
+	states, versions, err := remoteModuleStates(ctx, rsc.sshHost, rsc.remotePath, rsc.target, rsc.conn.User, rsc.target.dbName)
+	if err != nil {
+		return rep, fmt.Errorf("query ir_module_module: %w", err)
+	}
+	rep.Modules, err = inspectModules(ctx, opts, modules,
+		remoteModuleRows(states, versions, false), odooSerie(rsc.target.odooVersion))
+	if err != nil {
+		return rep, err
+	}
+	lock, _ := readDeployLock(ctx, rsc, opts.Log)
+	for i := range rep.Modules {
+		rep.Modules[i].Deployed = lock.Modules[rep.Modules[i].Module].Version
+	}
+	return rep, nil
+}
+
+// modinfoModules is the list a run inspects: the names given, every module of
+// the local project's addons with --all, or the one picked.
+func modinfoModules(ctx context.Context, opts ModinfoOpts, p modinfoArgs) ([]string, error) {
+	if len(p.modules) > 0 {
+		return p.modules, nil
+	}
+	names, err := resolveModules(ctx, ModulesOpts{Cfg: opts.Cfg, Root: opts.Root, Palette: opts.Palette})
+	if err != nil || len(names) == 0 {
+		return nil, ErrNoModulesAvailable
+	}
+	if p.all {
+		return names, nil
+	}
+	picked, err := runSingleFuzzyPicker("Module to inspect", names, opts.Palette)
+	if err != nil {
+		return nil, err
+	}
+	return []string{picked}, nil
+}
+
+// inspectModules builds each module's verdict from the database rows and the
+// local manifest, normalized to the database's series. A module without a
+// manifest is not an error: its status comes from the database alone.
+func inspectModules(ctx context.Context, opts ModinfoOpts, modules []string, rows []docker.ModuleStateRow, serie string) ([]ModinfoResult, error) {
+	byName := make(map[string]docker.ModuleStateRow, len(rows))
+	for _, r := range rows {
+		byName[r.Name] = r
+	}
+	out := make([]ModinfoResult, 0, len(modules))
+	for _, m := range modules {
+		res := ModinfoResult{Module: m}
+		if row, ok := byName[m]; ok {
+			res.DBFound, res.DBVersion, res.DBState = true, row.Version, row.State
+		}
+		manifest, err := moduleManifest(ctx, opts, m)
+		if err != nil {
+			return nil, fmt.Errorf("read manifest: %w", err)
+		}
+		res.Manifest = manifestVersion(manifest)
+		res.Adapted = adaptVersion(res.Manifest, serie)
+		res.computeStatus()
+		out = append(out, res)
+	}
+	return out, nil
 }

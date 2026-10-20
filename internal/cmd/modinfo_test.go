@@ -1,6 +1,12 @@
 package cmd
 
-import "testing"
+import (
+	"context"
+	"errors"
+	"path/filepath"
+	"reflect"
+	"testing"
+)
 
 func TestManifestVersion(t *testing.T) {
 	cases := []struct {
@@ -89,5 +95,51 @@ func TestComputeStatus(t *testing.T) {
 				t.Fatalf("computeStatus() = %q, want %q", r.Status, c.want)
 			}
 		})
+	}
+}
+
+func TestRunModinfoRemote(t *testing.T) {
+	remote := newFakeRemote(t)
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, "addons/sale/__manifest__.py"), "{'name': 'sale', 'version': '18.0.1.0'}")
+	mustWrite(t, filepath.Join(root, "addons/stock/__manifest__.py"), "{'name': 'stock', 'version': '1.1'}")
+	mustWrite(t, filepath.Join(remote.dir, ".echo/lock.json"),
+		`{"schema": 1, "modules": {"sale": {"source": "worktree", "version": "18.0.1.0", "via": "push", "at": "2026-10-20T10:00:00Z", "verified": true}}}`)
+
+	rep, err := RunModinfo(context.Background(), ModinfoOpts{
+		Cfg: remote.cfg(), Root: root, Args: []string{"sale", "stock", "ghost", "--from", "stg"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !rep.Remote || rep.DB != "stg" {
+		t.Errorf("report remote=%v db=%q, want a remote run on stg", rep.Remote, rep.DB)
+	}
+	type verdict struct{ module, status, deployed string }
+	var got []verdict
+	for _, m := range rep.Modules {
+		got = append(got, verdict{m.Module, m.Status, m.Deployed})
+	}
+	want := []verdict{
+		{"sale", "in sync", "18.0.1.0"},
+		{"stock", "update pending", ""},
+		{"ghost", "not installed", ""},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("verdicts = %v, want %v", got, want)
+	}
+}
+
+func TestParseModinfoArgs(t *testing.T) {
+	if _, err := parseModinfoArgs([]string{"--all", "sale"}); !errors.Is(err, ErrUsage) {
+		t.Errorf("--all with a name: err = %v, want ErrUsage", err)
+	}
+	p, err := parseModinfoArgs([]string{"sale", "--from", "stg", "stock", "--json", "--copy"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := modinfoArgs{modules: []string{"sale", "stock"}, from: "stg", json: true, copy: true}
+	if !reflect.DeepEqual(p, want) {
+		t.Fatalf("parsed %+v, want %+v", p, want)
 	}
 }

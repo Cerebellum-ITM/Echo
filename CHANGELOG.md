@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **`modstate` and `modinfo` answer for a remote target, and both speak
+  JSON.** Asking "which modules are installed on staging, and which of mine
+  still need `-u` there?" meant writing a probe, because both commands only
+  read the local stack and `modinfo` took one module at a time.
+  `modstate [mods...] [--all] [--json] [--from <t> | --remote]` reads the
+  target's `ir_module_module` with the same query deploy runs (DB exec
+  transport and fallback included); module names narrow the list, and with
+  `--all` a name the database does not know is listed as `uninstalled`.
+  `modinfo <mod...> | --all [--json] [--from <t> | --remote]` checks several
+  modules in one call (`--all` is every module of the local addons), closes
+  with `checked modules=N pending=N ahead=N missing=N`, and remotely adds
+  `deployed=`, the version the target's deploy lock records. `--json` prints
+  `[{module, state, db_version, manifest_version, deployed_version, status}]`
+  on stdout with logs on stderr. Both are read-only with no prod gate and run
+  outside a compose project when given a remote flag; `--all` with names, or
+  `modinfo --last` with a remote flag, exits 2.
+
 ### Fixed
 - **A failing test's message no longer comes back empty.** Odoo prints the
   text of a `ValidationError` or `UserError` on the line after
