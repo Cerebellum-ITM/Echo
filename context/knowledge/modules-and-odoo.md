@@ -30,7 +30,7 @@ Deploy composes these primitives into releases: [deploy](deploy.md). Remote tran
 
 - `probe -c <expr>` (repeatable, `name=expr`), `probe -` (stdin script, returns `result`), `ref`, `read` (`--domain` JSON, `--fields`, `--limit` default 20, `--order`, `--count`), `fields`, `param` (secret-looking keys masked unless `--reveal`), `arch` (`_get_combined_arch` of the primary view plus the BFS chain of inheriting views, `tree`/`list` mapped by major). Local and `--from`/`--remote`; `odoo shell --log-level=warn` through the shell-run transports.
 - Read-only by Postgres, no prod gate; arguments and results cross as base64 JSON frames ([decisions](../decisions.md#modules-and-odoo)). Payload: `{ok, kind, result | error{type,message,traceback,file,line}, stdout, db, stage, target, duration_ms}`; exit 0 result, 1 Python error or no frame, 2 usage.
-- **Hypothesis:** read-only holds and every preset runs on 17, 18 and 19 (`Cursor` takes an instance `commit`, `default_view`, `_get_combined_arch`, `ir.ui.view.xml_id`, `ir.model.fields.modules`); [ledger](operations.md#live-verification-ledger) row 143.
+- Verified on Odoo 19 (`develop`, 2026-10-19): every form ran and a `create` failed with `ReadOnlySqlTransaction`. **Hypothesis:** the same holds on 17 and 18 (`Cursor` takes an instance `commit`, `default_view`, `_get_combined_arch`, `ir.ui.view.xml_id`, `ir.model.fields.modules`); [ledger](operations.md#live-verification-ledger) row 143.
 
 ### `--level`
 

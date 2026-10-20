@@ -21,9 +21,11 @@ instead of scraped from logs.
   - Unit 144 module commands: validation and zero-test failure (`0219002`), `--json` outcome (`ee60610`).
   - Unit 147 `logs --errors [--json]` (`fb56ac6`).
   - `help agents` rows for the new JSON reads (`357159b`).
-- `go build`, `go vet`, `go test ./...` green at `357159b`; touched files gofmt-clean.
-- Nothing of it ran against docker, Postgres or a server (docker was not running; real servers need the user's
-  go). The Python template and the Odoo log parser are written from Odoo 17/18/19 sources: ledger rows 143-147.
+  - Live-check fix: `probe --remote` named its target (`0ce2552`).
+- `go build`, `go vet`, `go test ./...` green; touched files gofmt-clean.
+- **Live-verified read-only on `develop`** (muutrade, Odoo 19, 2026-10-19, user's go): every `probe` form, the
+  refused write, `link --show --json`, `logs --errors --json`. Not run live: Odoo 17/18, module `--json`
+  (`test`/`update` were excluded on purpose), the headless clipboard. Ledger rows 143-147.
 - The installed `~/.local/bin/echo_cli` is still `0.27.0+40779ce`: it has none of the branch.
 
 ## Blockers
@@ -34,10 +36,9 @@ instead of scraped from logs.
 
 ## Next
 
-1. Live-verify the branch read-only on a dev target (`muutrade` -> `develop` or `habitta_dev`): `probe` on each
-   form plus a write that must fail, `link --show --json`, `logs --errors --json`, then a failing
-   `test --json` on a dev stack ([ledger](knowledge/operations.md#live-verification-ledger) rows 143-147).
-   Fix what the live run shows on the same branch.
+1. Remaining live checks ([ledger](knowledge/operations.md#live-verification-ledger) rows 143-147): `probe` on an
+   Odoo 17 and an 18 target, and a failing `test --json` / `update --json` on a dev stack (needs the user's go:
+   it runs Odoo on the target).
 2. Merge `feature/agent-inspection-tooling` into `main` (`branch-flow`, `[MERGE]`), then release 0.28.0 (minor):
    promote `[Unreleased]` and bump `Version` in one commit, push, reinstall `echo_cli`.
 3. After the install, apply both odoo-probe requests (below).
