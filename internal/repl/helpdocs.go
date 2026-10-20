@@ -223,6 +223,8 @@ var commandDocs = []commandDoc{
 		},
 		notes: []string{
 			"Addons paths are relative to the project root; with none set, Echo scans ., addons, custom, then discovers manifests",
+			"--config exits 2 without a TTY; set the paths with --addons-path instead",
+			"A discovery failure (odoo.conf unreadable in the container) exits 1; an empty result is not an error",
 		},
 	},
 	{

@@ -2,6 +2,7 @@ package repl
 
 import (
 	"context"
+	"errors"
 	"strconv"
 	"strings"
 
@@ -15,20 +16,34 @@ const modIcon = ""
 
 // runModulesList renders `modules` as a wrapped, theme-styled list closing
 // with an Odoo-style count line, instead of one bare name per line. The
-// `--config` addons-path picker keeps its streamed output via RunModules.
+// addons-path setters (`--config`, `--addons-path`) keep their streamed
+// output via RunModules. A discovery failure is an execution error, not an
+// empty list.
 func (sess *session) runModulesList(ctx context.Context, opts cmd.ModulesOpts, args []string) {
 	sess.startLog("modules", args)
-	for _, a := range args {
-		if a == "--config" {
-			sess.readonlyFinalize("modules", cmd.RunModules(ctx, opts))
-			return
+	if setsAddonsPaths(args) {
+		err := cmd.RunModules(ctx, opts)
+		sess.readonlyFinalize("modules", err)
+		if errors.Is(err, cmd.ErrUsage) {
+			sess.exitCode = exitUsage
 		}
+		return
 	}
 	found, err := cmd.ModulesList(ctx, opts)
 	if err != nil {
-		found = nil // a resolve failure reads as "no modules", as before
+		sess.readonlyFinalize("modules", err)
+		return
 	}
 	sess.emitModulesList(found)
+}
+
+func setsAddonsPaths(args []string) bool {
+	for _, a := range args {
+		if a == "--config" || a == "--addons-path" || strings.HasPrefix(a, "--addons-path=") {
+			return true
+		}
+	}
+	return false
 }
 
 // emitModulesList prints the module names wrapped to the terminal width, each

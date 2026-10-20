@@ -624,7 +624,11 @@ func equalStrings(a, b []string) bool {
 // the styled `modules` listing rendered by the REPL. The `--config`
 // addons-path picker stays in RunModules.
 func ModulesList(ctx context.Context, opts ModulesOpts) ([]string, error) {
-	return resolveModules(ctx, opts)
+	found, err := resolveModules(ctx, opts)
+	if err != nil {
+		return nil, fmt.Errorf("module discovery: %w", err)
+	}
+	return found, nil
 }
 
 // RunModules lists modules from the configured addons paths. With
@@ -707,6 +711,9 @@ func setAddonsPaths(opts ModulesOpts, list string) error {
 // project root are addons paths. Auto-detected paths are pre-selected and
 // marked with a star icon.
 func runModulesConfig(opts ModulesOpts) error {
+	if err := requireTTY("pass --addons-path <a,b> to set the addons paths"); err != nil {
+		return err
+	}
 	candidates, err := scanRootFolders(opts.Root)
 	if err != nil {
 		return err

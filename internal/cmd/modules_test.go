@@ -206,3 +206,18 @@ func TestEqualStrings(t *testing.T) {
 		}
 	}
 }
+
+func TestModulesConfigFailsClosedWithoutTTY(t *testing.T) {
+	orig := stdinIsTTY
+	t.Cleanup(func() { stdinIsTTY = orig })
+	stdinIsTTY = func() bool { return false }
+
+	err := RunModules(context.Background(), ModulesOpts{
+		Cfg:  &config.Config{},
+		Root: t.TempDir(),
+		Args: []string{"--config"},
+	})
+	if !errors.Is(err, ErrNonInteractive) {
+		t.Fatalf("modules --config without a TTY = %v, want ErrNonInteractive", err)
+	}
+}

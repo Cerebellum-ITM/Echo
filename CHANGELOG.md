@@ -119,6 +119,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and `-f`, `--follow` and `--tail` on `logs` worked but were missing from
   the flag list, so `help` did not show them, Tab did not complete them and
   the prompt dimmed them as unknown. They are listed and documented now.
+- **`modules` headless.** `modules --addons-path <a,b>` never ran: the
+  command only handed `--config` to the setter and listed modules for
+  anything else; it now saves the paths. `modules --config` opened its form
+  without a terminal check and now fails closed (exit 2, pointing at
+  `--addons-path`). A module discovery that fails (the container's
+  `odoo.conf` cannot be read) ends with `echo.modules.error ... err=` and
+  exit 1 instead of "no modules" and exit 0.
 - **`db-pull --filestore` reads the server's `filestore_path`.** It used
   the local project's setting for the remote container, so a server with a
   non-default path pulled nothing.
