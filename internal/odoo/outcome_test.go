@@ -196,3 +196,27 @@ func TestOutcomeTalliesAddUp(t *testing.T) {
 		t.Errorf("tests = %+v errors = %+v", o.Tests, o.Errors)
 	}
 }
+
+func TestOutcomeJoinsMessageAfterColon(t *testing.T) {
+	var o Outcome
+	for _, line := range []string{
+		"2026-10-20 15:15:31,367 2556 ERROR muutrade-dev odoo.tests.suite: ERROR: setUpClass (odoo.addons.sale.tests.test_sale_flow.TestSaleFlow)",
+		"Traceback (most recent call last):",
+		`  File "/usr/lib/python3/dist-packages/odoo/addons/sale/tests/test_sale_flow.py", line 9, in setUpClass`,
+		"    super().setUpClass()",
+		`  File "/usr/lib/python3/dist-packages/odoo/addons/base_vat/models/res_partner.py", line 161, in _run_vat_checks`,
+		"    raise ValidationError(msg)",
+		"odoo.exceptions.ValidationError: ",
+		"Parece que el número VAT [MUU140617ES0] para contacto [MUUTRADE] no es válido.  ",
+		"Nota: El formato esperado es BE0477472701",
+	} {
+		o.Feed(line)
+	}
+	if len(o.Failures) != 1 {
+		t.Fatalf("failures = %d, want 1", len(o.Failures))
+	}
+	want := "odoo.exceptions.ValidationError: Parece que el número VAT [MUU140617ES0] para contacto [MUUTRADE] no es válido."
+	if got := o.Failures[0].Message; got != want {
+		t.Errorf("message = %q\nwant      %q", got, want)
+	}
+}

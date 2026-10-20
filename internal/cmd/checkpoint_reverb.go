@@ -29,7 +29,7 @@ func runCheckpointReverb(ctx context.Context, opts CheckpointOpts, rsc remoteShe
 
 	switch p.sub {
 	case "create":
-		return runSnapshotCreate(ctx, opts, rsc, client)
+		return runSnapshotCreate(ctx, opts, rsc, client, p.force)
 	case "rm":
 		// Deleting a snapshot throws state away, so the contract keeps it
 		// admin-scoped: an echo token gets a 403. Refuse with the reason
@@ -88,10 +88,15 @@ func snapshotRow(s reverb.Snapshot) CheckpointRow {
 
 // runSnapshotCreate enqueues a manual snapshot and follows its job, so the
 // user sees the same progress a local checkpoint prints instead of silence.
-func runSnapshotCreate(ctx context.Context, opts CheckpointOpts, rsc remoteShellContext, client *reverb.Client) (CheckpointResult, error) {
+func runSnapshotCreate(ctx context.Context, opts CheckpointOpts, rsc remoteShellContext, client *reverb.Client, force bool) (CheckpointResult, error) {
 	if err := confirmRemoteProd(opts.Palette, "checkpoint create", rsc, opts.Args); err != nil {
 		return CheckpointResult{}, err
 	}
+	ctx, release, err := holdOpLock(ctx, rsc, "checkpoint create", force, opts.Log)
+	if err != nil {
+		return CheckpointResult{}, err
+	}
+	defer release()
 	note := "echo checkpoint"
 	jobID, err := client.CreateSnapshot(ctx, rsc.reverb.id, note)
 	if err != nil {

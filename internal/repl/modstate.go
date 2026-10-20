@@ -13,27 +13,31 @@ import (
 	"github.com/pascualchavez/echo/internal/docker"
 )
 
-// runModstate implements `modstate [--all] [--json]`: dump every module's
-// name/state/latest_version from ir_module_module for the active DB.
-// Default is installed-only; --all widens to every state. Human mode emits
-// an aligned `name | state | version` table; --json emits a clean JSON
-// array to stdout only (logs/errors to stderr), so the output can be piped
-// straight into jq.
+// runModstate implements `modstate [mods...] [--all] [--json] [--from <t> |
+// --remote]`: dump every module's name/state/latest_version from
+// ir_module_module for the active DB or a remote target's. Default is
+// installed-only; --all widens to every state and names narrow the list.
+// Human mode emits an aligned `name | state | version` table; --json emits a
+// clean JSON array to stdout only (logs/errors to stderr), so the output can
+// be piped straight into jq.
 func (sess *session) runModstate(ctx context.Context, args []string) {
-	wantJSON := false
-	for _, a := range args {
-		if a == "--json" {
-			wantJSON = true
-			break
-		}
+	wantJSON := seqHasFlag(args, "--json")
+	logFn := sess.cmdOdooLogger("modstate")
+	if wantJSON {
+		logFn = sess.stderrOdooLogger("modstate")
 	}
 
 	res, err := cmd.RunModstate(ctx, cmd.ModstateOpts{
-		Cfg:  sess.cfg,
-		Root: sess.projectDir,
-		Args: args,
+		Cfg:     sess.cfg,
+		Root:    sess.projectDir,
+		Args:    args,
+		Palette: sess.palette,
+		Log:     logFn,
 	})
 	if err != nil {
+		if sess.handleQuit(err) {
+			return
+		}
 		// Both modes map the error the same way (usage vs execution); only
 		// where the diagnostic lands differs. In --json mode it goes to
 		// stderr so stdout stays empty; otherwise it frames via finalize.
@@ -56,16 +60,16 @@ func (sess *session) runModstate(ctx context.Context, args []string) {
 }
 
 // exitCodeFor maps a command error to the script exit code: a missing DB
-// config, an explicit ErrUsage, or a bad flag is a usage error (2),
-// anything else execution (1). Shared by the commands whose --json mode
-// bypasses finalize and therefore has to pick the code itself.
+// config, an explicit ErrUsage, or a bad flag is a usage error (2); the rest
+// follow scriptExitCode (a picker without a TTY 2, a cancel 3, anything else
+// 1). Shared by the commands whose --json mode bypasses finalize and
+// therefore has to pick the code itself.
 func exitCodeFor(err error) int {
 	if errors.Is(err, cmd.ErrNoDB) || errors.Is(err, cmd.ErrUsage) ||
-		strings.Contains(err.Error(), "unknown flag") ||
-		strings.Contains(err.Error(), "takes no arguments") {
+		strings.Contains(err.Error(), "unknown flag") {
 		return exitUsage
 	}
-	return exitError
+	return scriptExitCode(err, 0)
 }
 
 // emitModstateJSON marshals the rows to a JSON array and writes it — and
@@ -106,7 +110,7 @@ func (sess *session) emitModstateTable(res cmd.ModstateResult) {
 	}
 	if len(res.Rows) == 0 {
 		emitOdooLog("INFO", "echo.modstate", "no modules",
-			[]logField{{"scope", scope}}, sess.styles, sess.palette, sess.cfg.DBName)
+			[]logField{{"scope", scope}}, sess.styles, sess.palette, res.DB)
 		sess.exitCode = exitOK
 		return
 	}
@@ -146,7 +150,7 @@ func (sess *session) emitModstateTable(res cmd.ModstateResult) {
 
 	emitOdooLog("INFO", "echo.modstate", "modules listed",
 		[]logField{{"count", strconv.Itoa(len(res.Rows))}, {"scope", scope}},
-		sess.styles, sess.palette, sess.cfg.DBName)
+		sess.styles, sess.palette, res.DB)
 	sess.exitCode = exitOK
 }
 

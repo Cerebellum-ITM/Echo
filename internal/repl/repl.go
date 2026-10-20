@@ -79,13 +79,13 @@ type session struct {
 	// and read by RunRecipe to build the per-step run summary (Unit 37).
 	lastErrors   int
 	lastWarnings int
-	// lastModinfoModule / lastViewModule / lastViewFile remember the last
-	// `modinfo` / `view` target so `--last` can replay it without the
+	// lastModinfoModules / lastViewModule / lastViewFile remember the last
+	// `modinfo` / `view` targets so `--last` can replay them without the
 	// picker (e.g. to copy a result first reached interactively). These
 	// live only for the session — never persisted to disk.
-	lastModinfoModule string
-	lastViewModule    string
-	lastViewFile      string
+	lastModinfoModules []string
+	lastViewModule     string
+	lastViewFile       string
 	// lastViewFrom / lastViewRemote remember the last view's remote source
 	// so `view --last` replays from the same target when the current args
 	// carry no remote flag of their own.

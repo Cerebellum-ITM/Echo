@@ -5,6 +5,51 @@ All notable changes to Echo are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- **`modstate` and `modinfo` answer for a remote target, and both speak
+  JSON.** Asking "which modules are installed on staging, and which of mine
+  still need `-u` there?" meant writing a probe, because both commands only
+  read the local stack and `modinfo` took one module at a time.
+  `modstate [mods...] [--all] [--json] [--from <t> | --remote]` reads the
+  target's `ir_module_module` with the same query deploy runs (DB exec
+  transport and fallback included); module names narrow the list, and with
+  `--all` a name the database does not know is listed as `uninstalled`.
+  `modinfo <mod...> | --all [--json] [--from <t> | --remote]` checks several
+  modules in one call (`--all` is every module of the local addons), closes
+  with `checked modules=N pending=N ahead=N missing=N`, and remotely adds
+  `deployed=`, the version the target's deploy lock records. `--json` prints
+  `[{module, state, db_version, manifest_version, deployed_version, status}]`
+  on stdout with logs on stderr. Both are read-only with no prod gate and run
+  outside a compose project when given a remote flag; `--all` with names, or
+  `modinfo --last` with a remote flag, exits 2.
+
+### Changed
+- **Every command that changes a target's code or database takes the
+  operation lock.** Only `db-push` took it, so a `deploy`, a `watch` cycle,
+  a `sideload` or a checkpoint started during a `db-push` wrote code or
+  touched the database under it, and two deploys from two machines could
+  interleave. Real runs of `deploy` (including `--apply`, `--rollback`,
+  `--restore-code`, `--set-code`, `--set-git-branch --rename` and `--test`),
+  each deploying `watch` cycle, `sideload`, `checkpoint create` and
+  `checkpoint rm` now take `<remote_path>/.echo/op.lock.d` after their
+  confirms and before the first write, and release it on every exit,
+  Ctrl+C included. A held lock fails with `target busy: <command> from
+  <host> since <started>` (exit 1) before anything is written; `--force`
+  takes over a lock older than 6 hours, never a younger one. A busy target
+  skips the `watch` cycle with a WARNING and retries it on the next poll,
+  and `deploy --dry-run` only warns. Steps a command runs internally
+  (deploy's checkpoint and its rollback after a failure) never take it
+  again.
+
+### Fixed
+- **A failing test's message no longer comes back empty.** Odoo prints the
+  text of a `ValidationError` or `UserError` on the line after
+  `odoo.exceptions.ValidationError:`, so `test --json` (and the error list of
+  the other module commands and `logs --errors`) reported only the exception
+  type. The first line of that text is now part of `message`.
+
 ## [0.28.0] - 2026-10-20
 
 ### Added

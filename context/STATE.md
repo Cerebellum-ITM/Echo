@@ -16,7 +16,13 @@ instead of scraped from logs.
   (Units 143-147: `probe`, module `--json` and validation, `logs --errors`, `link --show --json`, headless
   clipboard).
 - `~/.local/bin/echo_cli` is `0.28.0+73402b0`.
-- `CHANGELOG.md` has no `[Unreleased]` section; add one with the first change.
+- **Branch `feature/op-lock-remote-modules`** (from `d80eb9e`, not pushed, not merged), 2026-10-20, in
+  `CHANGELOG.md` `[Unreleased]`:
+  - `bfaf2cd` fix: a failing test's `ValidationError`/`UserError` text no longer comes back empty (found on a real
+    `test sale` run on `develop`: 231 tests, 69 failed, 24 errors).
+  - Unit 148 `modstate`/`modinfo` remote and JSON (`9bb9dda`), verified on `develop`.
+  - Unit 142 operation lock in deploy, watch, sideload and checkpoint (`9eced71`); live check pending.
+  - `go build`, `go vet`, `go test ./...` green.
 - Live checks done 2026-10-19/20 (user's go): `probe` fully on Odoo 17 (`form-dev`), 18 (`habitta_dev`) and 19
   (`develop`), writes refused on all three; `link --show --json` and `logs --errors --json` on `develop`;
   `test --json` parsed real runs (67 and 17 tests) and the zero-test path. Two bugs found live and fixed before
@@ -34,16 +40,18 @@ instead of scraped from logs.
 
 ## Next
 
-1. echo-console: recognise `echo_cli -C <dir> <cmd>` as a run. Its `parseEchoCommand`
+1. Merge `feature/op-lock-remote-modules` into `main` and decide when to release it (0.29.0: minor, new flags);
+   live-check Unit 142 first if possible (ledger row 142).
+2. echo-console: recognise `echo_cli -C <dir> <cmd>` as a run. Its `parseEchoCommand`
    (`~/Documents/Projects/echo-console/hooks/echo/command.ts`) rejects a command that does not start with a
    letter, so `-C` runs get no card; the odoo-probe skill keeps `cd <project> &&` until it does.
-2. Remaining live checks ([ledger](knowledge/operations.md#live-verification-ledger)): a real failing test and a
-   raising `update --json` (no failing suite was available), `link --show --json` on a Reverb target and an
-   undeclared stage, local `logs --errors`, the headless clipboard (145).
-3. Unit 142 `op-lock-respect` needs its spec; then the 2026-10-19 audit proposals in the
-   [plan](work/build/plan.md#proposed-by-the-2026-10-19-agent-audit-not-specced) (remote `modstate`/`modinfo`
-   first).
-4. Older live checks (140, 139, 137 picker, 132) and sideload follow-ups 134-136; 138 needs a decision.
+3. Remaining live checks ([ledger](knowledge/operations.md#live-verification-ledger)): a raising
+   `update --json`, `link --show --json` on a Reverb target and an undeclared stage, local `logs --errors`, the
+   headless clipboard (145), `deployed_version` from a lock with module versions (148).
+4. The rest of the 2026-10-19 audit proposals in the
+   [plan](work/build/plan.md#proposed-by-the-2026-10-19-agent-audit-not-specced) (headless `view`, `logview --last
+   --json`, `ps`/`db-list --json` next).
+5. Older live checks (140, 139, 137 picker, 132) and sideload follow-ups 134-136; 138 needs a decision.
 
 ## Messages
 
@@ -58,7 +66,7 @@ None open.
 
 - Small fixes, one commit each ([plan](work/build/plan.md#small-fixes-found-during-the-2026-09-30-store-adoption)),
   including `down --from` (not a real remote form).
-- Specs 144, 146 and 147 stay in `work/build/` until their remaining live checks; then archive them.
+- Specs 142, 144, 146, 147 and 148 stay in `work/build/` until their remaining live checks; then archive them.
 - Merged branches kept locally: `feature/command-help-db-push`, `feature/agent-inspection-tooling`; three old
   worktrees in `.claude/worktrees/` and about twenty merged `feat/*` branches remain; untouched.
 - `ctx_audit.py` flags `messages/README.md` as a stale message; it is the folder's index, a false positive.

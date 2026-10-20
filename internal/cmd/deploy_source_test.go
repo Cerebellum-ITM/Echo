@@ -216,6 +216,9 @@ func newFakeRemote(t *testing.T) *fakeRemote {
 		t.Fatal(err)
 	}
 	f := &fakeRemote{dir: filepath.Join(base, "srv"), logPath: filepath.Join(home, "compose.log")}
+	if err := os.MkdirAll(f.dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
 	mustWrite(t, filepath.Join(home, ".config/echo/projects", config.ProjectKey(f.dir)+".toml"),
 		"stage = \"dev\"\ndb_name = \"stg\"\nodoo_version = \"18\"\n")
 	bin := t.TempDir()
@@ -449,13 +452,14 @@ func TestRunDeployCommitsWithoutPush(t *testing.T) {
 	remote := newFakeRemote(t)
 	r, fix := incidentRepo(t)
 	mustWrite(t, filepath.Join(remote.dir, "addons/sale/models.py"), "running on the server")
-	before := treeFiles(t, remote.dir)
+	addons := filepath.Join(remote.dir, "addons")
+	before := treeFiles(t, addons)
 
 	args := []string{"--commits", fix, "--from", "stg", "--force", "--no-lint"}
 	if _, err := RunDeploy(ctx, DeployOpts{Cfg: remote.cfg(), Root: r.root, Args: args}); err != nil {
 		t.Fatalf("an update-only deploy of a commit must not need a push: %v", err)
 	}
-	if !reflect.DeepEqual(treeFiles(t, remote.dir), before) {
+	if !reflect.DeepEqual(treeFiles(t, addons), before) {
 		t.Error("a deploy without push changed the server's code")
 	}
 }

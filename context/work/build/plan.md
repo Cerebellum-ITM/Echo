@@ -11,7 +11,8 @@ Order: unblocked first; a unit gets a spec (`/ctx spec build <NN-name>`) before 
 | 145 | headless-hygiene | Small agent-facing fixes, one commit each: no clipboard auto-copy without a TTY, the missing `commandFlags` entries, a TTY guard on `modules --config`, `modules` discovery failure exits 1. | — | implemented (`1be8a7b`, `9091a31`, `498b87a`), released 0.28.0; live verification pending |
 | 146 | link-show-json | `link --show --json`: binding plus resolved target (stage, DB, version, deployed, containers) as one object. [Spec](146-link-show-json.md). | — | implemented (`26c366a`), released 0.28.0; Reverb target and undeclared stage still to verify live |
 | 147 | logs-errors | `logs --errors [-n N] [--json]`: the last ERROR blocks with exception and frames, local or remote. [Spec](147-logs-errors.md). | 144 | implemented (`fb56ac6`), released 0.28.0; local path still to verify live |
-| 142 | op-lock-respect | deploy, watch, sideload and checkpoint check and take the operation lock db-push introduces, so they never run while a db-push replaces the DB. | 141 | pending, needs spec |
+| 142 | op-lock-respect | deploy, watch, sideload and checkpoint check and take the operation lock db-push introduces, so they never run while a db-push replaces the DB. [Spec](142-op-lock-respect.md). | 141 | implemented on `feature/op-lock-remote-modules` (`9eced71`); live verification pending |
+| 148 | remote-module-state | `modstate`/`modinfo` with `--from`/`--remote` and `--json`, several modules per `modinfo`, `deployed_version` from the deploy lock. [Spec](148-remote-module-state.md). | — | implemented on `feature/op-lock-remote-modules` (`9bb9dda`); verified on `develop` |
 | 134 | sideload-safety | DB checkpoint (deploy's policy) and code snapshot of `.echo/sideload/<addon>` (`createCodeSnapshot`) around the sideload run, restored through deploy's `rollbackDecision`. | 133 | pending, needs spec |
 | 135 | sideload-rm | `sideload --rm <addon>`: uninstall, unmount, delete, drop the lock entry; `--keep-installed` graduates an addon that now lives in the repo under the same name. | 133 | pending, needs spec |
 | 136 | sideload-local | Local mode: bind the addon's own path in a local compose override (live edits, no copy), then `-i`/`-u`. | 133 | pending, needs spec |
@@ -30,7 +31,6 @@ Agent-facing gaps found by three read-only passes over the `odoo-probe` skill an
 
 | Proposal | Detail |
 |---|---|
-| remote module state | `modstate --from <t> --json [mods...]` and `modinfo <mod...> --from <t> --json` (`{name, state, db_version, manifest_version, verdict}`); both are local-only today and are the skill's most frequent probe |
 | headless file read | `view <mod> <relpath> [--from|--remote]` prints the file without the picker; same for single-file `compare` |
 | past run output | `logview --last [--command <c>] --json` returns the whole record with `lines[{level,text}]`; today `--json` is metadata only (`CmdLogMeta.Path` is `json:"-"`) |
 | structured lists | `ps --json` and `db-list --json` over the typed rows they already render |
