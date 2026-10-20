@@ -260,6 +260,19 @@ type TestOpts struct {
 	Update  bool
 }
 
+// TestTags is the --test-tags spec of the run: Tags verbatim, else
+// `/<mod1>,/<mod2>`.
+func (opts TestOpts) TestTags() string {
+	if opts.Tags != "" {
+		return opts.Tags
+	}
+	parts := make([]string, len(opts.Modules))
+	for i, m := range opts.Modules {
+		parts[i] = "/" + m
+	}
+	return strings.Join(parts, ",")
+}
+
 // Test builds the argv to run unit tests for one or more modules.
 //
 // Default mode runs the tests against the already-installed modules
@@ -292,16 +305,7 @@ type TestOpts struct {
 func Test(c Conn, opts TestOpts) Cmd {
 	args := append(Cmd{"odoo"}, c.flags()...)
 	args = append(args, "--no-http", "--http-port="+TestHTTPPort)
-
-	tags := opts.Tags
-	if tags == "" {
-		parts := make([]string, len(opts.Modules))
-		for i, m := range opts.Modules {
-			parts[i] = "/" + m
-		}
-		tags = strings.Join(parts, ",")
-	}
-	args = append(args, "--test-tags", tags)
+	args = append(args, "--test-tags", opts.TestTags())
 
 	if opts.Update {
 		args = append(args, "-u", strings.Join(opts.Modules, ","))

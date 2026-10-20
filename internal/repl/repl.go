@@ -14,6 +14,7 @@ import (
 	"github.com/pascualchavez/echo/internal/banner"
 	"github.com/pascualchavez/echo/internal/cmd"
 	"github.com/pascualchavez/echo/internal/config"
+	"github.com/pascualchavez/echo/internal/odoo"
 	"github.com/pascualchavez/echo/internal/theme"
 )
 
@@ -419,6 +420,7 @@ func (sess *session) runModules(ctx context.Context, name string, args []string)
 	lc := &logColorer{}
 	stats := &runStats{}
 	migs := &migrationTracker{}
+	testsRun := 0
 	opts := cmd.ModulesOpts{
 		Cfg:         sess.cfg,
 		Root:        sess.projectDir,
@@ -427,6 +429,9 @@ func (sess *session) runModules(ctx context.Context, name string, args []string)
 		Interactive: sess.interactive,
 		StreamOut: stats.wrap(func(line string) {
 			migs.observe(line)
+			if t, ok := odoo.ParseTestTally(stripANSISeq(line)); ok {
+				testsRun += t.Run
+			}
 			sess.emitStreamLine(lc, line)
 		}),
 		// The start line is emitted here, once the module set is resolved
@@ -450,10 +455,21 @@ func (sess *session) runModules(ctx context.Context, name string, args []string)
 		sess.runModulesList(ctx, opts, args)
 		return
 	}
+	// A clean exit without a report, or with `of 0 tests`, is a typo'd tag
+	// or module: Odoo calls that a success.
+	if name == "test" && err == nil && testsRun == 0 {
+		emitOdooLog("ERROR", "echo.test", "no tests ran",
+			[]logField{{"modules", moduleField(resolved)}, {"tags", cmd.TestTags(args, resolved)}},
+			sess.styles, sess.palette, sess.cfg.DBName)
+		stats.errors++
+	}
 	switch {
 	case errors.Is(err, cmd.ErrCancelled), errors.Is(err, huh.ErrUserAborted),
 		errors.Is(err, cmd.ErrNonInteractive):
 		sess.finalize(name, stats.errors, stats.warnings, err)
+	case errors.Is(err, cmd.ErrUsage):
+		sess.finalize(name, stats.errors, stats.warnings, err)
+		sess.exitCode = exitUsage
 	case err != nil, stats.errors > 0:
 		sess.copyFailureLog(name, resolved, err, stats.errors, stats.warnings)
 	default:
@@ -586,9 +602,13 @@ func (sess *session) finalize(name string, errorCount, warnCount int, err error)
 		emitOdooLog("WARNING", logger, name+" cancelled by user",
 			nil, sess.styles, sess.palette, sess.cfg.DBName)
 	case err != nil:
+		fields := []logField{{"err", err.Error()}}
+		var hinted interface{ Hint() string }
+		if errors.As(err, &hinted) {
+			fields = append(fields, logField{"hint", hinted.Hint()})
+		}
 		emitOdooLog("ERROR", failureLogger(name, nil), name+" failed",
-			[]logField{{"err", err.Error()}},
-			sess.styles, sess.palette, sess.cfg.DBName)
+			fields, sess.styles, sess.palette, sess.cfg.DBName)
 	case errorCount > 0:
 		emitOdooLog("ERROR", failureLogger(name, nil), name+" finished with errors",
 			[]logField{{"errors", strconv.Itoa(errorCount)}},

@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -9,6 +10,8 @@ import (
 	"strings"
 
 	"github.com/pascualchavez/echo/internal/config"
+	"github.com/pascualchavez/echo/internal/docker"
+	"github.com/pascualchavez/echo/internal/env"
 )
 
 // defaultAddonsPaths is the conventional layout probed when a project has
@@ -257,4 +260,128 @@ func relTo(root string, dirs []string) []string {
 		out[i] = d
 	}
 	return out
+}
+
+// usageHintError is a usage error that also names a fix, rendered as the
+// hint= field of the failure line.
+type usageHintError struct{ msg, hint string }
+
+func (e *usageHintError) Error() string { return e.msg }
+func (e *usageHintError) Unwrap() error { return ErrUsage }
+func (e *usageHintError) Hint() string  { return e.hint }
+
+// databaseModuleNames lists every module ir_module_module knows, whatever
+// its state. A seam so tests run without a database container.
+var databaseModuleNames = func(ctx context.Context, opts ModulesOpts) ([]string, error) {
+	user := env.Load(opts.Root)["POSTGRES_USER"]
+	rows, err := docker.ModuleStates(ctx,
+		opts.Cfg.ComposeCmd, opts.Root, opts.Cfg.DBContainer, user, opts.Cfg.DBName, false)
+	if err != nil {
+		return nil, err
+	}
+	return installedModuleNames(rows), nil
+}
+
+// validateModuleNames rejects an explicit module name that is neither one
+// of the project's addons nor a module the database knows (core modules
+// such as `sale` live in neither the repo nor its addons paths). It checks
+// nothing when either list cannot be read, so a discovery failure never
+// blocks a run that Odoo itself would judge.
+func validateModuleNames(ctx context.Context, opts ModulesOpts, names []string) error {
+	addons, err := resolveModules(ctx, opts)
+	if err != nil || len(addons) == 0 {
+		return nil
+	}
+	missing := absentFrom(names, addons)
+	if len(missing) == 0 {
+		return nil
+	}
+	known, err := databaseModuleNames(ctx, opts)
+	if err != nil || len(known) == 0 {
+		return nil
+	}
+	missing = absentFrom(missing, known)
+	if len(missing) == 0 {
+		return nil
+	}
+	name := missing[0]
+	hint := "run `modules` to list the project's addons"
+	if near := closeModuleNames(name, append(addons, known...)); len(near) > 0 {
+		hint = "did you mean " + strings.Join(near, ", ")
+	}
+	return &usageHintError{
+		msg:  fmt.Sprintf("%v: unknown module %q", ErrUsage, name),
+		hint: hint,
+	}
+}
+
+func absentFrom(names, known []string) []string {
+	set := make(map[string]bool, len(known))
+	for _, k := range known {
+		set[k] = true
+	}
+	var out []string
+	for _, n := range names {
+		if !set[n] {
+			out = append(out, n)
+		}
+	}
+	return out
+}
+
+// closeModuleNames returns up to three candidates near name: within an edit
+// distance of 2, or containing name as a prefix or suffix. Closer names come
+// first, ties alphabetical.
+func closeModuleNames(name string, candidates []string) []string {
+	type scored struct {
+		name string
+		dist int
+	}
+	seen := map[string]bool{}
+	var hits []scored
+	for _, c := range candidates {
+		if seen[c] || c == name {
+			continue
+		}
+		seen[c] = true
+		d := editDistance(name, c)
+		if d <= 2 || strings.HasPrefix(c, name) || strings.HasSuffix(c, name) {
+			hits = append(hits, scored{c, d})
+		}
+	}
+	sort.Slice(hits, func(i, j int) bool {
+		if hits[i].dist != hits[j].dist {
+			return hits[i].dist < hits[j].dist
+		}
+		return hits[i].name < hits[j].name
+	})
+	out := make([]string, 0, 3)
+	for _, h := range hits {
+		if len(out) == 3 {
+			break
+		}
+		out = append(out, h.name)
+	}
+	return out
+}
+
+// editDistance is the Levenshtein distance between a and b.
+func editDistance(a, b string) int {
+	prev := make([]int, len(b)+1)
+	cur := make([]int, len(b)+1)
+	for j := range prev {
+		prev[j] = j
+	}
+	for i := 1; i <= len(a); i++ {
+		cur[0] = i
+		for j := 1; j <= len(b); j++ {
+			cost := 1
+			if a[i-1] == b[j-1] {
+				cost = 0
+			}
+			cur[j] = min(prev[j]+1, cur[j-1]+1, prev[j-1]+cost)
+		}
+		prev, cur = cur, prev
+	}
+	return prev[len(b)]
 }

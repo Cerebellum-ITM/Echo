@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"errors"
 	"reflect"
 	"testing"
 )
@@ -73,9 +74,26 @@ func TestParseTestArgs(t *testing.T) {
 			remote:  true,
 		},
 		{
-			name:    "unknown flag ignored",
+			name:    "unknown flag rejected",
 			args:    []string{"sale", "--whatever"},
+			wantErr: true,
+		},
+		{
+			name:    "misspelled flag rejected",
+			args:    []string{"sale", "--jsn"},
+			wantErr: true,
+		},
+		{
+			name:    "force accepted for the remote prod confirm",
+			args:    []string{"sale", "--from", "prod", "--force"},
 			modules: []string{"sale"},
+			from:    "prod",
+		},
+		{
+			name:    "exclusion tag spec is a value, not a flag",
+			args:    []string{"sale", "--tags", "-/sale:TestSlow"},
+			modules: []string{"sale"},
+			tags:    "-/sale:TestSlow",
 		},
 		{
 			name:    "tags without value errors",
@@ -88,8 +106,8 @@ func TestParseTestArgs(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			modules, tags, update, from, remote, err := parseTestArgs(tc.args)
 			if tc.wantErr {
-				if err == nil {
-					t.Fatalf("expected error, got nil")
+				if !errors.Is(err, ErrUsage) {
+					t.Fatalf("err = %v, want ErrUsage", err)
 				}
 				return
 			}

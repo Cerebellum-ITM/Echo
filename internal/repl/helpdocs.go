@@ -143,6 +143,7 @@ var commandDocs = []commandDoc{
 		},
 		notes: []string{
 			"Local only; with no module names it opens a picker, which exits 2 without a TTY",
+			"An unknown flag, or a module name that is neither a project addon nor known to the database, exits 2 before Odoo runs",
 		},
 		examples: []helpExample{
 			{"install sale_custom stock_custom", "Install two modules in the local database"},
@@ -170,6 +171,7 @@ var commandDocs = []commandDoc{
 			"A remote prod-stage target asks for a confirm, which exits 2 without a TTY; --force skips it",
 			"On a Reverb environment the update takes a pre_update checkpoint first unless --no-checkpoint",
 			"--last is local-only and is a usage error with --from or --remote",
+			"An unknown flag exits 2 on every path; locally, so does a module name that is neither a project addon nor known to the database",
 		},
 		examples: []helpExample{
 			{"update sale_custom --i18n", "Update a local module and overwrite its translations"},
@@ -188,6 +190,7 @@ var commandDocs = []commandDoc{
 		notes: []string{
 			"Local only and destructive: the modules' data is removed from the database",
 			"With no module names it opens a picker, which exits 2 without a TTY",
+			"An unknown flag exits 2 before Odoo runs",
 		},
 	},
 	{
@@ -206,7 +209,8 @@ var commandDocs = []commandDoc{
 			"Without --update the modules are not reloaded, so view and schema changes are not picked up",
 			"With no module names it opens a picker over the local modules, which exits 2 without a TTY",
 			"A remote prod-stage target asks for a confirm, which exits 2 without a TTY; --force skips it",
-			"Unknown flags are ignored, not rejected",
+			"An unknown flag exits 2 on every path; locally, so does a module name that is neither a project addon nor known to the database",
+			"A run that executes no test (no Odoo test report, or of 0 tests) logs `no tests ran` and exits 1",
 		},
 		examples: []helpExample{
 			{"test sale_custom --update", "Reload and test a module in the local stack"},

@@ -138,6 +138,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`db-pull --filestore` reads the server's `filestore_path`.** It used
   the local project's setting for the remote container, so a server with a
   non-default path pulled nothing.
+- **`install`, `update`, `uninstall` and `test` no longer report green when
+  nothing useful ran.** An unknown flag was read as a module name
+  (`update sale --json` ran `-u sale,--json`) or, for `test`, silently
+  dropped; it is now a usage error (exit 2) on the local, remote and Reverb
+  paths. A local module name that is neither a project addon nor known to
+  the database exits 2 before Odoo runs, with a `hint=` naming up to three
+  close names. A `test` that ran no test (no Odoo test report, or `of 0
+  tests`, as with a misspelled `--tags`) logs `no tests ran` with the modules
+  and tags and exits 1. A bad `--level`, `--last` with module names, a
+  missing `--last` record and a valueless `--tags` now exit 2 instead of 1
+  and no longer overwrite the clipboard. `update` and `test` list `--force`
+  (and `update` `--no-checkpoint`) among their flags, which their parsers
+  already accepted.
 
 ## [0.27.0] - 2026-10-07
 

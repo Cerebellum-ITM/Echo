@@ -11,9 +11,9 @@ import (
 // parseTestArgs splits a `test` argument list into the resolved module
 // positionals and its flags. The remote switches (`--from <t>` /
 // `--from=<t>` / `--remote`) are consumed here too so the value token
-// after a bare `--from` is never captured as a module name; other
-// `-`-prefixed tokens are ignored (forward-compat). Kept pure so it is
-// unit-testable without a container.
+// after a bare `--from` is never captured as a module name; `--force` is
+// read later by the remote prod confirm. Any other `-`-prefixed token is a
+// usage error. Kept pure so it is unit-testable without a container.
 func parseTestArgs(args []string) (modules []string, tags string, update bool, from string, remote bool, err error) {
 	for i := 0; i < len(args); i++ {
 		a := args[i]
@@ -38,7 +38,7 @@ func parseTestArgs(args []string) (modules []string, tags string, update bool, f
 			remote = true
 		case a == "--tags":
 			if i+1 >= len(args) {
-				return nil, "", false, "", false, fmt.Errorf("--tags requires a value")
+				return nil, "", false, "", false, fmt.Errorf("%w: --tags requires a value", ErrUsage)
 			}
 			tags = args[i+1]
 			i++
@@ -46,13 +46,21 @@ func parseTestArgs(args []string) (modules []string, tags string, update bool, f
 			tags = strings.TrimPrefix(a, "--tags=")
 		case a == "--update":
 			update = true
+		case a == "--force":
 		case strings.HasPrefix(a, "-"):
-			// forward-compat: ignore unknown flags instead of failing
+			return nil, "", false, "", false, fmt.Errorf("%w: unknown flag: %s", ErrUsage, a)
 		default:
 			modules = append(modules, a)
 		}
 	}
 	return modules, tags, update, from, remote, nil
+}
+
+// TestTags returns the --test-tags spec a `test` run with these args uses
+// for the resolved modules.
+func TestTags(args, modules []string) string {
+	_, tags, _, _, _, _ := parseTestArgs(args)
+	return odoo.TestOpts{Modules: modules, Tags: tags}.TestTags()
 }
 
 // runTestRemote runs the resolved test suite in a REMOTE Odoo container
