@@ -444,7 +444,7 @@ func (sess *session) runModules(ctx context.Context, name string, args []string)
 		Interactive: sess.interactive,
 		StreamOut: stats.wrap(func(line string) {
 			migs.observe(line)
-			outcome.Feed(stripANSISeq(line))
+			outcome.Feed(line)
 			render(line)
 		}),
 		// The start line is emitted here, once the module set is resolved
@@ -536,6 +536,10 @@ func (sess *session) runI18n(ctx context.Context, name string, args []string) {
 }
 
 func (sess *session) runDocker(ctx context.Context, name string, args []string) {
+	if name == "logs" && slices.Contains(args, "--errors") {
+		sess.runLogErrors(ctx, args)
+		return
+	}
 	sess.startLog(name, args)
 
 	lc := &logColorer{}
@@ -578,7 +582,11 @@ func (sess *session) runDocker(ctx context.Context, name string, args []string) 
 		sess.runPSTable(ctx, opts)
 		return
 	case "logs":
-		sess.readonlyFinalize("logs", cmd.RunLogs(ctx, opts))
+		err = cmd.RunLogs(ctx, opts)
+		sess.readonlyFinalize("logs", err)
+		if errors.Is(err, cmd.ErrUsage) {
+			sess.exitCode = exitUsage
+		}
 		return
 	}
 	switch {

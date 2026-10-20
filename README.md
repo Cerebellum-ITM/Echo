@@ -179,6 +179,9 @@ INFO    echo.doctor: doctor summary target=habitta_prod ok=5 warn=1 failed=1 ski
 | `  --no-follow`    | Disable follow mode, bounded output                  |
 | `  -c, --copy`     | Bounded output **and** copy to system clipboard      |
 | `  --all`          | All compose services instead of just Odoo            |
+| `  --errors`       | Only the ERROR/CRITICAL records of the last 2000 lines (or `-t N`), each with its traceback; no follow |
+| `  -n N`           | With `--errors`: keep the last `N` errors (default `5`) |
+| `  --json`         | With `--errors`: `{scanned, errors}` on stdout, logs on stderr |
 | `  --from <target>`| Follow logs on a **remote** instance (named connect target) |
 | `  --remote`       | Follow logs on this directory's linked remote (see `link`) |
 
@@ -206,6 +209,20 @@ echo restart --remote          # restart the linked remote's Odoo container
 echo logs --remote -t 200      # tail 200 lines, then follow, over SSH
 echo ps --remote               # styled container table of the linked remote
 echo restart --from staging    # ad-hoc: a different named target
+```
+
+`logs --errors` answers "why does it break" in one call: it reads the last
+lines of the Odoo service log (2000 unless `-t` says otherwise), keeps each
+ERROR/CRITICAL record with its traceback and prints the last five (`-n`),
+newest last, then `echo.logs errors=<shown> scanned=<lines>`. It exits 0
+whether or not it finds errors. `--json` prints
+`{"scanned": 2000, "errors": [{"time", "db", "logger", "message", "exception",
+"frames": [{"file", "line", "func"}]}]}`. It cannot follow, and `-n`/`--json`
+need `--errors`.
+
+```sh
+echo logs --remote --errors            # the last 5 errors of the linked remote
+echo logs --from staging --errors -n 1 --json
 ```
 
 ### Modules
@@ -279,11 +296,12 @@ broke without reading the log:
 ```json
 {"command": "test", "target": "staging", "db": "odoo", "modules": ["sale_custom"],
  "exit": 1, "duration_ms": 48211,
- "errors": [{"logger": "odoo.modules.registry", "message": "Failed to load registry",
+ "errors": [{"time": "2026-10-19 11:00:01,000", "db": "odoo",
+             "logger": "odoo.modules.registry", "message": "Failed to load registry",
              "exception": "ValueError: bad total",
              "frames": [{"file": "/mnt/extra-addons/sale_custom/models/sale_order.py",
                          "line": 30, "func": "_compute_total"}]}],
- "warnings": [{"logger": "odoo.fields", "message": "…"}], "warnings_truncated": 0,
+ "warnings": [{"time": "…", "db": "odoo", "logger": "odoo.fields", "message": "…"}], "warnings_truncated": 0,
  "tests": {"run": 12, "failed": 1, "errors": 0,
            "failures": [{"kind": "FAIL", "test": "TestOrder.test_confirm", "module": "sale_custom",
                          "file": "/mnt/extra-addons/sale_custom/tests/test_order.py", "line": 88,

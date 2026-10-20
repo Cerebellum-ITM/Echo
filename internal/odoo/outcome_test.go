@@ -166,6 +166,9 @@ func TestOutcomeUpdateFailure(t *testing.T) {
 		reg.Exception != "ValueError: bad total" || !reflect.DeepEqual(reg.Frames, wantFrames) {
 		t.Errorf("registry error = %+v", reg)
 	}
+	if reg.Time != "2026-10-19 11:00:01,000" || reg.DB != "demo" || len(reg.Lines) != 7 {
+		t.Errorf("registry error header: time %q db %q lines %d", reg.Time, reg.DB, len(reg.Lines))
+	}
 	crit := o.Errors[1]
 	if crit.Exception != `psycopg2.errors.UniqueViolation: duplicate key value violates unique constraint "x"` {
 		t.Errorf("chained exception = %q, want the last one without its DETAIL line", crit.Exception)

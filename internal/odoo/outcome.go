@@ -48,6 +48,10 @@ var (
 	addonModule     = regexp.MustCompile(`^odoo\.addons\.([^.]+)\.`)
 )
 
+// ansiSeq matches the SGR codes Odoo's ColoredFormatter adds when its output
+// is a TTY; `compose logs` replays them as stored.
+var ansiSeq = regexp.MustCompile(`\x1b\[[0-9;?]*[ -/]*[@-~]`)
+
 const maxWarnings = 50
 
 // Frame is one traceback frame.
@@ -59,14 +63,20 @@ type Frame struct {
 
 // LogError is an ERROR or CRITICAL log record with its traceback.
 type LogError struct {
+	Time      string  `json:"time"`
+	DB        string  `json:"db"`
 	Logger    string  `json:"logger"`
 	Message   string  `json:"message"`
 	Exception string  `json:"exception"`
 	Frames    []Frame `json:"frames"`
+	// Lines is the record as logged: the header and its traceback.
+	Lines []string `json:"-"`
 }
 
 // LogWarning is a WARNING log record.
 type LogWarning struct {
+	Time    string `json:"time"`
+	DB      string `json:"db"`
 	Logger  string `json:"logger"`
 	Message string `json:"message"`
 }
@@ -101,15 +111,18 @@ type Outcome struct {
 	excDone bool
 }
 
-// Feed consumes one log line, ANSI already stripped.
+// Feed consumes one log line; ANSI color codes are ignored.
 func (o *Outcome) Feed(line string) {
+	if strings.Contains(line, "\x1b") {
+		line = ansiSeq.ReplaceAllString(line, "")
+	}
 	m := logHeader.FindStringSubmatch(line)
 	if m == nil {
 		o.continueEntry(line)
 		return
 	}
 	o.open, o.failure, o.excDone = nil, nil, false
-	level, logger, msg := m[2], m[4], strings.TrimSpace(m[5])
+	at, level, db, logger, msg := m[1], m[2], m[3], m[4], strings.TrimSpace(m[5])
 
 	if t, ok := ParseTestTally(line); ok {
 		o.Tests.Run += t.Run
@@ -120,7 +133,7 @@ func (o *Outcome) Feed(line string) {
 	}
 	switch level {
 	case "ERROR", "CRITICAL":
-		o.open = &LogError{Logger: logger, Message: msg, Frames: []Frame{}}
+		o.open = &LogError{Time: at, DB: db, Logger: logger, Message: msg, Frames: []Frame{}, Lines: []string{line}}
 		if f := testFailureHead.FindStringSubmatch(msg); f != nil {
 			o.failure = newTestFailure(f[1], f[2], f[3], logger)
 			o.Failures = append(o.Failures, o.failure)
@@ -132,7 +145,7 @@ func (o *Outcome) Feed(line string) {
 			o.WarningsTruncated++
 			return
 		}
-		o.Warnings = append(o.Warnings, LogWarning{Logger: logger, Message: msg})
+		o.Warnings = append(o.Warnings, LogWarning{Time: at, DB: db, Logger: logger, Message: msg})
 	}
 }
 
@@ -157,6 +170,7 @@ func (o *Outcome) continueEntry(line string) {
 	if o.open == nil {
 		return
 	}
+	o.open.Lines = append(o.open.Lines, line)
 	if fr := traceFrame.FindStringSubmatch(line); fr != nil {
 		n, _ := strconv.Atoi(fr[2])
 		frame := Frame{File: fr[1], Line: n, Func: strings.TrimSpace(fr[3])}

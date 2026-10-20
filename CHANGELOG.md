@@ -33,6 +33,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   gates use, so an undeclared stage reads `prod` with
   `stage_declared=false`. An unlinked directory exits 2 and an unreadable
   server profile exits 1, both with nothing on stdout.
+- **`logs --errors`: the last errors of the Odoo log, with tracebacks.**
+  Finding why an instance breaks meant paging through the service log.
+  `logs --errors` (local, `--from` or `--remote`; read-only) reads the last
+  2000 lines (`-t` changes the window) without following, groups each
+  ERROR/CRITICAL line with its traceback and prints the last five (`-n`),
+  then `errors=` and `scanned=`; finding none is an INFO line. It always
+  exits 0. `--json` prints `{scanned, errors}` with each error's time,
+  database, logger, message, exception and frames. `--follow` or `--copy`
+  with `--errors`, and `-n` or `--json` without it, are usage errors. The
+  errors and warnings of `install`/`update`/`uninstall`/`test --json` gain
+  `time` and `db` too.
 - **`install`, `update`, `uninstall` and `test` report their outcome as
   data.** An agent learned which test failed, or why an update broke, only by
   reading the whole log. With `--json` the log goes to stderr and stdout gets

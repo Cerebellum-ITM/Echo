@@ -51,7 +51,7 @@ var commandFlags = map[string][]string{
 	"stop":          {"--from", "--remote", "--force", "-E", "--env"},
 	"restart":       {"--from", "--remote", "--force", "-E", "--env"},
 	"ps":            {"--from", "--remote", "-E", "--env"},
-	"logs":          {"-t", "--tail", "-f", "--follow", "--no-follow", "-c", "--copy", "--all", "--from", "--remote", "-E", "--env"},
+	"logs":          {"-t", "--tail", "-f", "--follow", "--no-follow", "-c", "--copy", "--all", "--errors", "-n", "--json", "--from", "--remote", "-E", "--env"},
 	"bash":          {"--force"},
 	"psql":          {"--force"},
 	"shell":         {"--from", "--remote", "--force", "-E", "--env"},

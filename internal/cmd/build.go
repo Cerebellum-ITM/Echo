@@ -123,7 +123,10 @@ var buildFlagValues = map[string]map[string]flagValueSpec{
 	// comma/colon spec stays a single token.
 	"test": {"--tags": {kind: "input", prompt: ":TestX.test_y,-external", sep: "="}},
 	// RunLogs parses `-t <n>` (space form only); emit two tokens.
-	"logs":        {"-t": {kind: "input", prompt: "tail lines", def: "100", sep: " "}},
+	"logs": {
+		"-t": {kind: "input", prompt: "tail lines", def: "100", sep: " "},
+		"-n": {kind: "input", prompt: "errors to keep", def: "5", sep: " "},
+	},
 	"i18n-export": {"--out": {kind: "input", prompt: "path/to/file.po", sep: "="}},
 	// i18n-pull is NOT here: its candidates (modules) live on a remote that
 	// must be resolved first, so it has a dedicated builder (runI18nPullBuild)

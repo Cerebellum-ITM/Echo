@@ -799,12 +799,12 @@ var commandDocs = []commandDoc{
 	{
 		name:    "logs",
 		section: "Docker",
-		usage:   "logs [service...] [-t <N>] [-f | --no-follow | -c] [--all] [--from <target> | --remote]",
+		usage:   "logs [service...] [-t <N>] [-f | --no-follow | -c | --errors [-n <count>] [--json]] [--all] [--from <target> | --remote]",
 		summary: "Follow logs of Odoo (or [service]) — Ctrl+C to exit",
 		flags: []helpItem{
 			{"--from", "<target>", "Follow logs on a remote instance (named connect target)"},
 			{"--remote", "", "Follow logs on this directory's linked remote"},
-			{"-t", "<N>", "Tail last N lines (default 100)"},
+			{"-t", "<N>", "Tail last N lines (default 100; 2000 with --errors)"},
 			{"--tail", "<N>", "Same as -t"},
 			{"-f", "", "Follow the log (the default; undoes an earlier --no-follow)"},
 			{"--follow", "", "Same as -f"},
@@ -812,16 +812,22 @@ var commandDocs = []commandDoc{
 			{"-c", "", "Bounded output and copy to clipboard"},
 			{"--copy", "", "Bounded output and copy to clipboard (same as -c)"},
 			{"--all", "", "All compose services (instead of just Odoo)"},
+			{"--errors", "", "Only the ERROR/CRITICAL records of the window, each with its traceback (no follow)"},
+			{"-n", "<count>", "With --errors: keep the last <count> errors (default 5)"},
+			{"--json", "", "With --errors: {scanned, errors} on stdout, lines on stderr"},
 		},
 		notes: []string{
 			"Follows forever by default; headless callers should pass --no-follow (or -c) so the command ends",
 			"With no service and without --all it shows the Odoo container of the local config or of the remote profile",
 			"--remote needs this directory's link binding; without one (and no --from) a target picker opens, which exits 2 without a TTY",
 			"Read-only, no prod gate; with -c on a remote the captured text lands on the local clipboard",
+			"--errors exits 0 whether or not errors are found; with --follow or -c it is a usage error, and -n or --json without it too",
+			"--errors --json prints {scanned, errors}; each error has time, db, logger, message, exception and frames (file, line, func)",
 		},
 		examples: []helpExample{
 			{"logs --remote -t 200 --no-follow", "Print the last 200 Odoo lines of the linked remote and exit"},
 			{"logs --from staging --all --no-follow", "Print the last 100 lines of every staging service"},
+			{"logs --from staging --errors --json", "The last 5 errors of staging's Odoo log, with tracebacks, as JSON"},
 		},
 	},
 	{

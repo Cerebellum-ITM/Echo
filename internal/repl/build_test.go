@@ -42,7 +42,7 @@ func TestBuildFlagsDropsAliases(t *testing.T) {
 	}
 	// Order is preserved and --copy survives; -E is dropped everywhere as
 	// the short alias of --env.
-	if !reflect.DeepEqual(got, []string{"-t", "--no-follow", "--copy", "--all", "--from", "--remote", "--env"}) {
+	if !reflect.DeepEqual(got, []string{"-t", "--no-follow", "--copy", "--all", "--errors", "-n", "--json", "--from", "--remote", "--env"}) {
 		t.Errorf("buildFlags(logs) = %#v", got)
 	}
 	// A command with no per-command alias keeps every other flag, in order.
