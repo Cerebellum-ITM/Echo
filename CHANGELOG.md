@@ -122,6 +122,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   library module names after `sideload`.
 
 ### Changed
+- **`help agents` points to the new headless reads.** It now names
+  `link --show --json` for pre-flight, `--json` on the module commands and
+  `logs --errors --json`, next to `probe`, so an agent finds them from the
+  binary without opening the README.
 - **`help` without a terminal prints a short index** (one line per command,
   then the topics) instead of every flag row; the full rows stay in the
   paginated viewer and in `help <command>`.
