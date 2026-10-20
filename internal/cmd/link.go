@@ -591,8 +591,14 @@ func connectTargetNames(targets []config.ConnectTarget) []string {
 // binding by matching host+path against the global targets; "" when the
 // binding was written by hand and matches none.
 func linkTargetName(cfg *config.Config) string {
+	return targetNameAt(cfg, cfg.ConnectSSHHost, cfg.ConnectRemotePath)
+}
+
+// targetNameAt names the connect target registered at host and path, or ""
+// when none is.
+func targetNameAt(cfg *config.Config, host, path string) string {
 	for _, t := range cfg.ConnectTargets {
-		if t.SSHHost == cfg.ConnectSSHHost && t.RemotePath == cfg.ConnectRemotePath {
+		if t.SSHHost == host && t.RemotePath == path {
 			return t.Name
 		}
 	}
