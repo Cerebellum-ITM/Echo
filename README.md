@@ -121,7 +121,7 @@ echo_cli help deploy --json    # any of the above as JSON
 | `  --add`  | Register a new target (SSH host + remote project) and bind to it |
 | `  --next` | Switch to the next target, wrapping — the two-target toggle      |
 | `  --list [--json]` | List the targets, marking the current one (no SSH, no write) |
-| `  --show` | Show the binding, probe the remote, stream its `compose ps`     |
+| `  --show [--json]` | Show the binding, probe the remote, stream its `compose ps`; `--json`: one object on stdout (target, stage, db, Odoo version, deployed code, containers), lines on stderr |
 | `  --rm`   | Remove this directory's `[connect]` binding                     |
 | `doctor [--from <target>]` | Check a remote target is ready for deploy, push and checkpoints (read-only) |
 | `  --remote` | Check this directory's linked remote                          |

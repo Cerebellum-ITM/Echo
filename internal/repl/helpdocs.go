@@ -86,7 +86,7 @@ var commandDocs = []commandDoc{
 	{
 		name:    "link",
 		section: "Project",
-		usage:   "link [<target>] [--add | --next | --show | --rm | --list [--json]]",
+		usage:   "link [<target>] [--add | --next | --show [--json] | --rm | --list [--json]]",
 		summary: "Switch this directory's connect target (no args: picker, current marked)",
 		flags: []helpItem{
 			{"--add", "", "Register a new target (SSH host + remote project) and bind to it"},
@@ -94,10 +94,12 @@ var commandDocs = []commandDoc{
 			{"--show", "", "Show the binding, probe the remote, stream its `ps`"},
 			{"--rm", "", "Remove this directory's [connect] binding"},
 			{"--list", "", "List the targets, marking the current one (no SSH, no write)"},
-			{"--json", "", "With --list: print the targets as one JSON array on stdout"},
+			{"--json", "", "With --list: the targets as one JSON array; with --show: the binding and remote target as one object"},
 		},
 		notes: []string{
-			"A target name, --add, --next, --show, --rm and --list are mutually exclusive; --json only applies to --list",
+			"A target name, --add, --next, --show, --rm and --list are mutually exclusive; --json only applies to --list and --show",
+			"--show --json prints {target, ssh_host, remote_path, stage, stage_declared, db, odoo_version, compose, reverb, deployed, containers} on stdout, lines on stderr; stage is the gate stage (undeclared reads as prod)",
+			"--show --json exits 2 when the directory is not linked and 1 when the server profile cannot be read; deployed is null without git deploy, containers null when compose ps fails",
 			"The binding is what --remote and the default target of deploy, push, doctor and i18n-pull use",
 			"Bare link with several targets and --add open pickers and exit 2 without a TTY; name the target instead",
 			"Registering a target headlessly is init --remote ... --name <target> --link",
@@ -106,7 +108,7 @@ var commandDocs = []commandDoc{
 		examples: []helpExample{
 			{"link staging", "Bind this directory to the staging target"},
 			{"link --list --json", "List the registered targets as JSON, current one marked"},
-			{"link --show", "Verify the binding end to end (profile and remote ps)"},
+			{"link --show --json", "The binding and the remote target (stage, DB, Odoo version, containers) as JSON"},
 		},
 	},
 	{

@@ -11,6 +11,32 @@ import (
 	"github.com/pascualchavez/echo/internal/config"
 )
 
+func TestLinkShowJSONUnboundExitsUsageWithEmptyStdout(t *testing.T) {
+	sess := cmdLogSession(t)
+	wireCapture(t, sess)
+
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	stdout := os.Stdout
+	os.Stdout = w
+	sess.dispatchParsed(context.Background(), "link", []string{"--show", "--json"})
+	os.Stdout = stdout
+	w.Close()
+	out, err := io.ReadAll(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if sess.exitCode != exitUsage {
+		t.Fatalf("exit = %d, want %d", sess.exitCode, exitUsage)
+	}
+	if len(out) != 0 {
+		t.Fatalf("stdout = %q, want nothing", out)
+	}
+}
+
 func TestLinkListJSONPrintsOnlyJSON(t *testing.T) {
 	sess := cmdLogSession(t)
 	wireCapture(t, sess)

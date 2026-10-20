@@ -24,6 +24,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   payload on stdout with `db`, `stage`, `target` and `duration_ms`. Works
   locally and with `--from`/`--remote`; secret-looking parameters print as
   `***` unless `--reveal`.
+- **`link --show --json`: the linked target as data.** An agent's pre-flight
+  had to parse the `echo.system.status` line to learn the stage, database
+  and Odoo version of the target it was about to touch. `link --show --json`
+  prints one object on stdout (`target`, `ssh_host`, `remote_path`, `stage`,
+  `stage_declared`, `db`, `odoo_version`, `compose`, `reverb`, `deployed`,
+  `containers`) and every log line on stderr. `stage` is the stage the prod
+  gates use, so an undeclared stage reads `prod` with
+  `stage_declared=false`. An unlinked directory exits 2 and an unreadable
+  server profile exits 1, both with nothing on stdout.
 - **`db-push`: load a local dump into a remote target.** Echo could pull
   a remote database and restore it locally, but nothing loaded a dump into
   a remote instance, so resetting a dev instance from a staging snapshot

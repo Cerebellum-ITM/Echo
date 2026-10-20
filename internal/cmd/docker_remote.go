@@ -110,14 +110,20 @@ func runRemotePS(ctx context.Context, opts DockerOpts, from string, onTable func
 // SSH hiccup) it streams the raw `<compose> ps` through stream instead, so the
 // caller always gets something on screen.
 func remotePSTable(ctx context.Context, host, remotePath, composeCmd string, onTable func([]docker.PSContainer), stream func(string)) error {
-	jsonCmd := remoteComposeCmd(remotePath, composeCmd, "ps", "--format", "json")
-	if out, err := runSSH(ctx, host, jsonCmd, nil); err == nil {
-		if rows, err := docker.ParsePS(out); err == nil {
-			onTable(rows)
-			return nil
-		}
+	if rows, err := remotePSRows(ctx, host, remotePath, composeCmd); err == nil {
+		onTable(rows)
+		return nil
 	}
 	return runSSHStream(ctx, host, remoteComposeCmd(remotePath, composeCmd, "ps"), nil, stream)
+}
+
+// remotePSRows reads the remote containers from `compose ps --format json`.
+func remotePSRows(ctx context.Context, host, remotePath, composeCmd string) ([]docker.PSContainer, error) {
+	out, err := runSSH(ctx, host, remoteComposeCmd(remotePath, composeCmd, "ps", "--format", "json"), nil)
+	if err != nil {
+		return nil, err
+	}
+	return docker.ParsePS(out)
 }
 
 // runRemoteLogs streams a remote host's compose logs over SSH. Follow is the
