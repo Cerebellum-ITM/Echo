@@ -1,5 +1,5 @@
 # REQUEST · agent-inspection
-> From Echo (Units 143-147) to the `odoo-probe` skill (`~/Documents/Projects/odoo-probe`). Written 2026-10-19. Status: open.
+> From Echo (Units 143-147) to the `odoo-probe` skill (`~/Documents/Projects/odoo-probe`). Written 2026-10-19. Status: applied 2026-10-20 in the odoo-probe repo (see STATE).
 
 ## What is asked
 
