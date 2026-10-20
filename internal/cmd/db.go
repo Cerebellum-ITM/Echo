@@ -498,12 +498,27 @@ func copyFilestoreToContainer(ctx context.Context, opts DBOpts, target, srcDir s
 	if err := docker.CopyToContainer(ctx, id, srcDir+"/.", dst); err != nil {
 		return err
 	}
-	chown := fmt.Sprintf(`chown -R "$(stat -c '%%u:%%g' '%s')" '%s'`, opts.Cfg.FilestorePath, dst)
-	if err := docker.ExecAsRoot(ctx, id, "sh", "-c", chown); err != nil && opts.StreamOut != nil {
+	err = docker.ExecAsRoot(ctx, id, "sh", "-c", filestoreChownScript, "sh", opts.Cfg.FilestorePath, dst)
+	if err != nil && opts.StreamOut != nil {
 		opts.StreamOut("⚠ filestore copied but chown failed — Odoo can read it but may not write new attachments")
 	}
 	return nil
 }
+
+// filestoreOwner expands, in a script whose $1 is the filestore root, to the
+// owner a restored filestore must have: that of the root's parent, Odoo's
+// data_dir, which always exists and belongs to the Odoo user. The root itself
+// is missing on an instance that never stored an attachment, and once a root
+// shell creates it, it is root's, so its own owner cannot be trusted.
+const filestoreOwner = `"$(stat -c %u:%g "$(dirname "$1")")"`
+
+// filestoreChownScript ($1 the filestore root, $2 a database's filestore)
+// hands both to the data_dir's owner: the root alone, the database's tree
+// recursively.
+const filestoreChownScript = `set -e
+owner=` + filestoreOwner + `
+chown "$owner" "$1"
+chown -R "$owner" "$2"`
 
 // RunDBDrop drops a database with a red huh.Confirm by default.
 // --force skips the confirmation.
