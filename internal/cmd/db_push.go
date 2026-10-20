@@ -586,13 +586,17 @@ func (r *dbPushRun) restore(ctx context.Context) error {
 // dbPushFilestoreScript runs as root in a one-off Odoo container: it keeps
 // the current filestore of the database under a .pre-push name, extracts
 // the archive from stdin into a fresh directory (the archive's top folder is
-// the source database's name) and gives it the owner of the filestore root.
+// the source database's name) and gives it, and the filestore root, the
+// owner of Odoo's data_dir (filestoreOwner).
 const dbPushFilestoreScript = `set -e
 fs="$1"; db="$2"; ts="$3"
+owner=` + filestoreOwner + `
+mkdir -p "$fs"
+chown "$owner" "$fs"
 if [ -e "$fs/$db" ]; then mv "$fs/$db" "$fs/$db.pre-push-$ts"; echo "previous:$db.pre-push-$ts"; fi
 mkdir -p "$fs/$db"
 tar -xf - -C "$fs/$db" --strip-components=1
-chown -R "$(stat -c %u:%g "$fs")" "$fs/$db"`
+chown -R "$owner" "$fs/$db"`
 
 func (r *dbPushRun) swapFilestore(ctx context.Context) error {
 	rsc := r.rsc

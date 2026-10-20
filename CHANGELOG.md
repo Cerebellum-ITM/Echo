@@ -5,6 +5,19 @@ All notable changes to Echo are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+- **`db-push --filestore` no longer leaves a new instance's filestore owned
+  by root.** The restored files took the owner of the filestore root, but an
+  instance that never stored an attachment has no filestore root, so the
+  push created it as root and handed `root:root` to every file; Odoo then
+  failed with `PermissionError` on its first attachment write. The root and
+  the restored files now take the owner of Odoo's data directory (the root's
+  parent), which always exists and belongs to the Odoo user; a root already
+  left owned by root is handed back too. `db-pull --restore` applies the same
+  rule when it copies a filestore into the local container.
+
 ## [0.29.0] - 2026-10-20
 
 ### Added
