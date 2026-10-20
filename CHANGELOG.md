@@ -25,6 +25,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   outside a compose project when given a remote flag; `--all` with names, or
   `modinfo --last` with a remote flag, exits 2.
 
+### Changed
+- **Every command that changes a target's code or database takes the
+  operation lock.** Only `db-push` took it, so a `deploy`, a `watch` cycle,
+  a `sideload` or a checkpoint started during a `db-push` wrote code or
+  touched the database under it, and two deploys from two machines could
+  interleave. Real runs of `deploy` (including `--apply`, `--rollback`,
+  `--restore-code`, `--set-code`, `--set-git-branch --rename` and `--test`),
+  each deploying `watch` cycle, `sideload`, `checkpoint create` and
+  `checkpoint rm` now take `<remote_path>/.echo/op.lock.d` after their
+  confirms and before the first write, and release it on every exit,
+  Ctrl+C included. A held lock fails with `target busy: <command> from
+  <host> since <started>` (exit 1) before anything is written; `--force`
+  takes over a lock older than 6 hours, never a younger one. A busy target
+  skips the `watch` cycle with a WARNING and retries it on the next poll,
+  and `deploy --dry-run` only warns. Steps a command runs internally
+  (deploy's checkpoint and its rollback after a failure) never take it
+  again.
+
 ### Fixed
 - **A failing test's message no longer comes back empty.** Odoo prints the
   text of a `ValidationError` or `UserError` on the line after

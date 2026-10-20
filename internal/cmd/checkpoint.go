@@ -249,6 +249,11 @@ func runCheckpointCreate(ctx context.Context, opts CheckpointOpts, rsc remoteShe
 	if err := confirmRemoteProd(opts.Palette, "checkpoint", rsc, opts.Args); err != nil {
 		return CheckpointResult{}, err
 	}
+	ctx, release, err := holdOpLock(ctx, rsc, "checkpoint create", p.force, opts.Log)
+	if err != nil {
+		return CheckpointResult{}, err
+	}
+	defer release()
 	if err := checkpointPreflight(ctx, rsc, method, opts.Log); err != nil {
 		return CheckpointResult{}, err
 	}
@@ -292,6 +297,12 @@ func runCheckpointRm(ctx context.Context, opts CheckpointOpts, rsc remoteShellCo
 				return CheckpointResult{}, err
 			}
 		}
+		lockedCtx, release, err := holdOpLock(ctx, rsc, "checkpoint rm", p.force, opts.Log)
+		if err != nil {
+			return CheckpointResult{}, err
+		}
+		defer release()
+		ctx = lockedCtx
 		for _, e := range entries {
 			if err := destroyCheckpointObject(ctx, rsc, e); err != nil {
 				opts.log("WARNING", "checkpoint", "remove failed", rsc.prof.DBName,
@@ -334,6 +345,12 @@ func runCheckpointRm(ctx context.Context, opts CheckpointOpts, rsc remoteShellCo
 			return CheckpointResult{}, err
 		}
 	}
+
+	ctx, release, err := holdOpLock(ctx, rsc, "checkpoint rm", p.force, opts.Log)
+	if err != nil {
+		return CheckpointResult{}, err
+	}
+	defer release()
 
 	entry, tracked := entryByName[name]
 	if !tracked {

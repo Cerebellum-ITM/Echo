@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/pascualchavez/echo/internal/config"
@@ -38,7 +39,11 @@ func (f *fakeLockRemote) install(t *testing.T) {
 	t.Cleanup(func() { lockRunSSH = orig })
 }
 
-type logRecorder struct{ lines []string }
+// logRecorder is safe for a command that logs from another goroutine (watch).
+type logRecorder struct {
+	mu    sync.Mutex
+	lines []string
+}
 
 func (r *logRecorder) log(level, sub, msg, db string, fields ...[2]string) {
 	var b strings.Builder
@@ -46,10 +51,14 @@ func (r *logRecorder) log(level, sub, msg, db string, fields ...[2]string) {
 	for _, f := range fields {
 		b.WriteString(" " + f[0] + "=" + f[1])
 	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	r.lines = append(r.lines, b.String())
 }
 
 func (r *logRecorder) has(sub string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	for _, l := range r.lines {
 		if strings.Contains(l, sub) {
 			return true

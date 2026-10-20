@@ -102,6 +102,11 @@ func runDeploySetCode(ctx context.Context, opts DeployOpts, p deployArgs) (Deplo
 			return DeployResult{}, err
 		}
 	}
+	ctx, release, err := holdOpLock(ctx, rsc, "deploy", p.force, opts.Log)
+	if err != nil {
+		return DeployResult{}, err
+	}
+	defer release()
 
 	if localPlan != nil {
 		if err := applyBranchReset(ctx, localPath, *localPlan, false); err != nil {

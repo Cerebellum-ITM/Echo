@@ -36,6 +36,9 @@ type DeployOpts struct {
 	OnSync func(changes []FileChange)
 	// Via names the caller in the deploy lock ("deploy" when empty).
 	Via string
+	// opLockHeld is set by a caller that already holds the target's
+	// operation lock (a watch cycle), so the deploy does not take it again.
+	opLockHeld bool
 }
 
 // log emits a progress line when a logger is set; a no-op otherwise.
@@ -1675,6 +1678,9 @@ func RunDeploy(ctx context.Context, opts DeployOpts) (DeployResult, error) {
 	}
 
 	if p.dryRun {
+		if holder, held, _ := readOpLock(ctx, rsc); held {
+			opts.log("WARNING", "lock", "target busy", prof.DBName, opLockHolderFields(holder)...)
+		}
 		if err := runPush(true); err != nil {
 			return DeployResult{}, err
 		}
@@ -1705,6 +1711,14 @@ func RunDeploy(ctx context.Context, opts DeployOpts) (DeployResult, error) {
 		if err := confirmProd(opts.Palette, "deploy", target.dbName); err != nil {
 			return DeployResult{}, err
 		}
+	}
+	if !opts.opLockHeld {
+		lockedCtx, release, lerr := holdOpLock(ctx, rsc, "deploy", p.force, opts.Log)
+		if lerr != nil {
+			return DeployResult{}, lerr
+		}
+		defer release()
+		ctx = lockedCtx
 	}
 	if err := runActions(config.PhasePrePush); err != nil {
 		return DeployResult{}, err
@@ -2103,6 +2117,11 @@ func runDeployRollback(ctx context.Context, opts DeployOpts, p deployArgs) (Depl
 			return DeployResult{}, err
 		}
 	}
+	ctx, release, err := holdOpLock(ctx, rsc, "deploy", p.force, opts.Log)
+	if err != nil {
+		return DeployResult{}, err
+	}
+	defer release()
 
 	opts.log("INFO", "rollback", "stopping app before restore", rsc.prof.DBName)
 	if err := runSSHStream(ctx, rsc.sshHost, remoteStopApp(rsc), nil, opts.StreamOut); err != nil {
@@ -2207,6 +2226,11 @@ func runDeployRestoreCode(ctx context.Context, opts DeployOpts, p deployArgs) (D
 	if err := confirmRemoteProd(opts.Palette, "restore-code", rsc, opts.Args); err != nil {
 		return DeployResult{}, err
 	}
+	ctx, release, err := holdOpLock(ctx, rsc, "deploy", p.force, opts.Log)
+	if err != nil {
+		return DeployResult{}, err
+	}
+	defer release()
 	if err := gitRestoreCode(ctx, rsc, g, sha, opts.Log); err != nil {
 		return DeployResult{}, err
 	}

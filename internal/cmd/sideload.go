@@ -703,6 +703,11 @@ func RunSideload(ctx context.Context, opts SideloadOpts) (SideloadResult, error)
 	if err := confirmSideloadProd(opts.Palette, rsc); err != nil {
 		return res, err
 	}
+	ctx, release, err := holdOpLock(ctx, rsc, "sideload", false, opts.Log)
+	if err != nil {
+		return res, err
+	}
+	defer release()
 
 	// Before any file travels: a foreign override stops the run with nothing written.
 	recreate, err := writeSideloadOverride(ctx, opts, rsc, service, mountBase, overrideNames)

@@ -47,6 +47,18 @@ func runDeploySetGitBranch(ctx context.Context, opts DeployOpts, p deployArgs) (
 		return DeployResult{Target: fromName, Planned: true, JSON: p.jsonOut}, nil
 	}
 
+	// Taken before the config write: if a busy target let the new name be
+	// saved, a retry would report the branch unchanged and never rename it.
+	if p.rename {
+		rsc := remoteShellContext{sshHost: sshHost, remotePath: remotePath, fromName: fromName}
+		lockedCtx, release, lerr := holdOpLock(ctx, rsc, "deploy", p.force, opts.Log)
+		if lerr != nil {
+			return DeployResult{}, lerr
+		}
+		defer release()
+		ctx = lockedCtx
+	}
+
 	if err := saveGitBranch(opts, fromName, sshHost, remotePath, name); err != nil {
 		return DeployResult{}, err
 	}

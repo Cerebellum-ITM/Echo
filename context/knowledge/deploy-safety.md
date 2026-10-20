@@ -95,7 +95,9 @@ A server-side copy of exactly what a deploy is about to overwrite (`deploy_codes
 
 - Taken with `mkdir .echo/op.lock.d` (atomic on the server) plus a JSON holder file `{command, pid, client_host, user, started}`; released with `rm -rf` of the directory. A held lock fails with `target busy: <command> from <host> since <started>` (exit 1).
 - `--force` takes over a lock older than 6 hours, or one whose holder file cannot be read, with a WARNING naming the old holder; a younger lock is never taken over.
-- **Only `db-push` takes and checks it today.** deploy, watch, sideload and checkpoint ignore it until Unit 142.
+- **Who takes it** (Unit 142): `db-push`; real runs of `deploy`, including `--apply`, `--rollback`, `--restore-code`, `--set-code`, `--set-git-branch --rename` and `--test`; each `watch` cycle that deploys (per cycle, holder `watch`; the inner deploy gets `opLockHeld` and does not take it again); `sideload`; `checkpoint create` (Reverb snapshots too) and `checkpoint rm`. `push` does not. Each takes it once at its top level after the confirms and before the first remote write, through `holdOpLock` (`internal/cmd/op_lock.go`), so internal steps (deploy's checkpoint, its rollback after a failure) never re-acquire. The holder's `command` is the top-level command (`deploy`, `watch`, `sideload`, `checkpoint create`, `checkpoint rm`). `checkpoint restore` does not exist: a restore is `deploy --rollback`.
+- **Release**: deferred, on a fresh 2-minute context; while held, Ctrl+C and SIGTERM cancel the command's context instead of killing the process, so the release runs. A failed release is a WARNING naming the lock directory, never an exit-code change.
+- **Busy target**: `deploy --dry-run` (and `--save-plan`) reads it and logs `WARNING echo.deploy.lock: target busy command= host= since=`, then completes. A `watch` cycle (which always uses `--force`) that finds a younger lock logs `WARNING echo.watch: target busy, cycle skipped …` and keeps its baseline, so the next poll retries the same commits. `sideload` has no `--force`, so it never takes over a stale lock.
 
 ## Dependency check
 

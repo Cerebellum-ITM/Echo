@@ -561,7 +561,7 @@ var commandDocs = []commandDoc{
 			"Stage prod or undeclared without --force exits 2; dev and staging never prompt, so it runs headless",
 			"The previous filestore is kept as <db>.pre-push-<ts>; the checkpoint covers the database only",
 			"A failure after the restore leaves Odoo stopped; `deploy --rollback --from <target> --force` brings the old DB back",
-			"Another db-push on the same target exits 1 (`target busy`); Reverb environments are refused",
+			"While another db-push, deploy, watch cycle, sideload or checkpoint holds the target's operation lock it exits 1 (`target busy`); Reverb environments are refused",
 		},
 		examples: []helpExample{
 			{"db-push backups/staging.dump --to dev --filestore --neutralize --dry-run", "Show what replacing dev with a staging snapshot would do"},
@@ -937,6 +937,7 @@ var commandDocs = []commandDoc{
 			"--json prints one object on stdout; a failed run prints nothing there except a stale --apply plan (plan_stale), and exit is non-zero",
 			"Configure-and-exit flags write local config only: --set-push, --set-checkpoint*, --test-toggle/-modules/-add/-rm/-clear, --set-git-branch",
 			"--save-plan needs --dry-run; --apply accepts only --from, --force, --json, --dry-run and the rollback-on-fail pair (others exit 2)",
+			"A real run (also --rollback, --restore-code, --set-code, --set-git-branch --rename) takes the target's operation lock: while db-push, watch, sideload, checkpoint or another deploy holds it, it exits 1 (`target busy`); --force takes over a lock older than 6 h; --dry-run only warns",
 		},
 		examples: []helpExample{
 			{"deploy --from staging --modules sale_custom --push --dry-run --json", "Preview a headless deploy of one module and print the plan as JSON"},
@@ -969,6 +970,7 @@ var commandDocs = []commandDoc{
 			"Runs stop, up -d and one -i/-u on the target; the manifest version must match the target's Odoo series. Reverb is not supported",
 			"--library, --library-add and --library-rm only configure and exit; they take no other argument",
 			"With --json the result object is the only stdout; logs go to stderr",
+			"A real run takes the target's operation lock and exits 1 (`target busy`) while another command holds it; sideload has no --force, so a lock older than 6 h is taken over only by a deploy, checkpoint or db-push run with --force",
 		},
 		examples: []helpExample{
 			{"sideload --available --from staging --json", "List the library modules that fit staging, with their status"},
@@ -996,6 +998,7 @@ var commandDocs = []commandDoc{
 			"A prod-stage target is refused (exit 2) unless --force",
 			"Runs until Ctrl+C; each cycle runs deploy --commits <new> --push --force, so a failed cycle rolls back without asking and polling goes on",
 			"Each deploying cycle writes a watch-deploy record with deployed_tip; read it with logview --json",
+			"Each deploying cycle takes the target's operation lock (a lock older than 6 h is taken over); while another command holds it the cycle is skipped with a WARNING and retried on the next poll",
 		},
 		examples: []helpExample{
 			{"watch main --from dev --no-logs", "Auto-deploy every commit landing on main to dev, without following logs (tmux/CI)"},
@@ -1027,6 +1030,7 @@ var commandDocs = []commandDoc{
 			"list drops store entries whose object is gone and shows untracked __ckpt_ databases as orphan",
 			"--json only changes list: one object on stdout (rows, db size, disk free); logs go to stderr",
 			"On a Reverb environment the checkpoints are Reverb snapshots",
+			"create and rm take the target's operation lock and exit 1 (`target busy`) while another command holds it; --force also takes over a lock older than 6 h",
 		},
 		examples: []helpExample{
 			{"checkpoint list --from staging --json", "Machine-readable checkpoint list of staging"},

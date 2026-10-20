@@ -5,14 +5,17 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/signal"
 	"os/user"
 	"path"
 	"strings"
+	"syscall"
 	"time"
 )
 
-// The operation lock keeps two replace-the-world operations (today only
-// db-push) from running against the same target at once. Its directory is
+// The operation lock keeps two operations that change a target's code or
+// database (db-push, deploy, a watch cycle, sideload, checkpoint create/rm)
+// from running against the same target at once. Its directory is
 // created with mkdir, which is atomic on the server, and holds one JSON file
 // naming the holder. It sits under .echo/ next to the deploy lock, which is
 // metadata and never blocks anything.
@@ -94,6 +97,36 @@ func acquireOpLock(ctx context.Context, rsc remoteShellContext, command string, 
 		}
 	}
 	return OpLock{}, errOpLockHeld{}
+}
+
+// holdOpLock takes the operation lock for command and returns the context the
+// locked work must run under plus the release to defer. Ctrl+C and SIGTERM
+// cancel that context instead of killing the process, so the release always
+// runs, on a fresh context; a failed release is only a WARNING.
+func holdOpLock(ctx context.Context, rsc remoteShellContext, command string, force bool, log logFn) (context.Context, func(), error) {
+	if _, err := acquireOpLock(ctx, rsc, command, force, log); err != nil {
+		return ctx, nil, err
+	}
+	ctx, stopSignals := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
+	release := func() {
+		defer stopSignals()
+		rctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		defer cancel()
+		if err := releaseOpLock(rctx, rsc); err != nil {
+			ckptLog(log, "WARNING", "lock", "operation lock not released", rsc.prof.DBName,
+				[2]string{"lock", opLockDir}, [2]string{"err", err.Error()})
+		}
+	}
+	return ctx, release, nil
+}
+
+// opLockHolderFields names a holder in a "target busy" log line.
+func opLockHolderFields(holder *OpLock) [][2]string {
+	if holder == nil {
+		return [][2]string{{"lock", opLockDir}}
+	}
+	return [][2]string{{"command", holder.Command}, {"host", holder.ClientHost},
+		{"since", holder.Started.Format(time.RFC3339)}}
 }
 
 func releaseOpLock(ctx context.Context, rsc remoteShellContext) error {

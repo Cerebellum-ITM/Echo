@@ -4,6 +4,7 @@ import (
 	"archive/tar"
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -223,7 +224,15 @@ func RunWatch(ctx context.Context, opts WatchOpts) error {
 			}
 			pauseLogs() // stop the follow before any cycle output
 			n, rolledBack, cerr := watchCycle(ctx, opts, rsc, p.from, p.noCheckpoint, p.noActions, baseline, newTip)
-			baseline = newTip // always re-baseline, even on failure
+			// A busy target keeps the baseline, so the next poll retries the
+			// same commits; any other outcome re-baselines, failures included.
+			var busy errOpLockHeld
+			if errors.As(cerr, &busy) {
+				opts.log("WARNING", "", "target busy, cycle skipped", rsc.prof.DBName, opLockHolderFields(busy.holder)...)
+				startLogs("0")
+				continue
+			}
+			baseline = newTip
 			if rolledBack {
 				rollbacks++
 			}
@@ -330,7 +339,12 @@ func watchCycle(ctx context.Context, opts WatchOpts, rsc remoteShellContext, fro
 	// The deploy ships each module as committed, never the working tree — the
 	// watcher may sit on a different branch or worktree — and does the push
 	// itself, so it and its pre_push/post_push actions run in order.
-	rolledBack, derr := deployCommitsHeadless(ctx, opts, from, noCheckpoint, noActions, shas)
+	lockedCtx, release, err := holdOpLock(ctx, rsc, "watch", true, opts.Log)
+	if err != nil {
+		return 0, false, err
+	}
+	rolledBack, derr := deployCommitsHeadless(lockedCtx, opts, from, noCheckpoint, noActions, shas)
+	release()
 	// Record the cycle in the local command-log history so a headless caller
 	// (an agent) can learn whether a commit auto-deployed — without re-running
 	// watch or touching SSH. Best-effort: a save failure never affects the
@@ -401,7 +415,7 @@ func deployCommitsHeadless(ctx context.Context, opts WatchOpts, from string, noC
 	res, err := RunDeploy(ctx, DeployOpts{
 		Cfg: opts.Cfg, Root: opts.Root, Args: args, Palette: opts.Palette,
 		Log: opts.Log, StreamOut: opts.StreamOut, OnSync: opts.OnSync,
-		Via: "watch",
+		Via: "watch", opLockHeld: true,
 	})
 	return res.RolledBack, err
 }
