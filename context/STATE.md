@@ -16,8 +16,8 @@ instead of scraped from logs.
   (Units 143-147: `probe`, module `--json` and validation, `logs --errors`, `link --show --json`, headless
   clipboard).
 - `~/.local/bin/echo_cli` is `0.28.0+73402b0`.
-- **Branch `feature/op-lock-remote-modules`** (from `d80eb9e`, not pushed, not merged), 2026-10-20, in
-  `CHANGELOG.md` `[Unreleased]`:
+- **`feature/op-lock-remote-modules` is merged** into `main` as `b3473de` (2026-10-20, not pushed; `main` is 6
+  commits ahead of `origin/main`), in `CHANGELOG.md` `[Unreleased]`:
   - `bfaf2cd` fix: a failing test's `ValidationError`/`UserError` text no longer comes back empty (found on a real
     `test sale` run on `develop`: 231 tests, 69 failed, 24 errors).
   - Unit 148 `modstate`/`modinfo` remote and JSON (`9bb9dda`), verified on `develop`.
@@ -40,8 +40,8 @@ instead of scraped from logs.
 
 ## Next
 
-1. Merge `feature/op-lock-remote-modules` into `main` and decide when to release it (0.29.0: minor, new flags);
-   live-check Unit 142 first if possible (ledger row 142).
+1. Release 0.29.0 (minor: new flags) when the user decides; live-check Unit 142 first if possible (ledger row
+   142).
 2. echo-console: recognise `echo_cli -C <dir> <cmd>` as a run. Its `parseEchoCommand`
    (`~/Documents/Projects/echo-console/hooks/echo/command.ts`) rejects a command that does not start with a
    letter, so `-C` runs get no card; the odoo-probe skill keeps `cd <project> &&` until it does.
@@ -67,7 +67,8 @@ None open.
 - Small fixes, one commit each ([plan](work/build/plan.md#small-fixes-found-during-the-2026-09-30-store-adoption)),
   including `down --from` (not a real remote form).
 - Specs 142, 144, 146, 147 and 148 stay in `work/build/` until their remaining live checks; then archive them.
-- Merged branches kept locally: `feature/command-help-db-push`, `feature/agent-inspection-tooling`; three old
+- Merged branches kept locally: `feature/command-help-db-push`, `feature/agent-inspection-tooling`,
+  `feature/op-lock-remote-modules`; three old
   worktrees in `.claude/worktrees/` and about twenty merged `feat/*` branches remain; untouched.
 - `ctx_audit.py` flags `messages/README.md` as a stale message; it is the folder's index, a false positive.
 - `gofmt -l` flags pre-existing files (e.g. `internal/cmd/actions_test.go`); untouched on purpose.
