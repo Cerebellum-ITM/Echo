@@ -7,6 +7,11 @@ Order: unblocked first; a unit gets a spec (`/ctx spec build <NN-name>`) before 
 |---|---|---|---|---|
 | 132 | db-restore-progress | Byte progress + 30 s heartbeat for `db-restore` load, unzip and filestore copy, so a working restore never looks hung. [Spec](132-db-restore-progress.md). | — | implemented; live verification pending |
 | 139 | init-remote | `init --remote` / `init --from <t>`: write the server-side Echo profile from the client over SSH (detect compose, services, DB, Odoo version; edit an existing profile in place; register and link the target), so a host without `echo_cli` installed works with every remote verb. Numbered after the sideload branch's 133-138. [Spec](139-init-remote.md). | — | implemented; live verification pending |
+| 143 | probe | Read-only `probe` (`-c <expr>`, stdin script, `ref`/`read`/`fields`/`param`/`arch`) in a `READ ONLY` transaction, framed JSON result, local and `--from`/`--remote`, no prod gate. [Spec](143-probe.md). | — | implemented (`a47c55e`); live verification pending |
+| 144 | module-run-outcome | `install`/`update`/`uninstall`/`test` reject unknown flags and modules (exit 2), a zero-test `test` fails, and `--json` returns errors with frames, warnings and the test tally. [Spec](144-module-run-outcome.md). | — | implemented (`0219002`, `ee60610`); live verification pending |
+| 145 | headless-hygiene | Small agent-facing fixes, one commit each: no clipboard auto-copy without a TTY, the missing `commandFlags` entries, a TTY guard on `modules --config`, `modules` discovery failure exits 1. | — | implemented (`1be8a7b`, `9091a31`, `498b87a`); live verification pending |
+| 146 | link-show-json | `link --show --json`: binding plus resolved target (stage, DB, version, deployed, containers) as one object. [Spec](146-link-show-json.md). | — | implemented (`26c366a`); live verification pending |
+| 147 | logs-errors | `logs --errors [-n N] [--json]`: the last ERROR blocks with exception and frames, local or remote. [Spec](147-logs-errors.md). | 144 | implemented (`fb56ac6`); live verification pending |
 | 142 | op-lock-respect | deploy, watch, sideload and checkpoint check and take the operation lock db-push introduces, so they never run while a db-push replaces the DB. | 141 | pending, needs spec |
 | 134 | sideload-safety | DB checkpoint (deploy's policy) and code snapshot of `.echo/sideload/<addon>` (`createCodeSnapshot`) around the sideload run, restored through deploy's `rollbackDecision`. | 133 | pending, needs spec |
 | 135 | sideload-rm | `sideload --rm <addon>`: uninstall, unmount, delete, drop the lock entry; `--keep-installed` graduates an addon that now lives in the repo under the same name. | 133 | pending, needs spec |
@@ -20,13 +25,27 @@ Order: unblocked first; a unit gets a spec (`/ctx spec build <NN-name>`) before 
 | — | i18n-live-stream | Stream the output of the i18n commands live instead of at the end. | — | agreed, not scheduled |
 | — | i18n-conf-debug | A debug flag that prints the ephemeral `odoo.conf` Echo generates for Odoo 19 i18n. | — | agreed, not scheduled |
 
+## Proposed by the 2026-10-19 agent audit (not specced)
+
+Agent-facing gaps found by three read-only passes over the `odoo-probe` skill and the headless surface, ranked by value; each needs a spec before code.
+
+| Proposal | Detail |
+|---|---|
+| remote module state | `modstate --from <t> --json [mods...]` and `modinfo <mod...> --from <t> --json` (`{name, state, db_version, manifest_version, verdict}`); both are local-only today and are the skill's most frequent probe |
+| headless file read | `view <mod> <relpath> [--from|--remote]` prints the file without the picker; same for single-file `compare` |
+| past run output | `logview --last [--command <c>] --json` returns the whole record with `lines[{level,text}]`; today `--json` is metadata only (`CmdLogMeta.Path` is `json:"-"`) |
+| structured lists | `ps --json` and `db-list --json` over the typed rows they already render |
+| one JSON line shape | `ECHO_LOG_FORMAT=json` gives streamed Odoo lines only `{level,text}`; parse them into the same shape as Echo's own lines with `source` and a traceback id |
+| deployed check | `deployed --contains <sha> [--from t] --json`: is a commit live on the target (today four steps over `logview` and git) |
+| probe follow-ups | `probe --user <login>`, an `access <model>` preset (ACLs, record rules, `check_access_rights`), and a persistent probe session to avoid the 30-90 s boot per question |
+
 ## Small fixes found during the 2026-09-30 store adoption
 
 Defects read in the code (not run); each is described where its topic lives. One commit each, no spec needed unless it grows.
 
 | Fix | Where | Detail |
 |---|---|---|
-| `scriptExitCode` has no `ErrUsage` branch: `db-*` usage errors (`db-admin`, `ErrDBExists`) exit 1 and auto-copy instead of exiting 2 | `internal/repl/repl.go` | [database](../../knowledge/database.md) |
+| `scriptExitCode` has no `ErrUsage` branch: `db-*` usage errors (the module commands route it since Unit 144) (`db-admin`, `ErrDBExists`) exit 1 and auto-copy instead of exiting 2 | `internal/repl/repl.go` | [database](../../knowledge/database.md) |
 | The `i18n-pull` builder ignores `SkipDecide`, so inside `sequence` it still asks Run/Copy/Cancel and Cancel does not cancel | `internal/cmd/build_i18npull.go` | [scripting](../../knowledge/scripting.md) |
 | `db-pull --restore` downloads the whole dump before `requireDBContainer` fails | `internal/cmd/db_pull.go` | [database](../../knowledge/database.md) |
 | Stale texts: the dirty-module WARNING "does not push the code" (printed even when pushing), the `RunDBBackup` comment about a host filestore, the `promote_resolve.go` comment naming a `develop` default | `internal/cmd` | [deploy](../../knowledge/deploy.md) |
@@ -34,9 +53,8 @@ Defects read in the code (not run); each is described where its topic lives. One
 | `init` does not ask for `[checkpoint]` (Unit 90 follow-up) | `internal/cmd/init.go` | [deploy](../../knowledge/deploy.md) |
 | `ResolveProjectAlias` swallows the `LoadGlobal` error: with `-C <alias>` and a `global.toml` that does not parse, Echo says "unknown project alias" instead of the Unit 127 `ERROR echo.config` line | `internal/config/project_alias.go:75` | [architecture-and-traps](../../knowledge/architecture-and-traps.md) |
 | `deploy --json` omits `code_sha` and `dependencies`: `deployJSON` leaves out `DeployResult.CodeSHA` and `.Dependencies`, which the README deploy section promises | `internal/repl/deploy.go:99` | [deploy](../../knowledge/deploy.md) |
-| `modules --addons-path` never runs: the REPL handler sends only `--config` to `cmd.RunModules`, everything else lists modules | `internal/repl/modules_list.go:22` | found writing Unit 140 help |
 | db-push logs under two loggers: progress as `echo.db_push.*` (`cmdOdooLogger("db_push")`), the closing line as `echo.db-push`; use `db-push` everywhere like `echo.db-pull` | `internal/repl/db_push.go` | found closing Unit 141 |
-| Flags the parsers accept but `commandFlags` lacks (so help cannot list them): `--force` on `bash`, `psql`, remote `update` and `test`; `--no-checkpoint` on Reverb `update`; `--from` on `down`; `-f`, `--follow`, `--tail` on `logs` | `internal/repl/commands.go` | found writing Unit 140 help |
+| `down --from <target>` is not a real remote form: `RunDown` only routes the Reverb `env:` reference, so a plain `--from` falls through to a local `compose down` with the flag as a service name; either implement remote `down` or reject `--from` | `internal/cmd/docker.go` | found closing Unit 145 |
 | Local `stop`/`restart --force` passes `--force` to compose (only the remote path strips it) | `internal/cmd/docker.go:93` | found writing Unit 140 help; not run |
 | `--remote` on `push`, `watch` and `db-pull` is parsed but unused (same as no target flag) | `internal/cmd/shell_remote.go:57` | found writing Unit 140 help |
 | README examples `deploy --modules mod@ref` / `--at` omit `--push`, which the code requires unless `[deploy] push = true`; `knowledge/deploy.md` says `push --set-dest` does no remote resolution, but it connects | `README.md`, `context/knowledge/deploy.md` | found writing Unit 140 help |

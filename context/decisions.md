@@ -66,6 +66,12 @@
 
 ## UI
 
+### 2026-10-19 · Echo copies to the clipboard on its own only on a terminal
+- **Why:** Headless runs (agents, CI) overwrote the user's clipboard on every failure, and the OSC 52 fallback to stderr put escape bytes into JSON-lines logs. Auto-copy now needs stdin and stdout on a TTY and `ECHO_NO_CLIPBOARD` unset; OSC 52 needs `/dev/tty`. Explicit copies are unchanged.
+- **Rejected:** An opt-out flag per command; keeping the stderr fallback.
+- **Source:** Unit 145; `internal/repl/copylast.go` `autoCopyEnabled`.
+- **Status:** active
+
 ### 2026-10-19 · Command help comes from one doc per command, tied to the flags it accepts; `<cmd> --help` never runs the command
 - **Why:** Agents read the repo or the README to learn a flag, because `help <cmd>` ignored its argument and `<cmd> --help` failed or, on `db-pull`, ran the pull. One `commandDoc` per command feeds the pager, the flat index, the page and `--json`, and a test fails when a flag in `commandFlags` is undocumented or a documented flag is not accepted. `--help` is caught before project detection and before dispatch, so it works anywhere; for commands that forward their arguments (`bash`, `psql`, `shell`, `shell-run`, `connect`, `logs`) only a first-argument `--help` counts, and `-h` only alone. Without a terminal, bare `help` prints a short index instead of every flag row.
 - **Rejected:** Filtering the old hand-written rows per command (no notes or examples, and the flag gaps stay); notes and examples required on every command (only remote, `--json`, `promote` and `sequence`).
@@ -499,6 +505,30 @@
 - **Status:** active
 
 ## Modules and Odoo
+
+### 2026-10-19 · `probe` is read-only by a Postgres `READ ONLY` transaction, so it has no prod gate
+- **Why:** Agents ask a live database dozens of questions per session; a confirm on prod made every read need `--force`, and "never call commit" was only a rule the agent had to follow. The template rolls back the shell's transaction, sets the session and the transaction `READ ONLY`, and makes `env.cr.commit` raise until the frame is printed (the shell's cursor commits on exit, so the real commit is restored after). It still runs arbitrary Python: files, HTTP and other side effects are not blocked, and the help says so.
+- **Rejected:** Keeping the prod confirm (makes the safe path noisy); making `shell-run` read-only (it is the write path of the odoo-probe skill's write mode); probing over JSON-RPC with a minted session (needs the HTTP server up and an exposed port).
+- **Source:** Unit 143; `internal/odoo/probe.py`.
+- **Status:** active
+
+### 2026-10-19 · Probe arguments and results cross the shell as base64 JSON
+- **Why:** Arguments spliced into Python source could inject code; a result printed as plain JSON is mangled by ANSI stripping, `\r` and the 1 MiB line cap of `runSSHStream`. The request is decoded inside the template; the result is base64 in `@@ECHO_PROBE@@ <seq> <total> <chunk>` lines of at most 32 KiB, reassembled in Go. A complete frame wins even if the shell exits non-zero after it.
+- **Rejected:** Quoting arguments into source; a single JSON line; a temp file in the container (needs a write and cleanup on remote hosts).
+- **Source:** Unit 143; `internal/odoo/probe.go`.
+- **Status:** active
+
+### 2026-10-19 · Module names are validated against the project's addons, then the database; an unreadable list never blocks
+- **Why:** An unknown token used to reach Odoo as a module (`update sale --json` ran `-u sale,--json`) and a typo in `test` ran zero tests with exit 0. Core modules (`sale`) are in neither the repo nor its addons, so a name missing from the addons is checked against `ir_module_module` before it is rejected. Only the local path validates: sideloaded addons are not in the local repo. A `test` that ran no test exits 1.
+- **Rejected:** Validating against addons only (rejects core modules); validating remote runs (rejects sideloaded addons); a warning instead of exit 2 (an agent reads green).
+- **Source:** Unit 144; `internal/cmd/addons.go` `validateModuleNames`.
+- **Status:** active
+
+### 2026-10-19 · The Odoo log parser lives in the leaf `odoo` package and feeds every `--json` outcome
+- **Why:** `install`/`update`/`uninstall`/`test --json` and `logs --errors` need the same reading of Odoo's log: ERROR blocks with frames and exception, warnings, test failures and the tally. One pure `odoo.Outcome` keeps them consistent and testable with lines copied from 17/18/19 format strings.
+- **Rejected:** A parser per command in `repl`; reusing `deployFailureRe` (it counts, it does not extract).
+- **Source:** Units 144, 147; `internal/odoo/outcome.go`.
+- **Status:** active
 
 ### 2026-09-03 · Addons paths are discovered as a fallback and never persisted
 - **Why:** The first command in a fresh repo must work without a setup step, as Odoo itself does; explicit configuration still wins.
