@@ -8,7 +8,7 @@
   1. Every meaningful change appends to `[Unreleased]` (`Added`, `Changed`, `Fixed`, `Removed`, `Deprecated`, `Security`) **in the same commit** as the code.
   2. A version bump promotes `[Unreleased]` to `[X.Y.Z]` **in the same commit** that edits `Version`. Never split the bump from the promotion.
 - Units accumulate on one working branch between releases (its naming, and the rename gate before any merge, are owned by the `branch-flow` skill); a release goes to `main` through a PR with a merge commit, then the release commit (bump + promotion), tag and a GitHub release with binaries. `make build_release` writes `bin/echo_cli_darwin_arm64`, `_linux_amd64`, `_linux_arm64`; `make build` installs `~/.local/bin/echo_cli` (the binary is always `echo_cli`, never `echo`). The `release-flow` skill drives the sequence and never publishes without an explicit confirmation.
-- Latest tag: v0.28.0 (`main` = `73402b0`, 2026-10-20), released from `main` without a PR (the feature branch was merged locally with `[MERGE]`, then `[REL]`); v0.26.0 went through PR #24. A new `[Unreleased]` section is added with the first change after it.
+- Latest tag: v0.29.0 (`main` = `b00a8be`, 2026-10-20), released from `main` without a PR (feature branches merged locally with `[MERGE]`, then `[REL]`); v0.26.0 went through PR #24.
 - Removing `-E` (Unit 122) is a breaking change: it needs a `Removed` entry and an explicit version decision. The 0.26.0 `Deprecated` entry already says its removal comes next.
 
 ## How units are specced and closed
