@@ -10,10 +10,10 @@ instead of scraped from logs.
 
 ## Where we are
 
-- **v0.27.0 is the last release** (2026-10-07, `3f62780`). `main` is at `418ac94`, 14 commits ahead of
+- **v0.27.0 is the last release** (2026-10-07, `3f62780`). `main` is at `4b14374`, 27 commits ahead of
   `origin/main`, not pushed. Everything unreleased is in `CHANGELOG.md` `[Unreleased]`.
-- **Branch `feature/agent-inspection-tooling`** (from `418ac94`, not pushed, not merged) carries the agent
-  tooling of 2026-10-19, one commit per unit/fix:
+- **`feature/agent-inspection-tooling` is merged** into `main` as `4b14374` (2026-10-19). It carries the agent
+  tooling, one commit per unit/fix:
   - Unit 143 `probe` (`a47c55e`): read-only live-data command in a Postgres `READ ONLY` transaction.
   - Unit 145 headless hygiene: no auto-copy without a TTY (`1be8a7b`), missing `commandFlags` (`9091a31`),
     `modules --config` TTY guard and `--addons-path` (`498b87a`).
@@ -26,22 +26,23 @@ instead of scraped from logs.
 - **Live-verified read-only on `develop`** (muutrade, Odoo 19, 2026-10-19, user's go): every `probe` form, the
   refused write, `link --show --json`, `logs --errors --json`. Not run live: Odoo 17/18, module `--json`
   (`test`/`update` were excluded on purpose), the headless clipboard. Ledger rows 143-147.
-- The installed `~/.local/bin/echo_cli` is still `0.27.0+40779ce`: it has none of the branch.
+- The installed `~/.local/bin/echo_cli` is still `0.27.0+40779ce`: it has none of Units 143-147.
 
 ## Blockers
 
 | Blocker | Detail |
 |---|---|
-| none | Live checks, merge, push and release wait on the user. |
+| none | Push and release wait on the user. |
 
 ## Next
 
-1. Remaining live checks ([ledger](knowledge/operations.md#live-verification-ledger) rows 143-147): `probe` on an
+1. Release 0.28.0 (minor: new commands) from `main`: promote `[Unreleased]` and bump `Version` in
+   `internal/repl/repl.go` in one commit ([operations](knowledge/operations.md#release-and-versioning)), push,
+   tag, reinstall `echo_cli` (`release-flow`).
+2. After the install, apply both odoo-probe requests (below).
+3. Remaining live checks ([ledger](knowledge/operations.md#live-verification-ledger) rows 143-147): `probe` on an
    Odoo 17 and an 18 target, and a failing `test --json` / `update --json` on a dev stack (needs the user's go:
    it runs Odoo on the target).
-2. Merge `feature/agent-inspection-tooling` into `main` (`branch-flow`, `[MERGE]`), then release 0.28.0 (minor):
-   promote `[Unreleased]` and bump `Version` in one commit, push, reinstall `echo_cli`.
-3. After the install, apply both odoo-probe requests (below).
 4. Unit 142 `op-lock-respect` needs its spec; then the 2026-10-19 audit proposals in the
    [plan](work/build/plan.md#proposed-by-the-2026-10-19-agent-audit-not-specced) (remote `modstate`/`modinfo`
    first).
@@ -64,7 +65,7 @@ instead of scraped from logs.
 - Small fixes, one commit each ([plan](work/build/plan.md#small-fixes-found-during-the-2026-09-30-store-adoption)),
   now including `down --from` (not a real remote form).
 - Specs 143, 144, 146 and 147 stay in `work/build/` until their live check; then archive them.
-- Merged branches kept locally: `feature/command-help-db-push`; three old worktrees in `.claude/worktrees/` and
+- Merged branches kept locally: `feature/command-help-db-push`, `feature/agent-inspection-tooling`; three old worktrees in `.claude/worktrees/` and
   about twenty merged `feat/*` branches remain; untouched.
 - `ctx_audit.py` flags `messages/README.md` as a stale message; it is the folder's index, a false positive.
 - `gofmt -l` flags pre-existing files (e.g. `internal/cmd/actions_test.go`); untouched on purpose.
