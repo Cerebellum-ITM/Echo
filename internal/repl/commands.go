@@ -23,7 +23,7 @@ var Registry = []string{
 var commandFlags = map[string][]string{
 	"init":          {"--remote", "--from", "--host", "--path", "--stage", "--odoo-version", "--odoo-container", "--db-container", "--db", "--name", "--link", "--force"},
 	"alias":         {"--list", "--rm", "--migrate"},
-	"link":          {"--show", "--rm", "--next", "--list", "--add", "--json"},
+	"link":          {"--show", "--rm", "--next", "--list", "--add", "--json", "--relay", "--ssh-host"},
 	"doctor":        {"--from", "--remote", "--json"},
 	"install":       {"--with-demo", "--level", "--json"},
 	"update":        {"--all", "--last", "--level", "--i18n", "--installed", "--from", "--remote", "--force", "--no-checkpoint", "--json", "-E", "--env"},
@@ -37,7 +37,7 @@ var commandFlags = map[string][]string{
 	"view":          {"--copy", "--last", "--from", "--remote", "-E", "--env"},
 	"compare":       {"--all", "--copy", "--from", "--remote", "-E", "--env", "--targets", "--json"},
 	"i18n-export":   {"--out"},
-	"i18n-update":   {"--force"},
+	"i18n-update":   {"--force", "--from", "--remote"},
 	"i18n-pull":     {"--from", "--lang", "--all", "--installed", "--to-worktree"},
 	"db-admin":      {"--force", "--password", "--insecure", "--save", "--vault", "--from", "--remote", "-E", "--env"},
 	"db-backup":     {"--with-filestore"},

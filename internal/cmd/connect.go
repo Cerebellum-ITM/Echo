@@ -81,6 +81,16 @@ type connectTarget struct {
 	// of the project's compose file, "docker" when it only names a
 	// container. See remoteConnectTarget.
 	dbExec string
+	// odooExec is the same choice for the odoo container: dbExecDocker on a
+	// Relay env, whose containers belong to no compose file on the host.
+	odooExec string
+	// confPath is an odoo.conf inside the odoo container that already holds
+	// the db credentials (a Relay env's), so Odoo 19 subcommands take it with
+	// -c instead of an ephemeral one.
+	confPath string
+	// composeProject is a compose project with no file on the host, reached
+	// with `docker compose -p` from any directory.
+	composeProject string
 }
 
 type userRow struct {

@@ -86,7 +86,7 @@ var commandDocs = []commandDoc{
 	{
 		name:    "link",
 		section: "Project",
-		usage:   "link [<target>] [--add | --next | --show [--json] | --rm | --list [--json]]",
+		usage:   "link [<target>] [--add | --next | --show [--json] | --rm | --list [--json]] | link --add <name> --relay <app>/<env> [--ssh-host <alias>]",
 		summary: "Switch this directory's connect target (no args: picker, current marked)",
 		flags: []helpItem{
 			{"--add", "", "Register a new target (SSH host + remote project) and bind to it"},
@@ -95,6 +95,8 @@ var commandDocs = []commandDoc{
 			{"--rm", "", "Remove this directory's [connect] binding"},
 			{"--list", "", "List the targets, marking the current one (no SSH, no write)"},
 			{"--json", "", "With --list: the targets as one JSON array; with --show: the binding and remote target as one object"},
+			{"--relay", "<app>/<env>", "With --add <name>: register an env Relay deploys, headless, and bind to it"},
+			{"--ssh-host", "<alias>", "With --relay: the ~/.ssh/config alias to reach the receiver (default: the host Relay reports)"},
 		},
 		notes: []string{
 			"A target name, --add, --next, --show, --rm and --list are mutually exclusive; --json only applies to --list and --show",
@@ -104,10 +106,11 @@ var commandDocs = []commandDoc{
 			"Bare link with several targets and --add open pickers and exit 2 without a TTY; name the target instead",
 			"Registering a target headlessly is init --remote ... --name <target> --link",
 			"The binding is saved before the probe; an unreachable remote is a WARNING, not a failure",
+			"A Relay target needs [relay] url and token_file (an echo-scope token) in global.toml; shell, shell-run, logs, ps, test, update, i18n-pull and i18n-update run in its containers with docker exec, deploy is handed to Relay, every other remote verb exits 2",
 		},
 		examples: []helpExample{
 			{"link staging", "Bind this directory to the staging target"},
-			{"link --list --json", "List the registered targets as JSON, current one marked"},
+			{"link --add fb-stage --relay fb/stage --ssh-host morwi-fb", "Register Relay's fb/stage env as fb-stage and bind to it"},
 			{"link --show --json", "The binding and the remote target (stage, DB, Odoo version, containers) as JSON"},
 		},
 	},
@@ -415,16 +418,20 @@ var commandDocs = []commandDoc{
 	{
 		name:    "i18n-update",
 		section: "i18n",
-		usage:   "i18n-update <mod> [lang] [--force]",
+		usage:   "i18n-update <mod> [lang] [--force] [--from <target> | --remote]",
 		summary: "Import the module's <lang>.po into the DB (--i18n-overwrite)",
 		flags: []helpItem{
 			{"--force", "", "Skip the prod-stage confirmation prompt"},
+			{"--from", "<target>", "Load it into a named connect target's DB"},
+			{"--remote", "", "Load it into this directory's linked remote"},
 		},
 		notes: []string{
-			"Replaces the language's existing translations in the local DB; on a prod stage the confirm exits 2 without a TTY unless --force",
+			"Replaces the language's existing translations in the DB; on a prod stage the confirm exits 2 without a TTY unless --force",
+			"Remote: the local <mod>/i18n/<lang>.po is streamed into the remote odoo container, imported there and removed; the target's stage gates it",
 		},
 		examples: []helpExample{
 			{"i18n-update sale_custom es_MX", "Load sale_custom/i18n/es_MX.po into the local DB"},
+			{"i18n-update sale_custom es_MX --from staging", "Load the local es_MX.po into staging's DB"},
 		},
 	},
 	{

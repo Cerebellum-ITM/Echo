@@ -44,7 +44,7 @@ type i18nArgs struct {
 
 // parseI18nArgs walks args extracting --out, --force, and up to two
 // positionals (module then lang). Unknown flags return an error.
-func parseI18nArgs(args []string, allowOut, allowForce bool) (i18nArgs, error) {
+func parseI18nArgs(args []string, allowOut, allowForce, allowRemote bool) (i18nArgs, error) {
 	out := i18nArgs{lang: defaultI18nLang}
 	var positional []string
 	for i := 0; i < len(args); i++ {
@@ -60,6 +60,9 @@ func parseI18nArgs(args []string, allowOut, allowForce bool) (i18nArgs, error) {
 			out.outOverride = strings.TrimPrefix(a, "--out=")
 		case a == "--force" && allowForce:
 			out.force = true
+		case a == "--from" && allowRemote:
+			i++ // the target, read by remoteFlagsIn
+		case (strings.HasPrefix(a, "--from=") || a == "--remote") && allowRemote:
 		case strings.HasPrefix(a, "-"):
 			return out, fmt.Errorf("unknown flag: %s", a)
 		default:
@@ -129,7 +132,7 @@ func RunI18nExport(ctx context.Context, opts I18nOpts) error {
 	if err := requireOdooConfig(opts.Cfg); err != nil {
 		return err
 	}
-	parsed, err := parseI18nArgs(opts.Args, true, false)
+	parsed, err := parseI18nArgs(opts.Args, true, false, false)
 	if err != nil {
 		return err
 	}
@@ -181,10 +184,13 @@ func RunI18nExport(ctx context.Context, opts I18nOpts) error {
 // RunI18nUpdate imports the module's <lang>.po back into the DB with
 // --i18n-overwrite. Shows a prod-confirm in stage=prod unless --force.
 func RunI18nUpdate(ctx context.Context, opts I18nOpts) error {
+	if from, remote := remoteFlagsIn(opts.Args); from != "" || remote {
+		return runI18nUpdateRemote(ctx, opts, from)
+	}
 	if err := requireOdooConfig(opts.Cfg); err != nil {
 		return err
 	}
-	parsed, err := parseI18nArgs(opts.Args, false, true)
+	parsed, err := parseI18nArgs(opts.Args, false, true, false)
 	if err != nil {
 		return err
 	}

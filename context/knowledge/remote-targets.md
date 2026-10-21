@@ -1,5 +1,5 @@
 # Remote Targets
-> Owns how Echo reaches a remote Odoo: connect targets, link bindings, the server-side Echo profile, the resolution chain and its flags, SSH transport, the remote prod gate, host-FS vs container probing, `connect` (CDP session cache) and Reverb link mode. Last verified: 2026-09-30.
+> Owns how Echo reaches a remote Odoo: connect targets, link bindings, the server-side Echo profile, the resolution chain and its flags, SSH transport, the remote prod gate, host-FS vs container probing, `connect` (CDP session cache), Relay targets and Reverb link mode. Last verified: 2026-10-21.
 
 Vocabulary used across the store:
 
@@ -94,6 +94,35 @@ Deploy, checkpoints and the lock build on this file: [deploy](deploy.md), [deplo
 - `preferHTTPS`: if `web.base.url` is `http` but the host answers on `https` (short probe), the session lands on https and the cookie is `secure`. An empty `web.base.url` aborts before Chrome launches.
 - Session cache (`connect_cache.go`, `config/connect_session.go`): `~/.config/echo/connect-sessions/<key>.toml` (dir 0700, file 0600), one entry per (target, login), key = `ProjectKey` of `local:<root>:<db>` or `ssh:<host>:<path>:<db>`. It stores the live `session_id` in plaintext. Reuse path: TTL 5 days (`connectSessionTTL`, below Odoo's ~7-day session GC; only a pre-filter) then always probe `GET <base>/odoo` with the cookie and **no redirect-follow** (2xx = valid, 303 to login = dead, 5 s timeout). `--fresh` forces a re-mint. A cache read/write failure never fails the command.
 - Log vocabulary: `echo.connect`, `echo.connect.cache`, `echo.connect.mint`, narrated through `ConnectOpts.Log` (nil is a no-op for non-REPL callers).
+
+## Relay targets (Unit 149)
+
+Relay (`~/Documents/Projects/relay`) deploys Odoo envs into Docker on receivers and owns them; Echo operates them
+without deploying. Relay's side is its unit 25 (`GET /api/v1/resolve/{app}/{env}`); the design is Relay's decision
+"echo_cli reaches receivers over SSH with the user's key; Relay only resolves the target" (2026-10-02).
+
+- **Recognized by the `relay = "<app>/<env>"` key** of a connect target; `[relay] url` and `token_file` (or `token`,
+  an echo-scope Relay token) are global-only. In memory the target's `RemotePath` is `relay:<app>/<env>`
+  (`config.RelayPath`), so the binding, `targetNameAt` and every host+path key work unchanged; the file stores
+  `remote_path = ""` and writes the `relay` key only on Relay targets (`omitempty`), so a save leaves other targets
+  byte-identical. **Trap:** an `echo_cli` without Unit 149 (0.29.0 and older) drops `[relay]` and the `relay` keys if it
+  ever saves `global.toml` (its `globalFile` does not model them).
+- `resolveRemoteShell` sees the `relay:` path and calls `resolveRelayShell` (`internal/cmd/relay.go`): one resolve,
+  no SSH. Both transports are `docker exec -i <container>` (`odooExec`/`dbExec` = docker), interactive shells
+  `docker exec -it`; the `odoo.Conn` carries only `-d` and `--db_user`, because the container's `/etc/odoo/odoo.conf`
+  holds host and password and the image's `ODOO_RC` points at it (measured on morwi-fb 2026-10-21). Odoo 19 i18n
+  subcommands take that conf with `-c` (`connectTarget.confPath`) instead of an ephemeral one (`remoteI18nConf`).
+- **relayd creates the containers without a compose file** (`com.docker.compose.project.config_files = -`):
+  `docker compose -p <project> ps --format json` and `logs` work from any directory, but `compose -p ... logs
+  <container name>` prints nothing, so `logs` reads one container with `docker logs` and maps a service name to
+  `<project>-<service>`; `ps` shows container names, not services (measured on morwi-fb 2026-10-21, Compose 5.5.1).
+- Supported: `shell`, `shell-run`, `test`, `update`, `ps`, `logs`, `i18n-pull`, `i18n-update`, `link`; `deploy` is
+  delegated (`POST /api/v1/deploys` then polled until it ends, only `--dry-run` accepted). Everything else is refused
+  at dispatch by `cmd.RelayGuard` (exit 2, config only, no SSH): the `--from` target or, for an always-remote command
+  or a remote flag, the binding. Why: Relay bakes the addons into the image and owns the containers, so `push`,
+  `watch`, `sideload`, checkpoints and lifecycle verbs would act on a host path that does not exist or fight Relay.
+- The SSH user is the user's (`ssh_host` is their alias); Relay's payload has no user on purpose. On morwi-fb the
+  `ubuntu` user is in the `docker` group and cannot read `/home/relay`, which Echo never needs.
 
 ## Reverb mode and link mode
 

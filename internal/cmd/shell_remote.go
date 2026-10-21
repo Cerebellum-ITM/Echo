@@ -27,6 +27,8 @@ type remoteShellContext struct {
 	// behave differently in Reverb mode branch on it and legacy behavior is
 	// unchanged by construction.
 	reverb *reverbEnv
+	// relay is set only on a target whose `relay` key names a Relay env.
+	relay *relayEnv
 }
 
 // RemoteResolution is the target a remote run really hit, as resolved from
@@ -107,6 +109,9 @@ func resolveRemoteShell(ctx context.Context, cfg *config.Config, palette theme.P
 	sshHost, remotePath, fromName, err := resolveRemoteTarget(cfg, palette, from, log)
 	if err != nil {
 		return remoteShellContext{}, err
+	}
+	if _, ok := config.RelaySpec(remotePath); ok {
+		return resolveRelayShell(ctx, cfg, sshHost, remotePath, fromName, log)
 	}
 	emit("INFO", "remote", "target resolved", "",
 		[2]string{"host", sshHost}, [2]string{"path", remotePath})

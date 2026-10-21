@@ -103,8 +103,7 @@ func runOdooShellRemote(ctx context.Context, opts ShellOpts, from string) (strin
 	if err := confirmRemoteProd(opts.Palette, "shell", rsc, opts.Args); err != nil {
 		return "", false, err
 	}
-	remoteCmd := remoteExecInteractive(rsc.remotePath, rsc.target.composeCmd,
-		rsc.target.odooContainer, odoo.Shell(rsc.conn))
+	remoteCmd := remoteContainerInteractiveCmd(rsc.remotePath, rsc.target, odoo.Shell(rsc.conn))
 	return docker.RunInteractive(ctx,
 		[]string{"ssh", "-tt", "-o", "BatchMode=yes", rsc.sshHost, remoteCmd},
 		"", opts.LineTransform)

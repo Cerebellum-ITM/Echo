@@ -203,6 +203,15 @@ type Config struct {
 	// puts the transport back where it lives in classic mode: ssh_config
 	// resolves it, and Echo passes the alias verbatim as it always has.
 	ReverbSSHHost string
+
+	// Relay ([relay] in global.toml only, Unit 149) is the deploy control
+	// plane that resolves the targets whose `relay` key names one of its
+	// envs. RelayToken (or the file RelayTokenFile names, read when a
+	// command needs it) is an echo-scope API token: never logged, never
+	// written to a project profile.
+	RelayURL       string
+	RelayToken     string
+	RelayTokenFile string
 }
 
 // DeployAction is one declared step in the deploy lifecycle. Phase is
@@ -272,6 +281,7 @@ type globalFile struct {
 	Promote        *promoteConfig                `toml:"promote"`
 	Sideload       *sideloadConfig               `toml:"sideload"`
 	Reverb         *reverbConfig                 `toml:"reverb"`
+	Relay          *relayConfig                  `toml:"relay"`
 	ConnectTargets map[string]*connectTargetFile `toml:"connect_targets"`
 	ProjectAliases map[string]string             `toml:"project_aliases"`
 }
@@ -302,6 +312,13 @@ type reverbConfig struct {
 	Token      string `toml:"token"`
 	ComposeCmd string `toml:"compose_cmd"`
 	SSHHost    string `toml:"ssh_host"`
+}
+
+// relayConfig is the [relay] table, valid in global.toml only (Unit 149).
+type relayConfig struct {
+	URL       string `toml:"url"`
+	Token     string `toml:"token,omitempty"`
+	TokenFile string `toml:"token_file,omitempty"`
 }
 
 // pushConfig is the [push] table, valid in both global.toml and a project
@@ -430,6 +447,9 @@ type connectTargetFile struct {
 	GitDeploy bool   `toml:"git_deploy"`
 	GitBranch string `toml:"git_branch"`
 	GitPath   string `toml:"git_path"`
+	// Relay is omitted when empty so a save leaves every other target as
+	// it was written.
+	Relay string `toml:"relay,omitempty"`
 }
 
 type promptFile struct {
@@ -498,6 +518,25 @@ type ConnectTarget struct {
 	GitDeploy bool
 	GitBranch string
 	GitPath   string
+	// Relay is "<app>/<env>" for an env Relay deploys (Unit 149). Such a
+	// target has no project directory on the host; its RemotePath is the
+	// synthetic RelayPath of that spec so everything keyed by host and path
+	// treats it like any other target.
+	Relay string
+}
+
+// RelayPathPrefix marks a ConnectTarget RemotePath that names a Relay env
+// rather than a directory on the host.
+const RelayPathPrefix = "relay:"
+
+// RelayPath is the RemotePath of the Relay target for spec ("<app>/<env>").
+func RelayPath(spec string) string { return RelayPathPrefix + spec }
+
+// RelaySpec returns the "<app>/<env>" a RemotePath names, and whether it is
+// a Relay target's path at all.
+func RelaySpec(remotePath string) (string, bool) {
+	spec, ok := strings.CutPrefix(remotePath, RelayPathPrefix)
+	return spec, ok && spec != ""
 }
 
 // ProjectInfo is the subset of a project profile needed to present a
@@ -620,6 +659,7 @@ func Load(projectPath string) (*Config, error) {
 	applyCheckpoint(cfg, g.Checkpoint)
 	applyPush(cfg, g.Push)
 	applyReverb(cfg, g.Reverb)
+	applyRelay(cfg, g.Relay)
 	if g.Sideload != nil {
 		cfg.SideloadLibrary = g.Sideload.Library
 	}
@@ -749,6 +789,16 @@ func applyReverb(cfg *Config, f *reverbConfig) {
 	cfg.ReverbToken = f.Token
 	cfg.ReverbComposeCmd = f.ComposeCmd
 	cfg.ReverbSSHHost = f.SSHHost
+}
+
+// applyRelay copies the [relay] table onto the config; nil-safe.
+func applyRelay(cfg *Config, f *relayConfig) {
+	if f == nil {
+		return
+	}
+	cfg.RelayURL = f.URL
+	cfg.RelayToken = f.Token
+	cfg.RelayTokenFile = f.TokenFile
 }
 
 // RemoteProfile is the subset of a server-side Echo configuration the
@@ -1211,7 +1261,7 @@ func sortedConnectTargets(m map[string]*connectTargetFile) []ConnectTarget {
 		if t == nil {
 			continue
 		}
-		out = append(out, ConnectTarget{
+		ct := ConnectTarget{
 			Name:       name,
 			SSHHost:    t.SSHHost,
 			RemotePath: t.RemotePath,
@@ -1220,7 +1270,12 @@ func sortedConnectTargets(m map[string]*connectTargetFile) []ConnectTarget {
 			GitDeploy:  t.GitDeploy,
 			GitBranch:  t.GitBranch,
 			GitPath:    t.GitPath,
-		})
+			Relay:      t.Relay,
+		}
+		if t.Relay != "" {
+			ct.RemotePath = RelayPath(t.Relay)
+		}
+		out = append(out, ct)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out
@@ -1232,7 +1287,7 @@ func connectTargetsToFile(targets []ConnectTarget) map[string]*connectTargetFile
 	}
 	m := make(map[string]*connectTargetFile, len(targets))
 	for _, t := range targets {
-		m[t.Name] = &connectTargetFile{
+		f := &connectTargetFile{
 			SSHHost:    t.SSHHost,
 			RemotePath: t.RemotePath,
 			ChromePath: t.ChromePath,
@@ -1240,7 +1295,12 @@ func connectTargetsToFile(targets []ConnectTarget) map[string]*connectTargetFile
 			GitDeploy:  t.GitDeploy,
 			GitBranch:  t.GitBranch,
 			GitPath:    t.GitPath,
+			Relay:      t.Relay,
 		}
+		if t.Relay != "" {
+			f.RemotePath = ""
+		}
+		m[t.Name] = f
 	}
 	return m
 }
@@ -1267,6 +1327,7 @@ func LoadGlobal() (*Config, error) {
 	applyCmdLogs(cfg, g.CmdLogs)
 	applyCheckpoint(cfg, g.Checkpoint)
 	applyReverb(cfg, g.Reverb)
+	applyRelay(cfg, g.Relay)
 	if g.Sideload != nil {
 		cfg.SideloadLibrary = g.Sideload.Library
 	}

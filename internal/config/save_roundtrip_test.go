@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -204,4 +205,55 @@ func mustLoadGlobalFile(t *testing.T, path string) globalFile {
 		t.Fatal(err)
 	}
 	return g
+}
+
+func TestRelayTargetRoundTrip(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	path := writeGlobal(t, globalWithEveryTable+`
+[relay]
+url = "https://relay.example.test"
+token_file = "~/.config/relay/echo-token"
+`)
+
+	if err := SaveConnectTarget(ConnectTarget{
+		Name: "fb-stage", SSHHost: "morwi-fb", RemotePath: RelayPath("fb/stage"), Relay: "fb/stage", DBName: "fuentebuena",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	g := mustLoadGlobalFile(t, path)
+	if g.Relay == nil || g.Relay.URL != "https://relay.example.test" || g.Relay.TokenFile != "~/.config/relay/echo-token" {
+		t.Errorf("[relay] lost or altered: %+v", g.Relay)
+	}
+	if f := g.ConnectTargets["fb-stage"]; f == nil || f.Relay != "fb/stage" || f.RemotePath != "" {
+		t.Errorf("fb-stage stored as %+v, want relay = fb/stage and no remote_path", f)
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := strings.Count(string(raw), "relay = "); n != 1 {
+		t.Errorf("the relay key appears %d times, want only on fb-stage:\n%s", n, raw)
+	}
+
+	cfg, err := LoadGlobal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.RelayURL != "https://relay.example.test" || cfg.RelayTokenFile != "~/.config/relay/echo-token" {
+		t.Errorf("relay config = %q %q", cfg.RelayURL, cfg.RelayTokenFile)
+	}
+	for _, ct := range cfg.ConnectTargets {
+		spec, isRelay := RelaySpec(ct.RemotePath)
+		switch ct.Name {
+		case "fb-stage":
+			if !isRelay || spec != "fb/stage" || ct.Relay != "fb/stage" {
+				t.Errorf("fb-stage loaded as %+v", ct)
+			}
+		default:
+			if isRelay || ct.Relay != "" {
+				t.Errorf("%s loaded as a relay target: %+v", ct.Name, ct)
+			}
+		}
+	}
 }

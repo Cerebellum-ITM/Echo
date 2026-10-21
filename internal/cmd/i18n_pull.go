@@ -244,32 +244,45 @@ func RunI18nPull(ctx context.Context, opts I18nPullOpts) error {
 	opts.log("INFO", "remote", "target resolved", "",
 		[2]string{"host", sshHost}, [2]string{"path", remotePath})
 
-	// Resolve the remote container/db mapping AND its addons config from the
-	// server's own Echo profile, then its Postgres credentials from the
-	// remote .env.
-	cfgRemote := *opts.Cfg
-	cfgRemote.ConnectSSHHost = sshHost
-	cfgRemote.ConnectRemotePath = remotePath
-	opts.log("INFO", "remote", "reading remote profile", "", [2]string{"host", sshHost})
-	prof, err := fetchRemoteProfile(ctx, ConnectOpts{Cfg: &cfgRemote, Root: opts.Root})
-	if err != nil {
-		return err
+	var (
+		prof   config.RemoteProfile
+		target connectTarget
+		conn   odoo.Conn
+	)
+	if _, isRelay := config.RelaySpec(remotePath); isRelay {
+		rsc, err := resolveRelayShell(ctx, opts.Cfg, sshHost, remotePath, p.from, opts.log)
+		if err != nil {
+			return err
+		}
+		sshHost, prof, target, conn = rsc.sshHost, rsc.prof, rsc.target, rsc.conn
+	} else {
+		// Resolve the remote container/db mapping AND its addons config from
+		// the server's own Echo profile, then its Postgres credentials from
+		// the remote .env.
+		cfgRemote := *opts.Cfg
+		cfgRemote.ConnectSSHHost = sshHost
+		cfgRemote.ConnectRemotePath = remotePath
+		opts.log("INFO", "remote", "reading remote profile", "", [2]string{"host", sshHost})
+		prof, err = fetchRemoteProfile(ctx, ConnectOpts{Cfg: &cfgRemote, Root: opts.Root})
+		if err != nil {
+			return err
+		}
+		target = remoteConnectTarget(prof)
+		// The system-status line doubles as the "connected" signal: it is the
+		// first line carrying the resolved remote environment (Echo + Odoo
+		// version, project, db), emitted the moment the remote profile is
+		// read — the earliest point the remote Odoo version is known.
+		opts.log("INFO", "system", "system", prof.DBName,
+			statusFields(target.odooVersion, prof.Stage,
+				statusProjectName(opts.Cfg, true, remotePath, p.from),
+				prof.DBName)...)
+		warnUndeclaredStage(target, opts.log)
+		conn = odoo.Conn{DB: target.dbName, Host: target.dbContainer}
+		pg := remotePullEnv(ctx, sshHost, remotePath)
+		conn.Port = pg["POSTGRES_PORT"]
+		conn.User = pg["POSTGRES_USER"]
+		conn.Password = pg["POSTGRES_PASSWORD"]
 	}
-	target := remoteConnectTarget(prof)
-	// The system-status line doubles as the "connected" signal: it is the
-	// first line carrying the resolved remote environment (Echo + Odoo
-	// version, project, db), emitted the moment the remote profile is read —
-	// the earliest point the remote Odoo version is known.
-	opts.log("INFO", "system", "system", prof.DBName,
-		statusFields(target.odooVersion, prof.Stage,
-			statusProjectName(opts.Cfg, true, remotePath, p.from),
-			prof.DBName)...)
-	warnUndeclaredStage(target, opts.log)
-	conn := odoo.Conn{DB: target.dbName, Host: target.dbContainer}
-	pg := remotePullEnv(ctx, sshHost, remotePath)
-	conn.Port = pg["POSTGRES_PORT"]
-	conn.User = pg["POSTGRES_USER"]
-	conn.Password = pg["POSTGRES_PASSWORD"]
 
 	// Module candidates come from the REMOTE instance. By default they are
 	// the modules in the remote project's own addons (read from its
@@ -487,22 +500,15 @@ func remoteAddonsPath(ctx context.Context, sshHost, remotePath string, t connect
 // file(s). Returns the raw .po bytes.
 //
 // On Odoo 19 (t.odooVersion major ≥ 19) the export runs through the
-// `odoo i18n export` subcommand, which only takes `-c`/`-d`; the db
-// credentials are written into an ephemeral in-container odoo.conf
-// (RenderConf) passed with `-c` and removed alongside the .po.
+// `odoo i18n export` subcommand, which only takes `-c`/`-d`; the conf comes
+// from remoteI18nConf and is removed alongside the .po when it was ephemeral.
 func pullRemotePO(ctx context.Context, sshHost, remotePath string, t connectTarget, conn odoo.Conn, addonsPath, module, lang string) ([]byte, error) {
 	tmp := tmpPathInContainer()
-	cleanup := odoo.Cmd{"rm", "-f", tmp}
-
-	confPath := ""
-	if odoo.Major(t.odooVersion) >= 19 {
-		confPath = tmpConfInContainer()
-		writeArgv := odoo.Cmd{"sh", "-c", "cat > " + confPath}
-		if _, err := runSSH(ctx, sshHost, remoteContainerCmd(remotePath, t, writeArgv), odoo.RenderConf(conn, addonsPath)); err != nil {
-			return nil, fmt.Errorf("remote conf write: %w", err)
-		}
-		cleanup = append(cleanup, confPath)
+	confPath, cleanup, err := remoteI18nConf(ctx, sshHost, remotePath, t, conn, addonsPath)
+	if err != nil {
+		return nil, err
 	}
+	cleanup = append(cleanup, tmp)
 
 	exportArgv := odoo.ExportI18n(conn, t.odooVersion, module, lang, tmp, confPath)
 	if _, err := runSSH(ctx, sshHost, remoteContainerCmd(remotePath, t, exportArgv), nil); err != nil {
@@ -516,6 +522,26 @@ func pullRemotePO(ctx context.Context, sshHost, remotePath string, t connectTarg
 		return nil, fmt.Errorf("remote read: %w", readErr)
 	}
 	return data, nil
+}
+
+// remoteI18nConf returns the odoo.conf an Odoo 19 i18n subcommand takes with
+// -c in the remote container, and the files to remove afterwards. A Relay
+// env's own conf already holds the credentials; any other target gets an
+// ephemeral one rendered from conn. Older series take no -c: "".
+func remoteI18nConf(ctx context.Context, sshHost, remotePath string, t connectTarget, conn odoo.Conn, addonsPath string) (string, odoo.Cmd, error) {
+	cleanup := odoo.Cmd{"rm", "-f"}
+	if odoo.Major(t.odooVersion) < 19 {
+		return "", cleanup, nil
+	}
+	if t.confPath != "" {
+		return t.confPath, cleanup, nil
+	}
+	confPath := tmpConfInContainer()
+	writeArgv := odoo.Cmd{"sh", "-c", "cat > " + confPath}
+	if _, err := runSSH(ctx, sshHost, remoteContainerCmd(remotePath, t, writeArgv), odoo.RenderConf(conn, addonsPath)); err != nil {
+		return "", nil, fmt.Errorf("remote conf write: %w", err)
+	}
+	return confPath, append(cleanup, confPath), nil
 }
 
 // remoteExec builds the SSH command that runs argv inside a remote compose
@@ -539,6 +565,9 @@ func remoteExec(remotePath, composeCmd, container string, argv odoo.Cmd) string 
 
 // remoteContainerCmd runs argv in the remote Odoo container.
 func remoteContainerCmd(remotePath string, t connectTarget, argv odoo.Cmd) string {
+	if t.odooExec == dbExecDocker {
+		return dockerExec("-i", t.odooContainer, argv)
+	}
 	return remoteExec(remotePath, t.composeCmd, t.odooContainer, argv)
 }
 

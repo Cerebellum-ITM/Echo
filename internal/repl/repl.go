@@ -293,6 +293,9 @@ func (sess *session) dispatchParsed(ctx context.Context, cmd string, args []stri
 		sess.runBuild(ctx, cmd, clean)
 		return
 	}
+	if sess.refusedOnRelay(cmd, args) {
+		return
+	}
 
 	switch cmd {
 	case "help":
@@ -526,8 +529,11 @@ func (sess *session) runI18n(ctx context.Context, name string, args []string) {
 	}
 	switch {
 	case errors.Is(err, cmd.ErrCancelled), errors.Is(err, huh.ErrUserAborted),
-		errors.Is(err, cmd.ErrNonInteractive):
+		errors.Is(err, cmd.ErrNonInteractive), errors.Is(err, cmd.ErrUsage):
 		sess.finalize(name, stats.errors, stats.warnings, err)
+		if errors.Is(err, cmd.ErrUsage) {
+			sess.exitCode = exitUsage
+		}
 	case err != nil, stats.errors > 0:
 		sess.commandFailureLog(name, err, stats.errors, stats.warnings)
 	default:

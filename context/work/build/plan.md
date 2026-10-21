@@ -1,5 +1,5 @@
 # Build plan
-> The open units of Echo, in order. Everything not listed here is implemented; shipped units live in git, the CHANGELOG and [archive](../../archive/2026-09-30-original/specs/). Last verified: 2026-10-19.
+> The open units of Echo, in order. Everything not listed here is implemented; shipped units live in git, the CHANGELOG and [archive](../../archive/2026-09-30-original/specs/). Last verified: 2026-10-21.
 
 Order: unblocked first; a unit gets a spec (`/ctx spec build <NN-name>`) before any code.
 
@@ -12,6 +12,7 @@ Order: unblocked first; a unit gets a spec (`/ctx spec build <NN-name>`) before 
 | 146 | link-show-json | `link --show --json`: binding plus resolved target (stage, DB, version, deployed, containers) as one object. [Spec](146-link-show-json.md). | — | implemented (`26c366a`), released 0.28.0; Reverb target and undeclared stage still to verify live |
 | 147 | logs-errors | `logs --errors [-n N] [--json]`: the last ERROR blocks with exception and frames, local or remote. [Spec](147-logs-errors.md). | 144 | implemented (`fb56ac6`), released 0.28.0; local path still to verify live |
 | 142 | op-lock-respect | deploy, watch, sideload and checkpoint check and take the operation lock db-push introduces, so they never run while a db-push replaces the DB. [Spec](142-op-lock-respect.md). | 141 | implemented (`9eced71`, merged `b3473de`); verified on `develop` except `watch` and Reverb |
+| 149 | relay-target | Targets with `relay = "<app>/<env>"` resolved through Relay's `GET /api/v1/resolve` (Relay unit 25): headless `link --add --relay`, `docker exec` for shell/shell-run/test/update/i18n, `ps`/`logs` by container, `deploy` delegated to Relay, every other remote verb refused; remote `i18n-update`. [Spec](149-relay-target.md). | Relay unit 25 | implemented; verified on morwi-fb 2026-10-21 through a local relayd on the real catalog (ps, logs, shell-run, refusals, link --show --json; deploy delegation against relayd's noop driver); still to see: against Ionos once relayd serves unit 25, and live `test`, `update`, `i18n-pull`, `i18n-update` (they write) |
 | 148 | remote-module-state | `modstate`/`modinfo` with `--from`/`--remote` and `--json`, several modules per `modinfo`, `deployed_version` from the deploy lock. [Spec](148-remote-module-state.md). | — | implemented on `feature/op-lock-remote-modules` (`9bb9dda`); verified on `develop` |
 | 134 | sideload-safety | DB checkpoint (deploy's policy) and code snapshot of `.echo/sideload/<addon>` (`createCodeSnapshot`) around the sideload run, restored through deploy's `rollbackDecision`. | 133 | pending, needs spec |
 | 135 | sideload-rm | `sideload --rm <addon>`: uninstall, unmount, delete, drop the lock entry; `--keep-installed` graduates an addon that now lives in the repo under the same name. | 133 | pending, needs spec |

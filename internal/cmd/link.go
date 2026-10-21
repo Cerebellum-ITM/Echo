@@ -58,6 +58,9 @@ type linkArgs struct {
 	list    bool
 	add     bool
 	jsonOut bool
+	// relay and sshHost register a Relay target with --add.
+	relay   string
+	sshHost string
 }
 
 // parseLinkArgs extracts the mode flags and the optional target positional.
@@ -66,8 +69,23 @@ type linkArgs struct {
 // --show.
 func parseLinkArgs(args []string) (linkArgs, error) {
 	var out linkArgs
-	for _, a := range args {
+	for i := 0; i < len(args); i++ {
+		a := args[i]
 		switch {
+		case a == "--relay", a == "--ssh-host":
+			if i+1 >= len(args) || strings.HasPrefix(args[i+1], "-") {
+				return out, fmt.Errorf("%w: %s needs a value", ErrUsage, a)
+			}
+			i++
+			if a == "--relay" {
+				out.relay = args[i]
+			} else {
+				out.sshHost = args[i]
+			}
+		case strings.HasPrefix(a, "--relay="):
+			out.relay = strings.TrimPrefix(a, "--relay=")
+		case strings.HasPrefix(a, "--ssh-host="):
+			out.sshHost = strings.TrimPrefix(a, "--ssh-host=")
 		case a == "--show":
 			out.show = true
 		case a == "--rm":
@@ -88,6 +106,18 @@ func parseLinkArgs(args []string) (linkArgs, error) {
 			}
 			out.target = a
 		}
+	}
+	if out.relay != "" || out.sshHost != "" {
+		if !out.add || out.relay == "" {
+			return out, fmt.Errorf("%w: --relay and --ssh-host register a Relay target: link --add <name> --relay <app>/<env> [--ssh-host <alias>]", ErrUsage)
+		}
+		if out.target == "" {
+			return out, fmt.Errorf("%w: link --add --relay needs the new target's name", ErrUsage)
+		}
+		if out.show || out.rm || out.next || out.list || out.jsonOut {
+			return out, fmt.Errorf("%w: link --add --relay takes no other mode", ErrUsage)
+		}
+		return out, nil
 	}
 	modes := 0
 	for _, on := range []bool{out.show, out.rm, out.next, out.list, out.add, out.target != ""} {
@@ -118,6 +148,8 @@ func RunLink(ctx context.Context, opts LinkOpts) error {
 	switch {
 	case p.rm:
 		return runLinkRm(opts)
+	case p.relay != "":
+		return runLinkAddRelay(ctx, opts, p.target, p.relay, p.sshHost)
 	case p.show && p.jsonOut:
 		return runLinkShowJSON(ctx, opts)
 	case p.show:
@@ -283,24 +315,29 @@ func runLinkShow(ctx context.Context, opts LinkOpts) error {
 		fields = append([][2]string{{"target", name}}, fields...)
 	}
 	opts.log("INFO", "", "linked to", "", fields...)
-	prof, err := probeLink(ctx, opts, name)
+	rsc, err := probeLink(ctx, opts, name)
 	if err != nil {
 		return nil
 	}
-	if code, ok := readLinkDeployedCode(ctx, opts, name); ok {
-		reportDeployedCode(opts, code, prof.DBName)
+	prof := rsc.prof
+	if rsc.relay != nil {
+		reportRelayEnv(opts, rsc)
+	} else {
+		if code, ok := readLinkDeployedCode(ctx, opts, name); ok {
+			reportDeployedCode(opts, code, prof.DBName)
+		}
+		reportDeployLock(ctx, opts, prof.DBName)
+		reportReverbEnv(opts, prof)
 	}
-	reportDeployLock(ctx, opts, prof.DBName)
-	reportReverbEnv(opts, prof)
 	opts.log("INFO", "remote", "remote containers", prof.DBName)
 	if opts.OnPS == nil {
-		psCmd := remoteComposeCmd(opts.Cfg.ConnectRemotePath, prof.ComposeCmd, "ps")
-		if err := runSSHStream(ctx, opts.Cfg.ConnectSSHHost, psCmd, nil, opts.StreamOut); err != nil {
+		psCmd := rsc.target.composeAt(opts.Cfg.ConnectRemotePath, "ps")
+		if err := runSSHStream(ctx, rsc.sshHost, psCmd, nil, opts.StreamOut); err != nil {
 			return fmt.Errorf("remote ps: %w", err)
 		}
 		return nil
 	}
-	err = remotePSTable(ctx, opts.Cfg.ConnectSSHHost, opts.Cfg.ConnectRemotePath, prof.ComposeCmd,
+	err = remotePSTable(ctx, rsc.sshHost, opts.Cfg.ConnectRemotePath, rsc.target,
 		func(rows []docker.PSContainer) { opts.OnPS(rows, prof.DBName) }, opts.StreamOut)
 	if err != nil {
 		return fmt.Errorf("remote ps: %w", err)
@@ -362,6 +399,18 @@ func reportReverbEnv(opts LinkOpts, prof config.RemoteProfile) {
 	opts.log("INFO", "", "reverb env", prof.DBName, append(fields, [2]string{"api", api})...)
 }
 
+// reportRelayEnv adds the Relay line to `link --show`: the env, the server
+// it runs on and the commit of its current release.
+func reportRelayEnv(opts LinkOpts, rsc remoteShellContext) {
+	re := rsc.relay.resolved
+	fields := [][2]string{{"env", rsc.relay.spec()}, {"server", re.Server}, {"branch", re.Branch}}
+	if re.Release != nil {
+		fields = append(fields, [2]string{"sha", shortSHA(re.Release.AppSHA)},
+			[2]string{"deploy", strconv.FormatInt(re.Release.DeployID, 10)})
+	}
+	opts.log("INFO", "", "relay env", rsc.prof.DBName, fields...)
+}
+
 // LinkShowResult is the `link --show --json` report: the binding and the
 // remote target as the server profile declares it. Stage is the normalized
 // gate stage (undeclared reads as prod, StageDeclared false). Deployed is nil
@@ -377,6 +426,7 @@ type LinkShowResult struct {
 	OdooVersion   string              `json:"odoo_version"`
 	Compose       string              `json:"compose"`
 	Reverb        *LinkShowReverb     `json:"reverb"`
+	Relay         *LinkShowRelay      `json:"relay,omitempty"`
 	Deployed      *LinkShowDeployed   `json:"deployed"`
 	Containers    []LinkShowContainer `json:"containers"`
 }
@@ -384,6 +434,13 @@ type LinkShowResult struct {
 type LinkShowReverb struct {
 	Project string `json:"project"`
 	Env     string `json:"env"`
+}
+
+// LinkShowRelay names the Relay env of a Relay target.
+type LinkShowRelay struct {
+	App    string `json:"app"`
+	Env    string `json:"env"`
+	Server string `json:"server"`
 }
 
 type LinkShowDeployed struct {
@@ -407,11 +464,11 @@ func runLinkShowJSON(ctx context.Context, opts LinkOpts) error {
 		return fmt.Errorf("%w: not linked — run `link <target>` to bind this directory", ErrUsage)
 	}
 	name := linkTargetName(opts.Cfg)
-	prof, err := probeLink(ctx, opts, name)
+	rsc, err := probeLink(ctx, opts, name)
 	if err != nil {
 		return err
 	}
-	target := remoteConnectTarget(prof)
+	prof, target := rsc.prof, rsc.target
 	res := LinkShowResult{
 		Target:        name,
 		SSHHost:       opts.Cfg.ConnectSSHHost,
@@ -425,10 +482,16 @@ func runLinkShowJSON(ctx context.Context, opts LinkOpts) error {
 	if m := prof.Reverb; m != nil {
 		res.Reverb = &LinkShowReverb{Project: m.Project, Env: m.Env}
 	}
-	if code, ok := readLinkDeployedCode(ctx, opts, name); ok {
+	if rsc.relay != nil {
+		re := rsc.relay.resolved
+		res.Relay = &LinkShowRelay{App: rsc.relay.app, Env: rsc.relay.env, Server: re.Server}
+		if re.Release != nil {
+			res.Deployed = &LinkShowDeployed{Branch: re.Branch, SHA: re.Release.AppSHA}
+		}
+	} else if code, ok := readLinkDeployedCode(ctx, opts, name); ok {
 		res.Deployed = &LinkShowDeployed{Branch: code.branch, SHA: code.sha}
 	}
-	rows, err := remotePSRows(ctx, opts.Cfg.ConnectSSHHost, opts.Cfg.ConnectRemotePath, prof.ComposeCmd)
+	rows, err := remotePSRows(ctx, rsc.sshHost, opts.Cfg.ConnectRemotePath, target)
 	if err != nil {
 		opts.log("WARNING", "remote", "could not read the remote containers", prof.DBName,
 			[2]string{"err", err.Error()})
@@ -463,19 +526,30 @@ func runLinkRm(opts LinkOpts) error {
 	return nil
 }
 
-// probeLink reads the remote Echo profile over SSH and reports it. The
+// probeLink reads the remote Echo profile over SSH (a Relay target asks
+// Relay instead) and reports it. The
 // system-status line doubles as the "reachable" signal (same shape as
 // connect / i18n-pull). Failure is a WARNING — the binding is config, not
 // a connection — and the error is returned so callers skip remote
 // follow-ups.
-func probeLink(ctx context.Context, opts LinkOpts, fromName string) (config.RemoteProfile, error) {
+func probeLink(ctx context.Context, opts LinkOpts, fromName string) (remoteShellContext, error) {
 	opts.log("INFO", "remote", "probing remote", "",
 		[2]string{"host", opts.Cfg.ConnectSSHHost})
+	if _, ok := config.RelaySpec(opts.Cfg.ConnectRemotePath); ok {
+		rsc, err := resolveRelayShell(ctx, opts.Cfg, opts.Cfg.ConnectSSHHost, opts.Cfg.ConnectRemotePath, fromName, opts.Log)
+		if err != nil {
+			opts.log("WARNING", "remote", "linked but unreachable", "", [2]string{"err", err.Error()})
+			return remoteShellContext{}, err
+		}
+		opts.log("INFO", "", "linked", rsc.prof.DBName,
+			[2]string{"stage", rsc.prof.Stage}, [2]string{"db", rsc.prof.DBName})
+		return rsc, nil
+	}
 	prof, err := fetchRemoteProfile(ctx, ConnectOpts{Cfg: opts.Cfg, Root: opts.Root})
 	if err != nil {
 		opts.log("WARNING", "remote", "linked but unreachable", "",
 			[2]string{"err", err.Error()})
-		return config.RemoteProfile{}, err
+		return remoteShellContext{}, err
 	}
 	opts.log("INFO", "system", "system", prof.DBName,
 		statusFields(prof.OdooVersion, prof.Stage,
@@ -485,7 +559,12 @@ func probeLink(ctx context.Context, opts LinkOpts, fromName string) (config.Remo
 	opts.log("INFO", "", "linked", prof.DBName,
 		[2]string{"stage", prof.Stage},
 		[2]string{"db", prof.DBName})
-	return prof, nil
+	return remoteShellContext{
+		sshHost:    opts.Cfg.ConnectSSHHost,
+		remotePath: opts.Cfg.ConnectRemotePath,
+		target:     remoteConnectTarget(prof),
+		prof:       prof,
+	}, nil
 }
 
 // resolveLinkTarget picks the connect target to bind: an explicit name is

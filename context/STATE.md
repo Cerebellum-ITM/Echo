@@ -1,5 +1,5 @@
 # State
-> Where the work stands, what blocks it, what is next. Rewritten whole at every `/ctx close`; no history here. Last rewritten: 2026-10-20.
+> Where the work stands, what blocks it, what is next. Rewritten whole at every `/ctx close`; no history here. Last rewritten: 2026-10-21.
 
 ## Goal
 
@@ -15,7 +15,14 @@ instead of scraped from logs.
   Unit 148 (`modstate`/`modinfo` remote and JSON), Unit 142 (operation lock in deploy, watch, sideload and
   checkpoint) and the `ValidationError`/`UserError` message fix of `test --json`. v0.28.0 (same day) carried
   help pages, `db-push`, `sideload`, `init --remote`, `db-restore` progress and Units 143-147.
-- `~/.local/bin/echo_cli` is `0.29.0+b00a8be`.
+- `~/.local/bin/echo_cli` is the build of Unit 149's commit (installed 2026-10-21, see below); the last release is
+  0.29.0.
+- **Unit 149 (Relay targets) is committed on `main`, unreleased.** `morwi-fb-odoo` and `morwi-fb-stable` in
+  `global.toml` are now Relay targets (`relay = "fb/stage"` / `"fb/stable"`, `ssh_host = "morwi-fb"`), and
+  `[relay]` points at `https://relay.cerebellum.technology` with `token_file = "~/.config/relay/echo-token"`.
+  Verified on morwi-fb through a local relayd ([ledger](knowledge/operations.md#live-verification-ledger) row 149).
+  They work against production only once relayd on Ionos serves Relay unit 25 and the owner saves an echo token
+  in that file; until then every command on them fails naming the missing token file.
 - **Unreleased on `main`** (`af3a3cf`, merge of `fix/db-push-filestore-owner`; `main` is 5 commits ahead of
   `origin/main`, not pushed): a restored filestore (`db-push --filestore`, `db-pull --restore`) takes the owner of
   Odoo's `data_dir` instead of the filestore root's, which a new instance does not have (`a570425`; reported on
@@ -43,16 +50,19 @@ instead of scraped from logs.
 
 ## Next
 
-1. Live-check the filestore owner fix on an instance without a filestore (ledger row `db-push owner`), then
-   release 0.29.1 (patch).
-2. Remaining live checks ([ledger](knowledge/operations.md#live-verification-ledger)): a raising
+1. After the owner upgrades relayd on Ionos and saves the echo token: `ps`, `logs` and a `shell-run` on
+   `morwi-fb-odoo` and `morwi-fb-stable` against Ionos; then live `test`/`update`/`i18n-pull`/`i18n-update` on
+   `fb/stage` when the user allows writes there.
+2. Live-check the filestore owner fix on an instance without a filestore (ledger row `db-push owner`), then
+   release; with Unit 149 on `main` the next release is 0.30.0 (minor: a new target kind).
+3. Remaining live checks ([ledger](knowledge/operations.md#live-verification-ledger)): a raising
    `update --json` (its error path is the parser verified live by `logs --errors` and `test`), `link --show --json`
    on an undeclared stage, local `logs --errors` (needs Docker running), the
    headless clipboard (145), `deployed_version` from a lock with module versions (148).
-3. The rest of the 2026-10-19 audit proposals in the
+4. The rest of the 2026-10-19 audit proposals in the
    [plan](work/build/plan.md#proposed-by-the-2026-10-19-agent-audit-not-specced) (headless `view`, `logview --last
    --json`, `ps`/`db-list --json` next).
-4. Older live checks (140, 139, 137 picker, 132) and sideload follow-ups 134-136; 138 needs a decision.
+5. Older live checks (140, 139, 137 picker, 132) and sideload follow-ups 134-136; 138 needs a decision.
 
 ## Messages
 

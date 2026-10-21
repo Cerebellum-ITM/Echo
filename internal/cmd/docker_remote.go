@@ -101,29 +101,46 @@ func runRemotePS(ctx context.Context, opts DockerOpts, from string, onTable func
 	if err != nil {
 		return err
 	}
-	return remotePSTable(ctx, rsc.sshHost, rsc.remotePath, rsc.target.composeCmd,
+	return remotePSTable(ctx, rsc.sshHost, rsc.remotePath, rsc.target,
 		func(rows []docker.PSContainer) { onTable(rows, rsc.prof.DBName) }, opts.StreamOut)
+}
+
+// composeAt builds a compose subcommand for the target: in its project
+// directory, or by project name when the project has no file on the host.
+func (t connectTarget) composeAt(remotePath string, args ...string) string {
+	if t.composeProject != "" {
+		return projectComposeCmd(t.composeProject, args...)
+	}
+	return remoteComposeCmd(remotePath, t.composeCmd, args...)
 }
 
 // remotePSTable reads `<compose> ps --format json` on host over SSH and hands
 // the parsed rows to onTable. When the structured read fails (older compose,
 // SSH hiccup) it streams the raw `<compose> ps` through stream instead, so the
 // caller always gets something on screen.
-func remotePSTable(ctx context.Context, host, remotePath, composeCmd string, onTable func([]docker.PSContainer), stream func(string)) error {
-	if rows, err := remotePSRows(ctx, host, remotePath, composeCmd); err == nil {
+func remotePSTable(ctx context.Context, host, remotePath string, t connectTarget, onTable func([]docker.PSContainer), stream func(string)) error {
+	if rows, err := remotePSRows(ctx, host, remotePath, t); err == nil {
 		onTable(rows)
 		return nil
 	}
-	return runSSHStream(ctx, host, remoteComposeCmd(remotePath, composeCmd, "ps"), nil, stream)
+	return runSSHStream(ctx, host, t.composeAt(remotePath, "ps"), nil, stream)
 }
 
 // remotePSRows reads the remote containers from `compose ps --format json`.
-func remotePSRows(ctx context.Context, host, remotePath, composeCmd string) ([]docker.PSContainer, error) {
-	out, err := runSSH(ctx, host, remoteComposeCmd(remotePath, composeCmd, "ps", "--format", "json"), nil)
+func remotePSRows(ctx context.Context, host, remotePath string, t connectTarget) ([]docker.PSContainer, error) {
+	out, err := runSSH(ctx, host, t.composeAt(remotePath, "ps", "--format", "json"), nil)
 	if err != nil {
 		return nil, err
 	}
-	return docker.ParsePS(out)
+	rows, err := docker.ParsePS(out)
+	if t.composeProject != "" {
+		// A Relay env is addressed by container, not by service: the name is
+		// what logs, docker exec and Relay's own UI use.
+		for i := range rows {
+			rows[i].Service = rows[i].Name
+		}
+	}
+	return rows, err
 }
 
 // runRemoteLogs streams a remote host's compose logs over SSH. Follow is the
@@ -137,24 +154,62 @@ func runRemoteLogs(ctx context.Context, opts DockerOpts, from string, follow, co
 	if err != nil {
 		return err
 	}
-	if !all && len(services) == 0 && rsc.target.odooContainer != "" {
-		services = []string{rsc.target.odooContainer}
+	var remoteCmd string
+	if project := rsc.target.composeProject; project != "" && !all {
+		// Relay's compose project has no file to map a service name from, so
+		// one container is read by its own name.
+		if len(services) > 1 {
+			return fmt.Errorf("%w: logs on a Relay env reads one container (or --all), got %s",
+				ErrUsage, strings.Join(services, ", "))
+		}
+		container := rsc.target.odooContainer
+		if len(services) == 1 {
+			container = relayContainerName(project, services[0])
+		}
+		remoteCmd = dockerLogsCmd(container, follow, tail)
+	} else {
+		if !all && len(services) == 0 && rsc.target.odooContainer != "" {
+			services = []string{rsc.target.odooContainer}
+		}
+		args := []string{"logs", "--no-log-prefix"}
+		if follow {
+			args = append(args, "-f")
+		}
+		if tail != "" {
+			args = append(args, "--tail", tail)
+		}
+		remoteCmd = rsc.target.composeAt(rsc.remotePath, append(args, services...)...)
 	}
 
-	args := []string{"logs", "--no-log-prefix"}
+	if copyMode {
+		return runRemoteLogsAndCopy(ctx, opts, rsc.sshHost, remoteCmd)
+	}
+	return runSSHStream(ctx, rsc.sshHost, remoteCmd, nil, opts.StreamOut)
+}
+
+// relayContainerName accepts a Relay container name or its compose service
+// (odoo, db): Relay names every container <project>-<service>.
+func relayContainerName(project, name string) string {
+	if strings.HasPrefix(name, project+"-") {
+		return name
+	}
+	return project + "-" + name
+}
+
+// dockerLogsCmd is `docker logs [-f] [--tail N] <container>`.
+func dockerLogsCmd(container string, follow bool, tail string) string {
+	args := []string{"logs"}
 	if follow {
 		args = append(args, "-f")
 	}
 	if tail != "" {
 		args = append(args, "--tail", tail)
 	}
-	args = append(args, services...)
-	remoteCmd := remoteComposeCmd(rsc.remotePath, rsc.target.composeCmd, args...)
-
-	if copyMode {
-		return runRemoteLogsAndCopy(ctx, opts, rsc.sshHost, remoteCmd)
+	quoted := make([]string, 0, len(args)+1)
+	for _, a := range append(args, container) {
+		quoted = append(quoted, shellQuote(a))
 	}
-	return runSSHStream(ctx, rsc.sshHost, remoteCmd, nil, opts.StreamOut)
+	return "docker " + strings.Join(quoted, " ")
 }
 
 // runRemoteLogsAndCopy buffers a bounded remote log run, prints each line via

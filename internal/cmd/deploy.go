@@ -974,6 +974,9 @@ func RunDeploy(ctx context.Context, opts DeployOpts) (DeployResult, error) {
 	if err := requireNoReverb("deploy", p.from); err != nil {
 		return DeployResult{}, err
 	}
+	if host, path, name, ok := relayTargetFor(opts.Cfg, p.from); ok {
+		return runDeployRelay(ctx, opts, host, path, name)
+	}
 
 	// deploy --set-push is config-only: persist the local [deploy] push
 	// default and exit — no remote resolution, no deploy.
@@ -1061,6 +1064,9 @@ func RunDeploy(ctx context.Context, opts DeployOpts) (DeployResult, error) {
 	sshHost, remotePath, fromName, err := resolveDeployRemote(opts, p.from)
 	if err != nil {
 		return DeployResult{}, err
+	}
+	if _, ok := config.RelaySpec(remotePath); ok {
+		return runDeployRelay(ctx, opts, sshHost, remotePath, fromName)
 	}
 	opts.log("INFO", "remote", "target resolved", "",
 		[2]string{"host", sshHost}, [2]string{"path", remotePath})

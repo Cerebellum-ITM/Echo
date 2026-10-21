@@ -191,6 +191,43 @@ func remoteExecInteractive(remotePath, composeCmd, container string, argv []stri
 	return b.String()
 }
 
+// remoteContainerInteractiveCmd is remoteExecInteractive for a target's odoo
+// container, whichever transport the target uses.
+func remoteContainerInteractiveCmd(remotePath string, t connectTarget, argv []string) string {
+	if t.odooExec == dbExecDocker {
+		return dockerExec("-it", t.odooContainer, argv)
+	}
+	return remoteExecInteractive(remotePath, t.composeCmd, t.odooContainer, argv)
+}
+
+// dockerExec builds `docker exec <flags> <container> <argv...>`, every token
+// shell-quoted. It needs no working directory: the container is found by name.
+func dockerExec(flags, container string, argv []string) string {
+	var b strings.Builder
+	b.WriteString("docker exec ")
+	b.WriteString(flags)
+	b.WriteString(" ")
+	b.WriteString(shellQuote(container))
+	for _, a := range argv {
+		b.WriteString(" ")
+		b.WriteString(shellQuote(a))
+	}
+	return b.String()
+}
+
+// projectComposeCmd runs a compose subcommand against a project that has no
+// file on the host: `docker compose -p <project> <args...>`.
+func projectComposeCmd(project string, args ...string) string {
+	var b strings.Builder
+	b.WriteString("docker compose -p ")
+	b.WriteString(shellQuote(project))
+	for _, a := range args {
+		b.WriteString(" ")
+		b.WriteString(shellQuote(a))
+	}
+	return b.String()
+}
+
 // remoteComposeCmd builds the SSH command that runs a compose
 // subcommand at the remote project root: `cd <path> && <compose>
 // <args...>`. Every arg is shell-quoted; the compose command is emitted

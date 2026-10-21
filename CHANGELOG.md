@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Envs that Relay deploys are connect targets again.** A target with
+  `relay = "<app>/<env>"` asks Relay (`GET /api/v1/resolve/{app}/{env}`)
+  where the env lives and reaches it over SSH with the user's own ssh alias,
+  with no Echo profile, checkout or `.env` on the host. `link --add <name>
+  --relay <app>/<env> [--ssh-host <alias>]` registers one headlessly (the env
+  is resolved first, so a typo or a refused token writes nothing) and binds
+  the directory; `[relay] url` and `token_file` (or `token`), an echo-scope
+  Relay token, go in `global.toml`. On such a target `shell`, `shell-run`,
+  `test` and `update` run with `docker exec` in the env's odoo container,
+  Odoo reading its db credentials from the container's own `odoo.conf`;
+  `ps` lists the env's containers by name through `docker compose -p`;
+  `logs` reads the odoo container with `docker logs` (or another one by
+  container or service name, or every one with `--all`); `i18n-pull` exports
+  with the container's `odoo.conf`; `deploy` is handed to Relay
+  (`POST /api/v1/deploys`) and followed to its end, exiting 1 when it does
+  not succeed and accepting only `--dry-run` among the deploy flags. Every
+  other remote verb (`push`, `watch`, `sideload`, `checkpoint`,
+  `up`/`stop`/`restart`/`down`, the `db-*` commands, ...) is refused with
+  exit 2 and the reason before any SSH. `link --show --json` adds
+  `relay {app, env, server}` and fills `deployed` from Relay's current
+  release.
+- **`i18n-update` loads a `.po` into a remote database.** With `--from <t>`
+  or `--remote` the local `<mod>/i18n/<lang>.po` is streamed into the
+  target's odoo container, imported there with overwrite and removed; the
+  target's stage gates it like any remote write, and a usage error now exits
+  2.
+
 ### Fixed
 - **`db-push --filestore` no longer leaves a new instance's filestore owned
   by root.** The restored files took the owner of the filestore root, but an
