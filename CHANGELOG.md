@@ -34,6 +34,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   target's odoo container, imported there with overwrite and removed; the
   target's stage gates it like any remote write, and a usage error now exits
   2.
+- **`doctor` checks how the db image is pinned.** A new `dbimage` check reads
+  the target's compose configuration and warns when the db service's image is
+  a bare version tag such as `postgres:16`, which a re-pull moves to a new OS
+  base; a tag naming the OS release (`postgres:16-bookworm`) or a digest
+  passes.
 
 ### Fixed
 - **No restart recreates the database container any more.** `deploy`, its

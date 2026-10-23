@@ -137,7 +137,7 @@ unchanged. `-C` also falls back to a connect target's `remote_path` when it
 points at a local directory.
 
 `doctor` answers "is this target ready" before a deploy finds out halfway. It
-reads the target over three SSH round trips and changes nothing on either
+reads the target over four SSH round trips and changes nothing on either
 side, then prints one `echo.doctor.<check>` line per check, in this order:
 `ssh` (reachable; a literal `user@host` warns), `profile` (the server's Echo
 profile exists, parses, names the containers and the database, declares a
@@ -146,7 +146,9 @@ stage), `rsync` (on both ends; missing fails only when a deploy would push),
 repository), `disk` (free space for the checkpoint a deploy would take: 1.2×
 the database on the data directory for `db`, 0.5× on the host under
 `remote_path` for `dump`), `lock` (absent, unreadable, corrupt, unverified
-entries, `.echo/` tracked by the server's repository), `dest` (the push
+entries, `.echo/` tracked by the server's repository), `dbimage` (the db
+service's image names an OS release or a digest, not a bare `postgres:16`
+that a re-pull can move to a new glibc), `dest` (the push
 destination exists, or the addons directory auto-detect would use) and one
 `dest.shared` line per other target on the same host whose destination is the
 same directory (WARNING when its stage differs). Every check runs even after

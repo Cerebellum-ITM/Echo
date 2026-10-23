@@ -78,6 +78,8 @@ On acceptance `handleDeployFailure` runs, in this order:
   container's image with what its image name (`.Config.Image`) resolves to now; a difference logs
   `WARNING echo.<cmd>.compose: db image changed on the host — keeping the running container service= image= running= new=`.
   It never fails a command.
+- **`doctor`'s `dbimage` check** reads `compose config --format json` and warns when the db image is a bare tag
+  (`postgres:16`) instead of one naming the OS release (`-bookworm`, `-trixie`, `-alpine`, ...) or a digest.
 - **Gap**: a db container that does not exist yet is still created on whatever the tag names now; recreating it on
   purpose (a Postgres upgrade) is a manual `docker compose up -d --force-recreate db` plus `REFRESH COLLATION VERSION`.
 - **Hypothesis:** `docker compose ps -a -q <svc>`, `docker inspect` and `config --format json` behave as used here on

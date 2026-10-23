@@ -125,7 +125,7 @@ var commandDocs = []commandDoc{
 			{"--json", "", "One JSON report on stdout, lines on stderr"},
 		},
 		notes: []string{
-			"Read-only on both sides: checks ssh, profile, rsync, git, disk, lock and dest, and runs every check even after a failure",
+			"Read-only on both sides: checks ssh, profile, rsync, git, disk, lock, dbimage and dest, and runs every check even after a failure",
 			"Any failed check exits 1; warnings alone exit 0",
 			"With no link, no --from and several targets it opens a target picker, which exits 2 without a TTY",
 			"--json prints {target, checks, counts} on stdout; each check has id, status, reason, message and fields",
