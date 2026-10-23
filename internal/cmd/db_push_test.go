@@ -176,7 +176,7 @@ func TestDBPushFlowOrder(t *testing.T) {
 	order := []string{
 		"SELECT 1", "mkdir " + opLockDir, "UPLOAD", "'stop' 'odoo'", `TEMPLATE "mydb"`,
 		`DROP DATABASE IF EXISTS "mydb"`, "pg_restore", "pre-push", "'neutralize'", "--stop-after-init",
-		"'up' '-d' 'odoo'", "ir_module_module", "rm -rf 'backups/db-push-", "rm -rf " + opLockDir,
+		"'up' '--detach' '--no-deps' 'odoo'", "ir_module_module", "rm -rf 'backups/db-push-", "rm -rf " + opLockDir,
 	}
 	last := -1
 	for _, step := range order {
@@ -206,7 +206,7 @@ func TestDBPushFailureAfterRestoreLeavesOdooStopped(t *testing.T) {
 	if err == nil || res.OK {
 		t.Fatalf("expected failure, got %+v", res)
 	}
-	if f.index("'up' '-d'") >= 0 {
+	if f.index("'up' '--detach'") >= 0 {
 		t.Errorf("Odoo must stay stopped after a failed restore: %v", f.calls)
 	}
 	if f.index("rm -rf 'backups/db-push-") < 0 || f.index("rm -rf "+opLockDir) < 0 {
@@ -221,7 +221,7 @@ func TestDBPushCheckpointFailureRestartsOdoo(t *testing.T) {
 	if _, err := runDBPushTest(t, testRSC(), dump, "--to", "staging"); err == nil {
 		t.Fatal("expected checkpoint failure")
 	}
-	if f.index("'up' '-d'") < 0 || f.index("DROP DATABASE IF EXISTS \"mydb\"") >= 0 {
+	if f.index("'up' '--detach'") < 0 || f.index("DROP DATABASE IF EXISTS \"mydb\"") >= 0 {
 		t.Errorf("a failed checkpoint must restart Odoo and touch nothing: %v", f.calls)
 	}
 }

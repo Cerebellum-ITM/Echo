@@ -36,6 +36,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   2.
 
 ### Fixed
+- **No restart recreates the database container any more.** `deploy`, its
+  rollback and `deploy --rollback`, `checkpoint create`, `sideload`, `db-push`
+  and `up` (remote and local) ran `docker compose up -d`, which recreates
+  every container whose image tag now resolves to another image. When
+  something else on the host re-pulled `postgres:16` onto a Debian 13 build,
+  the next deploy put the database on the new glibc and every database
+  reported a collation version mismatch. Echo now starts the stack with
+  `up --detach --no-recreate` and the Odoo service with
+  `up --detach --no-deps`, so only Odoo may be recreated; named services
+  start the same way, the db service with `--no-recreate`. Before starting,
+  a WARNING names the db service, its image, the running image and the one
+  the tag resolves to now when they differ, and the running container is
+  kept.
 - **`db-push --filestore` no longer leaves a new instance's filestore owned
   by root.** The restored files took the owner of the filestore root, but an
   instance that never stored an attachment has no filestore root, so the

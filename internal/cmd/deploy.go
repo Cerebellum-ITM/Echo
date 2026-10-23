@@ -1817,7 +1817,8 @@ func RunDeploy(ctx context.Context, opts DeployOpts) (DeployResult, error) {
 		result.Checkpoint = &info
 	}
 
-	if err := step("up -d", remoteComposeCmd(remotePath, target.composeCmd, "up", "-d")); err != nil {
+	warnRemoteDBImageDrift(ctx, rsc, opts.log)
+	if err := step("up", remoteUpCmd(rsc)); err != nil {
 		return fail(err)
 	}
 	// Name the modules and the effective i18n flag right at the Odoo run, so
@@ -2042,7 +2043,8 @@ func handleDeployFailure(ctx context.Context, opts DeployOpts, rsc remoteShellCo
 				[2]string{"err", err.Error()})
 		}
 	}
-	_ = runSSHStream(ctx, rsc.sshHost, remoteComposeCmd(rsc.remotePath, rsc.target.composeCmd, "up", "-d"), nil, opts.StreamOut)
+	warnRemoteDBImageDrift(ctx, rsc, opts.log)
+	_ = runSSHStream(ctx, rsc.sshHost, remoteUpCmd(rsc), nil, opts.StreamOut)
 
 	// A dump survives its own restore, so it stays recorded for a possible
 	// re-rollback; a db-method copy was consumed by the rename. Code that did
@@ -2172,8 +2174,9 @@ func runDeployRollback(ctx context.Context, opts DeployOpts, p deployArgs) (Depl
 				[2]string{"err", err.Error()})
 		}
 	}
-	if err := runSSHStream(ctx, rsc.sshHost, remoteComposeCmd(rsc.remotePath, rsc.target.composeCmd, "up", "-d"), nil, opts.StreamOut); err != nil {
-		return DeployResult{}, fmt.Errorf("up -d failed: %w", err)
+	warnRemoteDBImageDrift(ctx, rsc, opts.log)
+	if err := runSSHStream(ctx, rsc.sshHost, remoteUpCmd(rsc), nil, opts.StreamOut); err != nil {
+		return DeployResult{}, fmt.Errorf("up failed: %w", err)
 	}
 
 	// Un-mark the checkpoint's commits so they can be corrected and redeployed;

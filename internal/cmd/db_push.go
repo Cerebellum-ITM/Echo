@@ -627,8 +627,8 @@ func (r *dbPushRun) registryCheck(ctx context.Context) error {
 }
 
 func (r *dbPushRun) startOdoo(ctx context.Context) error {
-	return ckptRunSSHStream(ctx, r.rsc.sshHost,
-		remoteComposeCmd(r.rsc.remotePath, r.rsc.target.composeCmd, "up", "-d", r.rsc.target.odooContainer), nil, r.stream)
+	warnRemoteDBImageDrift(ctx, r.rsc, r.opts.log)
+	return ckptRunSSHStream(ctx, r.rsc.sshHost, remoteUpCmd(r.rsc, r.rsc.target.odooContainer), nil, r.stream)
 }
 
 func (r *dbPushRun) report(ctx context.Context) error {

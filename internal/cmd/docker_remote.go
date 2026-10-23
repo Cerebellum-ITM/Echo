@@ -43,9 +43,67 @@ func runRemoteUp(ctx context.Context, opts DockerOpts, from string) error {
 	if rsc.reverb != nil {
 		return runReverbEnvAction(ctx, opts, rsc, "up")
 	}
-	args := append([]string{"up", "-d"}, remoteServiceArgs(opts.Args)...)
-	remoteCmd := remoteComposeCmd(rsc.remotePath, rsc.target.composeCmd, args...)
-	return runSSHStream(ctx, rsc.sshHost, remoteCmd, nil, opts.StreamOut)
+	warnRemoteDBImageDrift(ctx, rsc, opts.Log)
+	return runSSHStream(ctx, rsc.sshHost, remoteUpCmd(rsc, remoteServiceArgs(opts.Args)...), nil, opts.StreamOut)
+}
+
+// remoteDBService is the compose service of the target's database, or "" when
+// the database is only a container outside the project's compose file.
+func remoteDBService(t connectTarget) string {
+	if t.dbExec == dbExecDocker {
+		return ""
+	}
+	return t.dbContainer
+}
+
+// remoteUpCmd starts services on the remote stack through docker.UpCalls, so
+// no restart path recreates the database container.
+func remoteUpCmd(rsc remoteShellContext, services ...string) string {
+	t := rsc.target
+	var b strings.Builder
+	for i, args := range docker.UpCalls(services, t.odooContainer, remoteDBService(t)) {
+		if i == 0 {
+			b.WriteString(remoteComposeCmd(rsc.remotePath, t.composeCmd, args...))
+			continue
+		}
+		b.WriteString(" && ")
+		b.WriteString(t.composeCmd)
+		for _, a := range args {
+			b.WriteString(" ")
+			b.WriteString(shellQuote(a))
+		}
+	}
+	return b.String()
+}
+
+// warnRemoteDBImageDrift warns when the remote db container runs an image
+// other than the one its compose image name resolves to now, which is what a
+// plain `up -d` would have recreated it on.
+func warnRemoteDBImageDrift(ctx context.Context, rsc remoteShellContext, log logFn) {
+	service := remoteDBService(rsc.target)
+	if service == "" {
+		return
+	}
+	remoteCmd := "cd " + shellQuote(rsc.remotePath) + " && sh -c " + shellQuote(docker.DBImageDriftScript) +
+		" sh " + shellQuote(rsc.target.composeCmd) + " " + shellQuote(service)
+	out, err := ckptRunSSH(ctx, rsc.sshHost, remoteCmd, nil)
+	if err != nil {
+		return
+	}
+	if drift, ok := docker.ParseDBImageDrift(string(out)); ok {
+		warnDBImageDrift(log, rsc.prof.DBName, service, drift)
+	}
+}
+
+// warnDBImageDrift logs a drifted db image; the restart keeps the running
+// container.
+func warnDBImageDrift(log logFn, db, service string, d docker.DBImageDrift) {
+	if log == nil {
+		return
+	}
+	log("WARNING", "compose", "db image changed on the host — keeping the running container", db,
+		[2]string{"service", service}, [2]string{"image", d.Image},
+		[2]string{"running", docker.ShortImageID(d.Running)}, [2]string{"new", docker.ShortImageID(d.Current)})
 }
 
 // runRemoteStop stops compose services on a remote host over SSH. A `prod`
