@@ -116,7 +116,7 @@ without deploying. Relay's side is its unit 25 (`GET /api/v1/resolve/{app}/{env}
   `docker compose -p <project> ps --format json` and `logs` work from any directory, but `compose -p ... logs
   <container name>` prints nothing, so `logs` reads one container with `docker logs` and maps a service name to
   `<project>-<service>`; `ps` shows container names, not services (measured on morwi-fb 2026-10-21, Compose 5.5.1).
-- Supported: `shell`, `shell-run`, `test`, `update`, `ps`, `logs`, `i18n-pull`, `i18n-update`, `link`; `deploy` is
+- Supported: `shell`, `shell-run`, `test`, `update`, `uninstall`, `ps`, `logs`, `i18n-pull`, `i18n-update`, `link`; `deploy` is
   delegated (`POST /api/v1/deploys` then polled until it ends, only `--dry-run` accepted). Everything else is refused
   at dispatch by `cmd.RelayGuard` (exit 2, config only, no SSH): the `--from` target or, for an always-remote command
   or a remote flag, the binding. Why: Relay bakes the addons into the image and owns the containers, so `push`,

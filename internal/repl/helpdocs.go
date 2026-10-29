@@ -106,7 +106,7 @@ var commandDocs = []commandDoc{
 			"Bare link with several targets and --add open pickers and exit 2 without a TTY; name the target instead",
 			"Registering a target headlessly is init --remote ... --name <target> --link",
 			"The binding is saved before the probe; an unreachable remote is a WARNING, not a failure",
-			"A Relay target needs [relay] url and token_file (an echo-scope token) in global.toml; shell, shell-run, logs, ps, test, update, i18n-pull and i18n-update run in its containers with docker exec, deploy is handed to Relay, every other remote verb exits 2",
+			"A Relay target needs [relay] url and token_file (an echo-scope token) in global.toml; shell, shell-run, logs, ps, test, update, uninstall, i18n-pull and i18n-update run in its containers with docker exec, deploy is handed to Relay, every other remote verb exits 2",
 		},
 		examples: []helpExample{
 			{"link staging", "Bind this directory to the staging target"},
