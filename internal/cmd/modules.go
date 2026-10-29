@@ -330,6 +330,11 @@ func confirmRepeatLast(palette theme.Palette, modules []string) error {
 
 // RunUninstall returns the resolved modules along with the run error.
 func RunUninstall(ctx context.Context, opts ModulesOpts) ([]string, error) {
+	// Remote mode needs no local Odoo container, like remote `update`, so it
+	// branches before the local-config gate.
+	if from, remote := remoteFlagsIn(opts.Args); from != "" || remote {
+		return runUninstallRemote(ctx, opts, from)
+	}
 	if err := requireOdooConfig(opts.Cfg); err != nil {
 		return nil, err
 	}

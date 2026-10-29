@@ -132,6 +132,7 @@ func TestRelayGuard(t *testing.T) {
 	}{
 		{"supported verb", cfg, "shell-run", []string{"--from", "fb-stage", "x.py"}, false},
 		{"deploy is delegated", cfg, "deploy", []string{"--from", "fb-stage"}, false},
+		{"uninstall runs in the container", cfg, "uninstall", []string{"--from", "fb-stage", "sale"}, false},
 		{"push refused", cfg, "push", []string{"--from=fb-stage"}, true},
 		{"restart refused", cfg, "restart", []string{"--from", "fb-stage"}, true},
 		{"db-admin refused", cfg, "db-admin", []string{"--from", "fb-stage"}, true},

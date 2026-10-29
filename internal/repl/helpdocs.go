@@ -190,20 +190,27 @@ var commandDocs = []commandDoc{
 	{
 		name:    "uninstall",
 		section: "Modules",
-		usage:   "uninstall <mod...> [--level <lvl>] [--json]",
+		usage:   "uninstall <mod...> [--installed] [--level <lvl>] [--from <target> | --remote] [--force] [--json]",
 		summary: "Uninstall modules",
 		flags: []helpItem{
+			{"--from", "<target>", "Uninstall on a remote instance (named connect target)"},
+			{"--remote", "", "Uninstall on this directory's linked remote (see link)"},
+			{"--force", "", "Skip the confirm on a remote prod-stage target"},
+			{"--installed", "", "Remote picker: all installed modules, not just the remote's addons"},
 			{"--level", "<lvl>", "Odoo --log-level (debug…critical; default info)"},
 			{"--json", "", "One outcome object on stdout (errors, warnings, tests, migrations), lines on stderr"},
 		},
 		notes: []string{
-			"Local only and destructive: the modules' data is removed from the database",
+			"Destructive: the modules' data is removed from the database",
+			"Remote runs the uninstall script through odoo shell in the target's running container over SSH and needs no local compose project",
+			"A remote prod-stage target asks for a confirm, which exits 2 without a TTY; --force skips it",
 			"With no module names it opens a picker, which exits 2 without a TTY",
 			"An unknown flag exits 2 before Odoo runs",
 			"--json prints {command, target, db, modules, exit, duration_ms, errors, warnings, warnings_truncated, tests, migrations}; errors carry exception and frames; a usage error prints nothing on stdout",
 		},
 		examples: []helpExample{
 			{"uninstall sale_custom --json", "Uninstall a module and print the outcome as JSON"},
+			{"uninstall sale_custom --from staging --json", "Uninstall a module on staging; the outcome as JSON"},
 		},
 	},
 	{

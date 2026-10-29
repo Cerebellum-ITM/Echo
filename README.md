@@ -25,7 +25,7 @@ Echo is a work in progress; below is what currently ships in `main`.
 |-----------|-------------------------------------------------------------------------|---------------------------------|
 | Project   | `init`, `reset`, `alias` (`-C <name>` registry), `help`, `clear`        | `version`, `stage`, `theme`, `logo` |
 | Docker    | `up`, `down`, `stop`, `restart`, `ps`, `logs` (`--copy`/`--all`/`-t`; `up`/`stop`/`restart`/`ps`/`logs` also `--from`/`--remote` over SSH) | — |
-| Modules   | `install`, `update` (`--i18n`, `--remote`), `uninstall`, `test`, `modules` (`--config`), `modinfo`, `view` | —             |
+| Modules   | `install`, `update` (`--i18n`, `--remote`), `uninstall` (`--remote`), `test`, `modules` (`--config`), `modinfo`, `view` | —             |
 | Database  | `db-admin`, `db-backup` (`--with-filestore`), `db-restore` (rename + live progress), `db-pull` (clone a remote DB), `db-drop`, `db-neutralize`, `db-list`, `db-use` | — |
 | Shell     | `shell`, `bash`, `psql`                                                  | —                               |
 | i18n      | `i18n-export`, `i18n-update`, `i18n-pull` (from a remote)                | —                               |
@@ -240,6 +240,7 @@ echo logs --from staging --errors -n 1 --json
 | `  --installed`          | Source the picker from every installed module (e.g. `base`), not just the repo |
 | `  --from <target>` / `--remote` | Run the update on a **remote** instance over SSH (named target, or this directory's `link`) |
 | `uninstall <mod>...`     | Uninstall modules                                    |
+| `  --from <target>` / `--remote` | Run the uninstall on a **remote** instance over SSH (named target, or this directory's `link`) |
 | `  --level <lvl>`        | Odoo `--log-level` (`debug`…`critical`) — on install/update/uninstall |
 | `test <mod>...`          | Run the modules' Odoo test suite (filters `--test-tags`) |
 | `  --update`             | Reload modules first (`-u`; for view/schema changes) |

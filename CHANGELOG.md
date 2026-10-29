@@ -8,6 +8,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **`uninstall` runs on remote targets.** `uninstall <mod>... --from <target>`
+  (or `--remote` for the directory's link) pipes the same uninstall script
+  into `odoo shell` in the target's running Odoo container over SSH, with no
+  local compose project, the way remote `update` runs `-u`. With no module
+  names it opens a picker over the remote's addons (`--installed`: every
+  module installed in the remote database); a prod-stage target asks for a
+  confirm that `--force` skips; `--json` names the remote target. It also
+  runs on Relay targets, through `docker exec` like `shell-run`.
 - **Envs that Relay deploys are connect targets again.** A target with
   `relay = "<app>/<env>"` asks Relay (`GET /api/v1/resolve/{app}/{env}`)
   where the env lives and reaches it over SSH with the user's own ssh alias,
