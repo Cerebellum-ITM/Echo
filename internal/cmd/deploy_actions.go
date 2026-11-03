@@ -23,6 +23,9 @@ type actionEnv struct {
 	db         string
 	remotePath string
 	modules    string // space-separated resolved update+install set
+	// requirements is the sha256 of the requirements.txt in the build folder
+	// after the push, for a recipe that needs it to bust its layer cache.
+	requirements string
 }
 
 // deployActionError carries the failing action's identity so the deploy
@@ -131,6 +134,7 @@ func actionEnvVars(env actionEnv, phase string) []string {
 		"ECHO_REMOTE_PATH=" + env.remotePath,
 		"ECHO_MODULES=" + env.modules,
 		"ECHO_PHASE=" + phase,
+		"ECHO_REQUIREMENTS_SHA256=" + env.requirements,
 	}
 }
 

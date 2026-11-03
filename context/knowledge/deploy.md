@@ -89,6 +89,15 @@ Failures before the first code write return plainly unless a checkpoint exists (
 - The picker is TTY-only and only for standalone `push`; `deploy --push` and `watch` never open one. In a TTY an auto-detect failure falls into the picker; headless it fails closed. A picked path is stored relative when under `remotePath`.
 - `push --clean [mods|--all]` reverts a git target's overlay (`git checkout --` for tracked, `git clean -fd` for untracked), with `--dry-run`, prod gate and destructive confirm; it removes the entries from the lock. It needs a git-deploy target (Reverb: the overlay dir is emptied instead).
 
+## Requirements file
+
+`deploy --push` also carries the repo's root `requirements.txt` (`internal/cmd/deploy_requirements.go`), because an image-built target installs packages from its build folder and a module-only push left that folder's copy stale.
+
+- **Only to an explicit destination** (`[push] path`, server or local): the file lands at its root, which mirrors the repo the way modules do. Auto-detected destinations are live addons directories where nothing reads it, so the file is not sent there; git-deploy targets carry it on the branch.
+- **Content** comes from the tree the modules ship (`requirementsSourceFor`): the newest selected commit, else the one ref every module is pinned to, else the working tree. It is compared with the server's copy by sha256; the plan line `requirements changed=… added=… removed=…` lists the lines that move. Only a difference writes (temp + `mv`), after the modules and before `post_push`; the code snapshot covers it.
+- **A commit that touches only `requirements.txt`** resolves (`file=requirements.txt via=diff`) instead of being skipped; with no module the run pushes, runs the actions, stops and starts, and skips the Odoo run and the dependency check. Without a push it is `ErrUsage`. `watch` deploys such commits too.
+- **Echo cannot see whether the recipe reads the file.** The habitta recipe does not (it builds FROM a prebuilt base image and only COPYs addons, measured on habitta_dev 2026-11-03). A recipe that installs from it must COPY it before `pip install`; `ECHO_REQUIREMENTS_SHA256` in the action environment can serve as a cache-busting build argument.
+
 ## Git-deploy topology
 
 - Opt-in per target: `git_deploy`, `git_branch` (default `echo/deploy`), `git_path` on `[connect_targets.<t>]` or the project `[connect]`. Resolution (`resolveGitDeploy`): the named target is authoritative (its `git_deploy=false` disables), else a physical `ssh_host+remote_path` match against named targets, else `[connect]`. **Local config only, never server-first**; it describes how this machine ships.

@@ -29,21 +29,22 @@ const planSchema = 1
 // `deploy --apply` runs exactly that or refuses (Unit 129). It holds no
 // secret: deploy actions appear by name and digest, never their run text.
 type DeployPlan struct {
-	Schema        int              `json:"schema"`
-	CreatedAt     time.Time        `json:"created_at"`
-	EchoVersion   string           `json:"echo_version"`
-	By            string           `json:"by"`
-	Root          string           `json:"root"`
-	Target        planTarget       `json:"target"`
-	Run           planRun          `json:"run"`
-	Commits       []string         `json:"commits"`
-	Modules       []planModule     `json:"modules"`
-	BranchTip     string           `json:"branch_tip"`
-	Dest          string           `json:"dest"`
-	TestModules   []string         `json:"test_modules"`
-	DeployActions planActions      `json:"deploy_actions"`
-	Lock          string           `json:"lock"`
-	Dependencies  []planDependency `json:"dependencies"`
+	Schema        int                    `json:"schema"`
+	CreatedAt     time.Time              `json:"created_at"`
+	EchoVersion   string                 `json:"echo_version"`
+	By            string                 `json:"by"`
+	Root          string                 `json:"root"`
+	Target        planTarget             `json:"target"`
+	Run           planRun                `json:"run"`
+	Commits       []string               `json:"commits"`
+	Modules       []planModule           `json:"modules"`
+	BranchTip     string                 `json:"branch_tip"`
+	Dest          string                 `json:"dest"`
+	TestModules   []string               `json:"test_modules"`
+	DeployActions planActions            `json:"deploy_actions"`
+	Lock          string                 `json:"lock"`
+	Dependencies  []planDependency       `json:"dependencies"`
+	Requirements  *planRequirementsEntry `json:"requirements,omitempty"`
 }
 
 type planTarget struct {
@@ -473,6 +474,15 @@ func diffPlans(saved, fresh DeployPlan) []PlanChange {
 	}
 	differ("lock", "", saved.Lock, fresh.Lock, digest)
 	differ("dependencies", "", dependencyLabel(saved.Dependencies), dependencyLabel(fresh.Dependencies), plain)
+	var savedReq, freshReq planRequirementsEntry
+	if saved.Requirements != nil {
+		savedReq = *saved.Requirements
+	}
+	if fresh.Requirements != nil {
+		freshReq = *fresh.Requirements
+	}
+	differ("requirements", requirementsFile, savedReq.SHA256, freshReq.SHA256, sha)
+	differ("requirements_remote", requirementsFile, savedReq.Remote, freshReq.Remote, sha)
 
 	s, f := saved.Run, fresh.Run
 	for _, r := range []struct{ key, planned, now string }{

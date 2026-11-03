@@ -47,6 +47,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a bare version tag such as `postgres:16`, which a re-pull moves to a new OS
   base; a tag naming the OS release (`postgres:16-bookworm`) or a digest
   passes.
+- **`deploy --push` carries the repo's `requirements.txt`.** On a target with
+  an explicit `[push] path` (an image build folder), the root
+  `requirements.txt` goes to that path's root whenever it differs from the
+  server's copy, read from the tree the modules ship (the newest selected
+  commit, the one ref every module is pinned to, or the working tree). The
+  plan and `--dry-run` print `requirements changed=yes|no ship=… added=…
+  removed=…`, the code snapshot covers the file, `--json` reports it under
+  `requirements`, and deploy actions get `ECHO_REQUIREMENTS_SHA256`. A commit
+  that only touches the file is no longer skipped (`no addon module touched`):
+  the deploy pushes it, runs the push actions and restarts without an Odoo
+  run; `watch` deploys such commits too. Saved plans record the file's hash
+  and the server's, and `--apply` refuses as stale when either changed.
+  Git-deploy targets keep carrying it on the deploy branch. The image recipe
+  still has to install from it.
 
 ### Fixed
 - **No restart recreates the database container any more.** `deploy`, its

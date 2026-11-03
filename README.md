@@ -1241,9 +1241,22 @@ its list wins entirely; otherwise the local list applies. `--no-actions`
 non-zero exit before the stop aborts the deploy untouched; a `post_deploy`
 failure marks the run failed but never rolls back a healthy deploy. Each script
 receives `ECHO_STAGE`, `ECHO_DB`, `ECHO_REMOTE_PATH`, `ECHO_MODULES`
-(space-separated update+install set), and `ECHO_PHASE`. A `deploy` without
-`--push` skips the two push phases with a note. Pair a `[push] path` build
-context (above) with a `post_push` image rebuild for image-built remotes.
+(space-separated update+install set), `ECHO_PHASE`, and
+`ECHO_REQUIREMENTS_SHA256` (the build folder's `requirements.txt` after the
+push, empty when none). A `deploy` without `--push` skips the two push phases
+with a note. Pair a `[push] path` build context (above) with a `post_push`
+image rebuild for image-built remotes.
+
+With an explicit `[push] path`, `deploy --push` also carries the repo's root
+`requirements.txt` to the root of that path whenever it differs from the
+server's copy, read from the same tree the modules ship (the newest selected
+commit, the one ref every module is pinned to, or the working tree). The plan
+prints `requirements changed=yes|no ship=… added=… removed=…`, a commit that
+only touches the file is deployable (push, actions, restart, no `-u`), and a
+saved plan refuses as stale when the file changed. The image recipe must copy
+the file before its `pip install` for Docker's layer cache to re-run it; a
+recipe that cannot can pass `ECHO_REQUIREMENTS_SHA256` as a build argument.
+Git-deploy targets carry the file on the deploy branch instead.
 
 Manage actions interactively with the **`actions`** command instead of editing
 TOML by hand:

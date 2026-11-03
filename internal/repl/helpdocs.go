@@ -946,6 +946,7 @@ var commandDocs = []commandDoc{
 		notes: []string{
 			"Needs this directory's link binding or --from <target> and the server's Echo profile (init --remote); deploy takes no positional arguments",
 			"Code ships only with --push or [deploy] push = true; otherwise -i/-u runs on the code already on the server, and mod@ref or --at refuse",
+			"With --push and an explicit [push] path, the repo's root requirements.txt (as the selection ships it) goes to that path's root when it differs; the plan shows `requirements changed=… added=… removed=…`, a commit that only touches it restarts after the push actions with no -u, and actions get ECHO_REQUIREMENTS_SHA256",
 			"Without a TTY pass --commits, --modules or --auto; --rollback, --set-code and --set-git-branch --rename need --force; else exit 2",
 			"Real-run gates: prod confirm, dependency confirm on staging/prod, --test on prod; --force skips them, without a TTY they exit 2",
 			"On failure code and DB roll back (asked on a TTY, automatic headless or with --force); --rollback-on-fail or --no-rollback-on-fail fix it",
@@ -1257,7 +1258,7 @@ var helpTopics = []helpTopic{
 		{"live data", "", "probe -c <expr> --json (or ref, read, fields, param, arch) reads the target's DB in a read-only transaction"},
 		{"module runs", "", "install, update, uninstall and test --json: errors with file:line frames, warnings, failing tests"},
 		{"why it breaks", "", "logs --errors --json: the last ERROR records of the Odoo log with their tracebacks"},
-		{"review, then run", "", "deploy --dry-run [--save-plan <file>], then deploy --apply <file> runs exactly that plan"},
+		{"review, then run", "", "deploy --dry-run [--save-plan <file>], then deploy --apply <file> runs exactly that plan (modules and requirements.txt)"},
 		{"multi-step", "", "run <file> executes a recipe; sequence --last replays the last sequence"},
 		{"past runs", "", "logview --json lists runs; report inspects the last recipe run by step and level"},
 		{"help <cmd> --json", "", "A command's usage, flags, notes and examples as JSON; help --json for all of them"},
