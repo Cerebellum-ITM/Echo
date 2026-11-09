@@ -98,7 +98,7 @@ func TestRunDeployActionsFailFast(t *testing.T) {
 }
 
 func TestActionEnvVars(t *testing.T) {
-	env := actionEnv{stage: "prod", db: "erp", remotePath: "/srv/odoo", modules: "sale account"}
+	env := actionEnv{stage: "prod", db: "erp", remotePath: "/srv/odoo", modules: "sale account", requirements: "ab12"}
 	got := actionEnvVars(env, "post_push")
 	want := []string{
 		"ECHO_STAGE=prod",
@@ -106,6 +106,7 @@ func TestActionEnvVars(t *testing.T) {
 		"ECHO_REMOTE_PATH=/srv/odoo",
 		"ECHO_MODULES=sale account",
 		"ECHO_PHASE=post_push",
+		"ECHO_REQUIREMENTS_SHA256=ab12",
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("actionEnvVars = %v, want %v", got, want)

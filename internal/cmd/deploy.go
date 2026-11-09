@@ -919,6 +919,9 @@ type DeployResult struct {
 	// --apply refused it (Unit 129).
 	Plan      *DeployPlan  `json:"plan,omitempty"`
 	PlanStale []PlanChange `json:"plan_stale,omitempty"`
+	// Requirements is the requirements.txt the run compared with the build
+	// folder's and, when it differed, synced there.
+	Requirements *DeployRequirements `json:"requirements,omitempty"`
 	// JSON echoes whether the caller asked for --json, so the REPL wrapper can
 	// route output without re-parsing the args.
 	JSON bool `json:"-"`
@@ -1187,8 +1190,16 @@ func RunDeploy(ctx context.Context, opts DeployOpts) (DeployResult, error) {
 			[2]string{"modules", strings.Join(names, ",")})
 	}
 
+	requirementsCommits := 0
 	for _, c := range selected {
 		mod, via, reason, paths := resolveCommitModule(ctx, opts.Root, c)
+		if mod == "" && pathsTouchRequirements(paths) && len(modulesFromPaths(opts.Root, paths)) == 0 {
+			opts.log("INFO", "", "resolved", "",
+				[2]string{"commit", c.short()}, [2]string{"file", requirementsFile}, [2]string{"via", "diff"})
+			deployedShas = append(deployedShas, c.sha)
+			requirementsCommits++
+			continue
+		}
 		if mod == "" {
 			opts.log("WARNING", "", "skipped", "",
 				[2]string{"commit", c.short()}, [2]string{"reason", reason})
@@ -1229,10 +1240,19 @@ func RunDeploy(ctx context.Context, opts DeployOpts) (DeployResult, error) {
 		seen[mod] = true
 		modules = append(modules, mod)
 	}
-	if len(modules) == 0 {
+	if len(modules) == 0 && requirementsCommits == 0 {
 		return DeployResult{}, fmt.Errorf("no deployable modules: every selected commit was skipped")
 	}
 	sort.Strings(modules)
+
+	reqSource, reqSHA := requirementsSourceFor(ctx, opts, deployedShas, refSources, selectedDirty)
+	req, err := readRequirements(ctx, opts.Root, reqSHA)
+	if err != nil {
+		return DeployResult{}, fmt.Errorf("read %s: %w", requirementsFile, err)
+	}
+	if req != nil {
+		req.source = reqSource
+	}
 
 	// Git-deploy topology (Unit 102): when the target opts in (and --no-git
 	// isn't set), a run's COMMITTED content advances a deploy branch on the
@@ -1324,6 +1344,9 @@ func RunDeploy(ctx context.Context, opts DeployOpts) (DeployResult, error) {
 	p.push = resolveDeployPush(p, prof, opts.Cfg)
 	if len(refSources) > 0 && !p.push {
 		return DeployResult{}, fmt.Errorf("%w: a module pinned to a ref must ship, and this target does not push by default — add --push", ErrUsage)
+	}
+	if len(modules) == 0 && !p.push {
+		return DeployResult{}, fmt.Errorf("%w: the selection only changes %s, which travels only with a push — add --push", ErrUsage, requirementsFile)
 	}
 
 	conn := odoo.Conn{DB: target.dbName, Host: target.dbContainer}
@@ -1496,10 +1519,12 @@ func RunDeploy(ctx context.Context, opts DeployOpts) (DeployResult, error) {
 	if p.push {
 		shipped, shippedBase = deployShipEntries(ctx, opts, gitCfg, gitTip, branchMods, worktreeMods, archived, archiveDir)
 		logCodePlan(opts.Log, prof.DBName, shipped, current, installedVersions)
-		if p.noDepCheck {
+		switch {
+		case len(modules) == 0:
+		case p.noDepCheck:
 			opts.log("WARNING", "plan", "dependency check skipped", prof.DBName,
 				[2]string{"flag", "--no-dep-check"})
-		} else {
+		default:
 			result.Dependencies = checkDeployDependencies(ctx, opts, rsc, gitCfg, gitTip, branchMods, worktreeMods, archived, archiveDir)
 		}
 		for i, m := range result.Modules {
@@ -1515,6 +1540,32 @@ func RunDeploy(ctx context.Context, opts DeployOpts) (DeployResult, error) {
 			}
 		}
 		sort.Strings(releasing)
+	}
+
+	// requirements.txt rides the deploy branch on a git target; on an rsync
+	// target it goes to the root of the explicit destination, which is the
+	// build folder an image recipe reads. Auto-detected destinations are live
+	// addons directories, where nothing reads it.
+	if req != nil && (!p.push || gitActive) {
+		req = nil
+	}
+	if req != nil {
+		dest, _, _ := resolvePushDest(pushArgs{}, prof, opts.Cfg)
+		if base := resolveDestPath(remotePath, dest); base != "" {
+			if err := planRequirements(ctx, opts, rsc, req, base); err != nil {
+				return DeployResult{}, err
+			}
+		} else {
+			if requirementsCommits > 0 {
+				opts.log("WARNING", "plan", "requirements not synced — the target has no [push] path to carry it to", prof.DBName,
+					[2]string{"file", requirementsFile})
+			}
+			req = nil
+		}
+	}
+	result.Requirements = req.result(false)
+	if req != nil {
+		actEnv.requirements = req.local
 	}
 
 	// The saved plan is compared here: everything it records is resolved and
@@ -1547,6 +1598,7 @@ func RunDeploy(ctx context.Context, opts DeployOpts) (DeployResult, error) {
 		plan.DeployActions = actionsDigest(actions)
 		plan.Lock = lockID
 		plan.Dependencies = planDependencies(result.Dependencies)
+		plan.Requirements = req.planEntry()
 	}
 	if saved != nil {
 		result.Plan = saved
@@ -1592,9 +1644,11 @@ func RunDeploy(ctx context.Context, opts DeployOpts) (DeployResult, error) {
 		// Resolve an explicit destination (server/local [push], no picker in
 		// a headless deploy). Empty → per-module auto-detect.
 		destBase := ""
-		if len(worktreeMods) > 0 || len(archivedMods) > 0 {
-			if err := requireRsync(); err != nil {
-				return err
+		if len(worktreeMods) > 0 || len(archivedMods) > 0 || req.changed() {
+			if len(worktreeMods) > 0 || len(archivedMods) > 0 {
+				if err := requireRsync(); err != nil {
+					return err
+				}
 			}
 			if dest, source, mkdir := resolvePushDest(pushArgs{}, prof, opts.Cfg); dest != "" {
 				resolved, derr := applyResolvedDest(ctx, rsc, pushOpts, dest, source, mkdir, dryRun)
@@ -1611,18 +1665,27 @@ func RunDeploy(ctx context.Context, opts DeployOpts) (DeployResult, error) {
 		if gitActive {
 			snapMods = append(snapMods, exceptModules(releasing, toStringSet(snapMods))...)
 		}
-		if takeSnapshot && len(snapMods) > 0 {
+		if takeSnapshot && (len(snapMods) > 0 || req.changed()) {
 			if dryRun {
-				opts.log("INFO", "plan", "code snapshot", prof.DBName,
-					[2]string{"modules", strings.Join(snapMods, ",")})
+				var fields [][2]string
+				if len(snapMods) > 0 {
+					fields = append(fields, [2]string{"modules", strings.Join(snapMods, ",")})
+				}
+				if req.changed() {
+					fields = append(fields, [2]string{"file", requirementsFile})
+				}
+				opts.log("INFO", "plan", "code snapshot", prof.DBName, fields...)
 			} else {
-				dests := make(map[string]string, len(snapMods))
+				dests := make(map[string]string, len(snapMods)+1)
 				for _, m := range snapMods {
 					d, derr := moduleDestDir(ctx, remoteView{rsc: rsc}, pushOpts, destBase, m)
 					if derr != nil {
 						return derr
 					}
 					dests[m] = d
+				}
+				if req.changed() {
+					dests[requirementsFile] = req.dest
 				}
 				s, serr := createCodeSnapshot(ctx, rsc, dests, opts.Log)
 				if serr != nil {
@@ -1680,7 +1743,19 @@ func RunDeploy(ctx context.Context, opts DeployOpts) (DeployResult, error) {
 			return err
 		}
 		// A commit's tree ships exactly: --delete removes what it deleted.
-		return push(archivedMods, archiveDir, true)
+		if err := push(archivedMods, archiveDir, true); err != nil {
+			return err
+		}
+		if !req.changed() || dryRun {
+			return nil
+		}
+		if err := writeRequirementsFile(ctx, sshHost, req.dest, req.body); err != nil {
+			return fmt.Errorf("sync %s: %w", requirementsFile, err)
+		}
+		result.Requirements = req.result(true)
+		opts.log("INFO", "push", "requirements synced", prof.DBName,
+			[2]string{"ship", req.label()}, [2]string{"dest", req.dest})
+		return nil
 	}
 
 	if p.dryRun {
@@ -1836,22 +1911,26 @@ func RunDeploy(ctx context.Context, opts DeployOpts) (DeployResult, error) {
 	if runTests {
 		runFields = append(runFields, [2]string{"test", strings.Join(testMods, ",")})
 	}
-	opts.log("INFO", "odoo", "running module install/update", prof.DBName, runFields...)
-	argv := odoo.WithI18nOverwrite(odoo.InstallUpdate(conn, install, update), overwrite)
-	if runTests {
-		argv = odoo.WithTests(argv, testMods)
-	}
-	scanner := &runFailureScanner{inner: opts.StreamOut}
-	runErr := runSSHStream(ctx, sshHost, remoteContainerCmd(remotePath, target, argv), nil, scanner.scan)
-
-	// Verify: a non-zero exit OR failure patterns in the stream (a run can
-	// exit 0 while leaving modules broken) both fail the deploy.
-	if runErr != nil || scanner.hits > 0 {
-		if runErr == nil {
-			opts.log("ERROR", "verify", "run reported errors — treating as failed", prof.DBName,
-				[2]string{"hits", strconv.Itoa(scanner.hits)})
+	if len(modules) == 0 {
+		opts.log("INFO", "odoo", "no module to install or update — restarted only", prof.DBName)
+	} else {
+		opts.log("INFO", "odoo", "running module install/update", prof.DBName, runFields...)
+		argv := odoo.WithI18nOverwrite(odoo.InstallUpdate(conn, install, update), overwrite)
+		if runTests {
+			argv = odoo.WithTests(argv, testMods)
 		}
-		return fail(deployRunError(runErr))
+		scanner := &runFailureScanner{inner: opts.StreamOut}
+		runErr := runSSHStream(ctx, sshHost, remoteContainerCmd(remotePath, target, argv), nil, scanner.scan)
+
+		// Verify: a non-zero exit OR failure patterns in the stream (a run can
+		// exit 0 while leaving modules broken) both fail the deploy.
+		if runErr != nil || scanner.hits > 0 {
+			if runErr == nil {
+				opts.log("ERROR", "verify", "run reported errors — treating as failed", prof.DBName,
+					[2]string{"hits", strconv.Itoa(scanner.hits)})
+			}
+			return fail(deployRunError(runErr))
+		}
 	}
 	// The remote run landed: every resolved module deployed OK.
 	for i := range result.Modules {

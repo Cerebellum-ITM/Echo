@@ -314,8 +314,14 @@ func watchCycle(ctx context.Context, opts WatchOpts, rsc remoteShellContext, fro
 
 	seen := map[string]bool{}
 	var modules, shas []string
+	requirementsOnly := 0
 	for _, c := range commits {
-		mod, _, reason, _ := resolveCommitModule(ctx, opts.Root, c)
+		mod, _, reason, paths := resolveCommitModule(ctx, opts.Root, c)
+		if mod == "" && pathsTouchRequirements(paths) && len(modulesFromPaths(opts.Root, paths)) == 0 {
+			shas = append(shas, c.sha)
+			requirementsOnly++
+			continue
+		}
 		if mod == "" {
 			opts.log("WARNING", "cycle", "skipped", rsc.prof.DBName,
 				[2]string{"commit", c.short()}, [2]string{"reason", reason})
@@ -327,7 +333,7 @@ func watchCycle(ctx context.Context, opts WatchOpts, rsc remoteShellContext, fro
 			modules = append(modules, mod)
 		}
 	}
-	if len(modules) == 0 {
+	if len(modules) == 0 && requirementsOnly == 0 {
 		opts.log("WARNING", "cycle", "no deployable modules in range", rsc.prof.DBName,
 			[2]string{"commits", strconv.Itoa(len(commits))})
 		return 0, false, nil
