@@ -27,7 +27,7 @@ var commandFlags = map[string][]string{
 	"doctor":        {"--from", "--remote", "--json"},
 	"install":       {"--with-demo", "--level", "--json"},
 	"update":        {"--all", "--last", "--level", "--i18n", "--installed", "--from", "--remote", "--force", "--no-checkpoint", "--json", "-E", "--env"},
-	"uninstall":     {"--level", "--json"},
+	"uninstall":     {"--installed", "--level", "--from", "--remote", "--force", "--json", "-E", "--env"},
 	"test":          {"--update", "--tags", "--from", "--remote", "--force", "--json", "-E", "--env"},
 	"modules":       {"--config", "--addons-path"},
 	"modinfo":       {"--all", "--copy", "--last", "--json", "--from", "--remote"},

@@ -422,7 +422,7 @@ func TestRunSideloadFakeRemote(t *testing.T) {
 	// the override path included; its content is covered by
 	// TestRenderSideloadOverride.
 	log := remote.composeLog()
-	for _, want := range []string{"cat > " + shellQuote(override), "'up' '-d'", "'-i' 'forced_config_parameter'"} {
+	for _, want := range []string{"cat > " + shellQuote(override), "'up' '--detach' '--no-recreate'", "'-i' 'forced_config_parameter'"} {
 		if !strings.Contains(log, want) {
 			t.Errorf("compose log lacks %q:\n%s", want, log)
 		}

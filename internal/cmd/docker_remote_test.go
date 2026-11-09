@@ -1,7 +1,9 @@
 package cmd
 
 import (
+	"context"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -73,5 +75,55 @@ func TestRemoteComposeCmdRestartLogs(t *testing.T) {
 	want := `cd '/srv/odoo' && docker compose 'logs' '--no-log-prefix' '-f' '--tail' '200' 'odoo'`
 	if logs != want {
 		t.Errorf("logs cmd = %q, want %q", logs, want)
+	}
+}
+
+func TestRemoteUpCmdNeverRecreatesTheDB(t *testing.T) {
+	rsc := testRSC()
+	cases := []struct {
+		services []string
+		want     string
+	}{
+		{nil, "cd '/srv/odoo' && docker compose 'up' '--detach' '--no-recreate' && docker compose 'up' '--detach' '--no-deps' 'odoo'"},
+		{[]string{"odoo"}, "cd '/srv/odoo' && docker compose 'up' '--detach' '--no-recreate' 'db' && docker compose 'up' '--detach' '--no-deps' 'odoo'"},
+	}
+	for _, c := range cases {
+		if got := remoteUpCmd(rsc, c.services...); got != c.want {
+			t.Errorf("remoteUpCmd(%q) =\n%s\nwant\n%s", c.services, got, c.want)
+		}
+	}
+
+	rsc.target.dbExec = dbExecDocker
+	want := "cd '/srv/odoo' && docker compose 'up' '--detach' '--no-deps' 'odoo'"
+	if got := remoteUpCmd(rsc, "odoo"); got != want {
+		t.Errorf("db outside compose: %s", got)
+	}
+}
+
+func TestWarnRemoteDBImageDrift(t *testing.T) {
+	orig := ckptRunSSH
+	t.Cleanup(func() { ckptRunSSH = orig })
+	var calls []string
+	out := "postgres:16\tsha256:0123456789abcdef\tsha256:fedcba9876543210\n"
+	ckptRunSSH = func(ctx context.Context, host, remoteCmd string, stdin []byte) ([]byte, error) {
+		calls = append(calls, remoteCmd)
+		return []byte(out), nil
+	}
+
+	rec := &logRecorder{}
+	warnRemoteDBImageDrift(context.Background(), testRSC(), rec.log)
+	want := "WARNING compose db image changed on the host — keeping the running container service=db image=postgres:16 running=0123456789ab new=fedcba987654"
+	if len(rec.lines) != 1 || rec.lines[0] != want {
+		t.Errorf("log = %q", rec.lines)
+	}
+	if len(calls) != 1 || !strings.HasPrefix(calls[0], "cd '/srv/odoo' && sh -c ") || !strings.HasSuffix(calls[0], " sh 'docker compose' 'db'") {
+		t.Errorf("calls = %q", calls)
+	}
+
+	out = "postgres:16\tsha256:0123456789abcdef\tsha256:0123456789abcdef\n"
+	rec = &logRecorder{}
+	warnRemoteDBImageDrift(context.Background(), testRSC(), rec.log)
+	if len(rec.lines) != 0 {
+		t.Errorf("same image warned: %q", rec.lines)
 	}
 }

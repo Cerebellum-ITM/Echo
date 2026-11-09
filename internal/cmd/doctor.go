@@ -204,7 +204,7 @@ func RunDoctor(ctx context.Context, opts DoctorOpts) (DoctorResult, error) {
 			emit(DoctorCheck{ID: id, Status: doctorSkipped, Reason: reason, Message: "not checked"})
 		}
 	}
-	afterSSH := []string{"profile", "rsync", "git", "disk", "lock", "dest"}
+	afterSSH := []string{"profile", "rsync", "git", "disk", "lock", "dbimage", "dest"}
 
 	if _, lerr := lookPath("ssh"); lerr != nil {
 		emit(DoctorCheck{ID: "ssh", Status: doctorFailed, Message: "ssh not found on PATH"})
@@ -257,8 +257,15 @@ func RunDoctor(ctx context.Context, opts DoctorOpts) (DoctorResult, error) {
 	emit(evalLock(hostSec))
 
 	if !usable {
-		emit(DoctorCheck{ID: "dest", Status: doctorSkipped, Reason: "profile", Message: "not checked"})
+		skipRest("profile", "dbimage", "dest")
 		return finishDoctor(opts, res), nil
+	}
+	if service := remoteDBService(target); service == "" {
+		emit(DoctorCheck{ID: "dbimage", Status: doctorSkipped, Reason: "db_not_compose",
+			Message: "the db container is outside the project's compose file"})
+	} else {
+		out, cerr := d.runBatch(ctx, remoteComposeCmd(remotePath, target.composeCmd, "config", "--format", "json"))
+		emit(evalDBImage(service, out, cerr))
 	}
 	own := plannedPushDest(prof, opts.Cfg, remotePath)
 	peers := make([]peerDest, 0, len(d.peers))
@@ -684,6 +691,57 @@ func evalLock(s doctorSections) DoctorCheck {
 			[2]string{"files", strings.Join(tracked, ",")})
 	}
 	return c
+}
+
+// evalDBImage warns when the db service's image is a bare version tag such as
+// postgres:16. That tag moves to a new OS base on the next pull, and a new
+// glibc changes the collations every existing database was built with.
+// out is `compose config --format json`; only the image leaves this function.
+func evalDBImage(service string, out []byte, err error) DoctorCheck {
+	c := DoctorCheck{ID: "dbimage", Status: doctorOK, Message: "db image pinned",
+		Fields: [][2]string{{"service", service}}}
+	if err != nil {
+		c.warn("could not read the compose configuration", [2]string{"error", lastNonEmptyLine([]byte(err.Error()))})
+		return c
+	}
+	var cfg struct {
+		Services map[string]struct {
+			Image string `json:"image"`
+		} `json:"services"`
+	}
+	if err := json.Unmarshal(out, &cfg); err != nil {
+		c.warn("the compose configuration did not parse")
+		return c
+	}
+	image := cfg.Services[service].Image
+	if image == "" {
+		c.warn("the db service has no image in the compose configuration")
+		return c
+	}
+	c.Fields = append(c.Fields, [2]string{"image", image})
+	if !dbImagePinned(image) {
+		c.warn("db image tag names no OS release — a re-pull can move it to a new glibc and break the collations; pin it (postgres:16-bookworm or a digest)")
+	}
+	return c
+}
+
+// dbImagePinned reports whether image names a digest or a tag carrying the
+// OS release it is built on.
+func dbImagePinned(image string) bool {
+	if strings.Contains(image, "@sha256:") {
+		return true
+	}
+	i := strings.LastIndex(image, ":")
+	if i < 0 || strings.Contains(image[i:], "/") {
+		return false
+	}
+	tag := image[i+1:]
+	for _, release := range []string{"bookworm", "bullseye", "buster", "trixie", "alpine", "jammy", "noble", "focal"} {
+		if strings.Contains(tag, release) {
+			return true
+		}
+	}
+	return false
 }
 
 // pushDestPlan is where a push to one target would land without flags: an

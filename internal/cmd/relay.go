@@ -32,7 +32,7 @@ var relayDeployPoll = 2 * time.Second
 // delegated to Relay; the rest run in the env's containers.
 var relaySupported = map[string]bool{
 	"shell": true, "shell-run": true, "logs": true, "ps": true, "test": true, "update": true,
-	"i18n-pull": true, "i18n-update": true, "deploy": true, "link": true,
+	"uninstall": true, "i18n-pull": true, "i18n-update": true, "deploy": true, "link": true,
 }
 
 // relayAlwaysRemote are the unsupported commands that reach the bound target

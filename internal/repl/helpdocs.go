@@ -106,7 +106,7 @@ var commandDocs = []commandDoc{
 			"Bare link with several targets and --add open pickers and exit 2 without a TTY; name the target instead",
 			"Registering a target headlessly is init --remote ... --name <target> --link",
 			"The binding is saved before the probe; an unreachable remote is a WARNING, not a failure",
-			"A Relay target needs [relay] url and token_file (an echo-scope token) in global.toml; shell, shell-run, logs, ps, test, update, i18n-pull and i18n-update run in its containers with docker exec, deploy is handed to Relay, every other remote verb exits 2",
+			"A Relay target needs [relay] url and token_file (an echo-scope token) in global.toml; shell, shell-run, logs, ps, test, update, uninstall, i18n-pull and i18n-update run in its containers with docker exec, deploy is handed to Relay, every other remote verb exits 2",
 		},
 		examples: []helpExample{
 			{"link staging", "Bind this directory to the staging target"},
@@ -125,7 +125,7 @@ var commandDocs = []commandDoc{
 			{"--json", "", "One JSON report on stdout, lines on stderr"},
 		},
 		notes: []string{
-			"Read-only on both sides: checks ssh, profile, rsync, git, disk, lock and dest, and runs every check even after a failure",
+			"Read-only on both sides: checks ssh, profile, rsync, git, disk, lock, dbimage and dest, and runs every check even after a failure",
 			"Any failed check exits 1; warnings alone exit 0",
 			"With no link, no --from and several targets it opens a target picker, which exits 2 without a TTY",
 			"--json prints {target, checks, counts} on stdout; each check has id, status, reason, message and fields",
@@ -190,20 +190,27 @@ var commandDocs = []commandDoc{
 	{
 		name:    "uninstall",
 		section: "Modules",
-		usage:   "uninstall <mod...> [--level <lvl>] [--json]",
+		usage:   "uninstall <mod...> [--installed] [--level <lvl>] [--from <target> | --remote] [--force] [--json]",
 		summary: "Uninstall modules",
 		flags: []helpItem{
+			{"--from", "<target>", "Uninstall on a remote instance (named connect target)"},
+			{"--remote", "", "Uninstall on this directory's linked remote (see link)"},
+			{"--force", "", "Skip the confirm on a remote prod-stage target"},
+			{"--installed", "", "Remote picker: all installed modules, not just the remote's addons"},
 			{"--level", "<lvl>", "Odoo --log-level (debug…critical; default info)"},
 			{"--json", "", "One outcome object on stdout (errors, warnings, tests, migrations), lines on stderr"},
 		},
 		notes: []string{
-			"Local only and destructive: the modules' data is removed from the database",
+			"Destructive: the modules' data is removed from the database",
+			"Remote runs the uninstall script through odoo shell in the target's running container over SSH and needs no local compose project",
+			"A remote prod-stage target asks for a confirm, which exits 2 without a TTY; --force skips it",
 			"With no module names it opens a picker, which exits 2 without a TTY",
 			"An unknown flag exits 2 before Odoo runs",
 			"--json prints {command, target, db, modules, exit, duration_ms, errors, warnings, warnings_truncated, tests, migrations}; errors carry exception and frames; a usage error prints nothing on stdout",
 		},
 		examples: []helpExample{
 			{"uninstall sale_custom --json", "Uninstall a module and print the outcome as JSON"},
+			{"uninstall sale_custom --from staging --json", "Uninstall a module on staging; the outcome as JSON"},
 		},
 	},
 	{
@@ -723,13 +730,14 @@ var commandDocs = []commandDoc{
 		name:    "up",
 		section: "Docker",
 		usage:   "up [service...] [--from <target> | --remote]",
-		summary: "Start containers (compose up -d)",
+		summary: "Start containers without recreating the database",
 		flags: []helpItem{
 			{"--from", "<target>", "Start on a remote instance (named connect target)"},
 			{"--remote", "", "Start on this directory's linked remote"},
 		},
 		notes: []string{
 			"Without a remote flag it starts the local compose stack; with no service it starts every service",
+			"Never recreates the database container: stopped services start as they are (--no-recreate) and only the Odoo service is recreated when its definition changed (--no-deps); a WARNING names a db image the host re-pulled under the running container",
 			"--remote needs this directory's link binding; without one (and no --from) a target picker opens, which exits 2 without a TTY",
 			"Remote mode reads the server's Echo profile and needs no local docker-compose.yml; starting never asks for confirmation",
 			"On a Reverb environment the start goes through the Reverb API instead of compose",
@@ -974,7 +982,7 @@ var commandDocs = []commandDoc{
 			"A name resolves from the library, anything with a / or an existing directory is a path; names may be comma-separated",
 			"Without a TTY a module (or --available / --list) is required; the library picker exits 2",
 			"Prod targets are refused (exit 2); --allow-prod turns that into an interactive confirm, so prod can never run headless",
-			"Runs stop, up -d and one -i/-u on the target; the manifest version must match the target's Odoo series. Reverb is not supported",
+			"Runs stop, up (never recreating the database container) and one -i/-u on the target; the manifest version must match the target's Odoo series. Reverb is not supported",
 			"--library, --library-add and --library-rm only configure and exit; they take no other argument",
 			"With --json the result object is the only stdout; logs go to stderr",
 			"A real run takes the target's operation lock and exits 1 (`target busy`) while another command holds it; sideload has no --force, so a lock older than 6 h is taken over only by a deploy, checkpoint or db-push run with --force",

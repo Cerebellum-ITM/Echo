@@ -50,6 +50,9 @@ case "$cmd" in
   *pg_database_size*)
     printf '%s\n@@echo-doctor size 0\n/var/lib/postgresql/data\n@@echo-doctor datadir 0\n' "${FAKE_DB_SIZE:-1048576}"
     printf 'Filesystem 1024-blocks Used Available Capacity Mounted on\n/dev/data 100 10 %s 10%% /data\n@@echo-doctor datadf 0\n' "${FAKE_DATA_FREE_KIB:-10485760}" ;;
+  *"'config' '--format' 'json'"*)
+    if [ -n "$FAKE_COMPOSE_CONFIG" ]; then printf '%s' "$FAKE_COMPOSE_CONFIG"
+    else printf '%s' '{"services":{"db":{"image":"postgres:16-bookworm"}}}'; fi ;;
   *) exec sh -c "$cmd" ;;
 esac
 `)
@@ -244,7 +247,7 @@ func TestDoctorHealthyRsyncTarget(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, id := range []string{"ssh", "profile", "rsync", "disk", "lock", "dest"} {
+	for _, id := range []string{"ssh", "profile", "rsync", "disk", "lock", "dbimage", "dest"} {
 		wantStatus(t, res, id, doctorOK)
 	}
 	if git := wantStatus(t, res, "git", doctorSkipped); git.Reason != "git_deploy_off" {
@@ -261,8 +264,8 @@ func TestDoctorHealthyRsyncTarget(t *testing.T) {
 	}
 
 	calls := d.calls()
-	if len(calls) != 3 {
-		t.Fatalf("ssh calls = %d, want 3:\n%s", len(calls), strings.Join(calls, "\n"))
+	if len(calls) != 4 {
+		t.Fatalf("ssh calls = %d, want 4:\n%s", len(calls), strings.Join(calls, "\n"))
 	}
 	mutating := regexp.MustCompile(`\b(mkdir|mv|rm)\b`)
 	composeVerb := regexp.MustCompile(`compose (\S+)`)
@@ -271,7 +274,7 @@ func TestDoctorHealthyRsyncTarget(t *testing.T) {
 			t.Errorf("mutating call: %s", c)
 		}
 		for _, m := range composeVerb.FindAllStringSubmatch(c, -1) {
-			if m[1] != "exec" {
+			if m[1] != "exec" && m[1] != "'config'" {
 				t.Errorf("compose verb %q in %s", m[1], c)
 			}
 		}
@@ -294,7 +297,7 @@ func TestDoctorHealthyRsyncTarget(t *testing.T) {
 		Checks []map[string]any `json:"checks"`
 		Counts map[string]int   `json:"counts"`
 	}
-	if err := json.Unmarshal(b, &decoded); err != nil || len(decoded.Checks) != 7 || decoded.Target["stage_declared"] != true {
+	if err := json.Unmarshal(b, &decoded); err != nil || len(decoded.Checks) != 8 || decoded.Target["stage_declared"] != true {
 		t.Errorf("json = %s (%v)", b, err)
 	}
 	if _, ok := decoded.Checks[0]["fields"].(map[string]any); !ok {
@@ -335,7 +338,7 @@ func TestDoctorFaultsKeepChecking(t *testing.T) {
 		wantStatus(t, res, "profile", doctorFailed)
 		wantStatus(t, res, "rsync", doctorOK)
 		wantStatus(t, res, "lock", doctorOK)
-		for _, id := range []string{"disk", "dest"} {
+		for _, id := range []string{"disk", "dbimage", "dest"} {
 			if c := wantStatus(t, res, id, doctorSkipped); c.Reason != "profile" {
 				t.Errorf("%s reason = %q", id, c.Reason)
 			}
@@ -391,7 +394,7 @@ func TestDoctorUnreachableHost(t *testing.T) {
 	if !strings.Contains(checkField(c, "error"), "Connection refused") {
 		t.Errorf("ssh = %+v", c)
 	}
-	for _, id := range []string{"profile", "rsync", "git", "disk", "lock", "dest"} {
+	for _, id := range []string{"profile", "rsync", "git", "disk", "lock", "dbimage", "dest"} {
 		if s := wantStatus(t, res, id, doctorSkipped); s.Reason != "unreachable" {
 			t.Errorf("%s reason = %q", id, s.Reason)
 		}
@@ -479,5 +482,40 @@ func TestDoctorUsageBeforeSSH(t *testing.T) {
 	}
 	if n := len(d.calls()); n != 0 {
 		t.Errorf("ssh calls before a usage error = %d", n)
+	}
+}
+
+func TestDoctorDBImage(t *testing.T) {
+	d := newDoctorRemote(t)
+	t.Setenv("FAKE_COMPOSE_CONFIG", `{"services":{"db":{"image":"postgres:16","environment":{"POSTGRES_PASSWORD":"`+doctorTestPassword+`"}}}}`)
+	res, rec, _ := d.run(t, d.cfg(), "--from", "stg")
+	if c := wantStatus(t, res, "dbimage", doctorWarn); checkField(c, "image") != "postgres:16" || checkField(c, "service") != "db" {
+		t.Errorf("dbimage = %+v", c)
+	}
+	for _, l := range rec.lines {
+		if strings.Contains(l, doctorTestPassword) {
+			t.Errorf("password logged: %s", l)
+		}
+	}
+
+	t.Setenv("FAKE_COMPOSE_CONFIG", "not json")
+	res, _, _ = d.run(t, d.cfg(), "--from", "stg")
+	wantStatus(t, res, "dbimage", doctorWarn)
+}
+
+func TestDBImagePinned(t *testing.T) {
+	for image, want := range map[string]bool{
+		"postgres:16-bookworm":             true,
+		"postgres:16.4-alpine3.20":         true,
+		"postgres@sha256:0123abcd":         true,
+		"registry:5000/postgres:16-trixie": true,
+		"postgres:16":                      false,
+		"postgres":                         false,
+		"postgres:latest":                  false,
+		"registry:5000/postgres":           false,
+	} {
+		if got := dbImagePinned(image); got != want {
+			t.Errorf("dbImagePinned(%q) = %v, want %v", image, got, want)
+		}
 	}
 }

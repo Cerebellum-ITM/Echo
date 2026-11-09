@@ -25,7 +25,7 @@ Echo is a work in progress; below is what currently ships in `main`.
 |-----------|-------------------------------------------------------------------------|---------------------------------|
 | Project   | `init`, `reset`, `alias` (`-C <name>` registry), `help`, `clear`        | `version`, `stage`, `theme`, `logo` |
 | Docker    | `up`, `down`, `stop`, `restart`, `ps`, `logs` (`--copy`/`--all`/`-t`; `up`/`stop`/`restart`/`ps`/`logs` also `--from`/`--remote` over SSH) | — |
-| Modules   | `install`, `update` (`--i18n`, `--remote`), `uninstall`, `test`, `modules` (`--config`), `modinfo`, `view` | —             |
+| Modules   | `install`, `update` (`--i18n`, `--remote`), `uninstall` (`--remote`), `test`, `modules` (`--config`), `modinfo`, `view` | —             |
 | Database  | `db-admin`, `db-backup` (`--with-filestore`), `db-restore` (rename + live progress), `db-pull` (clone a remote DB), `db-drop`, `db-neutralize`, `db-list`, `db-use` | — |
 | Shell     | `shell`, `bash`, `psql`                                                  | —                               |
 | i18n      | `i18n-export`, `i18n-update`, `i18n-pull` (from a remote)                | —                               |
@@ -137,7 +137,7 @@ unchanged. `-C` also falls back to a connect target's `remote_path` when it
 points at a local directory.
 
 `doctor` answers "is this target ready" before a deploy finds out halfway. It
-reads the target over three SSH round trips and changes nothing on either
+reads the target over four SSH round trips and changes nothing on either
 side, then prints one `echo.doctor.<check>` line per check, in this order:
 `ssh` (reachable; a literal `user@host` warns), `profile` (the server's Echo
 profile exists, parses, names the containers and the database, declares a
@@ -146,7 +146,9 @@ stage), `rsync` (on both ends; missing fails only when a deploy would push),
 repository), `disk` (free space for the checkpoint a deploy would take: 1.2×
 the database on the data directory for `db`, 0.5× on the host under
 `remote_path` for `dump`), `lock` (absent, unreadable, corrupt, unverified
-entries, `.echo/` tracked by the server's repository), `dest` (the push
+entries, `.echo/` tracked by the server's repository), `dbimage` (the db
+service's image names an OS release or a digest, not a bare `postgres:16`
+that a re-pull can move to a new glibc), `dest` (the push
 destination exists, or the addons directory auto-detect would use) and one
 `dest.shared` line per other target on the same host whose destination is the
 same directory (WARNING when its stage differs). Every check runs even after
@@ -238,6 +240,7 @@ echo logs --from staging --errors -n 1 --json
 | `  --installed`          | Source the picker from every installed module (e.g. `base`), not just the repo |
 | `  --from <target>` / `--remote` | Run the update on a **remote** instance over SSH (named target, or this directory's `link`) |
 | `uninstall <mod>...`     | Uninstall modules                                    |
+| `  --from <target>` / `--remote` | Run the uninstall on a **remote** instance over SSH (named target, or this directory's `link`) |
 | `  --level <lvl>`        | Odoo `--log-level` (`debug`…`critical`) — on install/update/uninstall |
 | `test <mod>...`          | Run the modules' Odoo test suite (filters `--test-tags`) |
 | `  --update`             | Reload modules first (`-u`; for view/schema changes) |

@@ -34,7 +34,13 @@ func RunUp(ctx context.Context, opts DockerOpts) error {
 	if from, remote := remoteFlagsIn(opts.Args); from != "" || remote {
 		return runRemoteUp(ctx, opts, from)
 	}
-	return docker.Up(ctx, opts.Cfg.ComposeCmd, opts.Root, opts.Args, opts.StreamOut)
+	cfg := opts.Cfg
+	if cfg.DBContainer != "" {
+		if drift, ok := docker.CheckDBImageDrift(ctx, cfg.ComposeCmd, opts.Root, cfg.DBContainer); ok {
+			warnDBImageDrift(opts.Log, cfg.DBName, cfg.DBContainer, drift)
+		}
+	}
+	return docker.Up(ctx, cfg.ComposeCmd, opts.Root, opts.Args, cfg.OdooContainer, cfg.DBContainer, opts.StreamOut)
 }
 
 func RunDown(ctx context.Context, opts DockerOpts) error {

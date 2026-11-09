@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"slices"
 	"strings"
 )
 
@@ -70,10 +71,100 @@ func ParseContainers(out string) []Container {
 	return containers
 }
 
-// Up runs `<compose> up -d [services...]` and streams output line by line.
-func Up(ctx context.Context, composeCmd, dir string, services []string, onLine func(string)) error {
-	args := append([]string{"up", "-d"}, services...)
-	return runStreamed(ctx, composeCmd, dir, onLine, args...)
+// UpCalls returns the compose invocations that start services without ever
+// recreating the database container. A plain `up -d` recreates every container
+// whose image tag now resolves to another image, so a tag re-pulled on the host
+// by anything else (postgres:16 moving to a new Debian base) would put the
+// database on a new image and break its collations.
+//
+// With no services it brings back every stopped service as it is, then lets
+// the Odoo service alone be recreated if its definition changed. Named
+// services start with --no-deps after the database, which comes up
+// --no-recreate. db is "" when the database is not a compose service.
+func UpCalls(services []string, odoo, db string) [][]string {
+	if len(services) == 0 {
+		calls := [][]string{{"up", "--detach", "--no-recreate"}}
+		if odoo != "" {
+			calls = append(calls, []string{"up", "--detach", "--no-deps", odoo})
+		}
+		return calls
+	}
+	var calls [][]string
+	if db != "" {
+		calls = append(calls, []string{"up", "--detach", "--no-recreate", db})
+	}
+	others := slices.DeleteFunc(slices.Clone(services), func(s string) bool { return s == db })
+	if len(others) > 0 {
+		calls = append(calls, append([]string{"up", "--detach", "--no-deps"}, others...))
+	}
+	return calls
+}
+
+// Up starts services through UpCalls and streams output line by line.
+func Up(ctx context.Context, composeCmd, dir string, services []string, odoo, db string, onLine func(string)) error {
+	for _, args := range UpCalls(services, odoo, db) {
+		if err := runStreamed(ctx, composeCmd, dir, onLine, args...); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// DBImageDriftScript prints "<image>\t<running id>\t<current id>" for the
+// database service's container: the image name it was created from, the
+// image it runs, and the image that name resolves to on the host now. It
+// prints nothing when the container does not exist. Run it in the project
+// directory as `sh -c <script> sh <compose command> <db service>`; $1 stays
+// unquoted so "docker compose" splits into its words.
+const DBImageDriftScript = `cid=$($1 ps -a -q "$2" 2>/dev/null | head -n 1)
+[ -n "$cid" ] || exit 0
+image=$(docker inspect -f '{{.Config.Image}}' "$cid")
+running=$(docker inspect -f '{{.Image}}' "$cid")
+current=$(docker image inspect -f '{{.Id}}' "$image" 2>/dev/null)
+printf '%s\t%s\t%s\n' "$image" "$running" "$current"
+`
+
+// DBImageDrift is a database container running an image other than the one
+// its compose image name resolves to now.
+type DBImageDrift struct {
+	Image   string
+	Running string
+	Current string
+}
+
+// ParseDBImageDrift reads DBImageDriftScript's output. ok is false when the
+// container runs the image its name resolves to, or there is nothing to
+// compare.
+func ParseDBImageDrift(out string) (drift DBImageDrift, ok bool) {
+	parts := strings.Split(strings.TrimSpace(out), "\t")
+	if len(parts) != 3 {
+		return DBImageDrift{}, false
+	}
+	drift = DBImageDrift{Image: parts[0], Running: parts[1], Current: parts[2]}
+	if drift.Running == "" || drift.Current == "" || drift.Running == drift.Current {
+		return DBImageDrift{}, false
+	}
+	return drift, true
+}
+
+// ShortImageID trims an image ID to the 12 hex characters docker shows.
+func ShortImageID(id string) string {
+	id = strings.TrimPrefix(id, "sha256:")
+	if len(id) > 12 {
+		return id[:12]
+	}
+	return id
+}
+
+// CheckDBImageDrift runs DBImageDriftScript against the local project.
+func CheckDBImageDrift(ctx context.Context, composeCmd, dir, db string) (DBImageDrift, bool) {
+	cmd := exec.CommandContext(ctx, "sh", "-c", DBImageDriftScript, "sh", composeCmd, db)
+	cmd.Dir = dir
+	out, err := cmd.Output()
+	if err != nil {
+		return DBImageDrift{}, false
+	}
+	return ParseDBImageDrift(string(out))
 }
 
 // Down runs `<compose> down [services...]` and streams output line by line.

@@ -408,6 +408,12 @@
 
 ## Deploy safety
 
+### 2026-10-23 · Starting a stack never recreates the database container; only Odoo may be recreated
+- **Why:** `up -d` recreated habitta_staging's and habitta_dev's Postgres on a `postgres:16` re-pulled onto a new glibc, breaking every database's collations. A database container is only ever recreated on purpose, with a collation refresh. Odoo's container holds nothing, so `--no-deps` still lets it pick up a changed definition, as Relay does.
+- **Rejected:** Pulling or pinning images from Echo (the compose file is the server's); refusing to start when the db image drifted (a WARNING and keeping the running container is already safe); `--no-recreate` alone for the whole stack (Odoo would never pick up a compose change).
+- **Source:** `internal/docker/compose.go` `UpCalls`, `internal/cmd/docker_remote.go` `remoteUpCmd`; incident 2026-10-23 on Ionos 74.208.133.46.
+- **Status:** active
+
 ### 2026-10-20 · Every command that writes to a target takes the operation lock once, after its confirms
 - **Why:** A deploy, watch cycle, sideload or checkpoint started during a `db-push` wrote under it, and two deploys from two machines could interleave. Taking the lock after the confirms keeps a refused confirm from leaving a lock behind; taking it once at the top level keeps deploy's own checkpoint and rollback from blocking on themselves. While it is held, Ctrl+C and SIGTERM cancel the command's context instead of killing the process (the same `signal.NotifyContext` pattern db-push uses), so the release always runs. A busy target skips a `watch` cycle and retries on the next poll instead of ending the watch; `deploy --dry-run` only warns.
 - **Rejected:** Checking without taking (two deploys could still interleave); locking `push` (it is the building block deploy uses); a `withOpLock(fn)` wrapper (it would have re-indented deploy's whole write phase).

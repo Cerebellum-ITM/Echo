@@ -15,7 +15,7 @@ Every failure from the first code write on goes through `handleDeployFailure` (s
 |---|---|---|
 | `pre_push`, or anything before the first code write (and no checkpoint yet) | nothing to undo | untouched |
 | after the code write, before the checkpoint exists (`post_push`, disk preflight, `pre_deploy`, `stop`, checkpoint creation) | restored | NOT restored; the log says so |
-| after the checkpoint (`up -d`, Odoo run, verify, tests) | restored | restored from the checkpoint |
+| after the checkpoint (start, Odoo run, verify, tests) | restored | restored from the checkpoint |
 | `post_deploy` | kept | kept: a verified-green deploy is never undone for a hook |
 
 Without push there is no code to restore; a checkpoint alone can still restore the DB. A failed run's commits are never marked deployed. The code is part of every rollback with or without a DB checkpoint (default on dev); `--no-rollback-on-fail` takes no snapshot.
@@ -27,13 +27,13 @@ Without push there is no code to restore; a checkpoint alone can still restore t
 A checkpoint is a restore point of the target's database taken inside a deploy (or manually), with the app stopped.
 
 - **Policy**: `mode` auto|on|off, `method` db|dump, `keep` N. Resolved server-first, field by field, then local, then defaults `auto/db/2` ([precedence](deploy.md#config-precedence)). `auto` = on for stage staging/prod, off for dev, using the stage read from the server profile. Per run: `--checkpoint[=db|dump]` / `--no-checkpoint` (exclusive).
-- **When**: after the app is stopped, before `up -d`. Only the Odoo app service is stopped (`remoteStopApp`, `compose stop <odoo>`): `psql`/`pg_dump` run INSIDE the db container, so a full stop makes the checkpoint fail (`service "db" is not running`, found on habitta_prod).
+- **When**: after the app is stopped, before the start. Only the Odoo app service is stopped (`remoteStopApp`, `compose stop <odoo>`): `psql`/`pg_dump` run INSIDE the db container, so a full stop makes the checkpoint fail (`service "db" is not running`, found on habitta_prod).
 - **`db` method**: terminate connections on the live DB, then `CREATE DATABASE <name> TEMPLATE <db>`, with `STRATEGY FILE_COPY` when PG ≥ 15 (the default WAL_LOG strategy is slow). Name `<db>__ckpt_<yyyymmdd_hhmmss>`, db part truncated so the whole stays within 63 bytes (`ckptDBName`). The copy gets `ALLOW_CONNECTIONS false` so Odoo's DB selector hides it (best-effort, WARNING on failure); restore re-enables connections on the live DB.
 - **`dump` method**: `pg_dump -Fc` to `<remote_path>/backups/checkpoints/<db>_<ts>.dump`; a manual `checkpoint create --method dump` runs live without stopping the app.
 - **Disk preflight** (`checkpointPreflight`, `internal/cmd/checkpoint_remote.go:441`): the need is `checkpointNeed(size, method)` (`:481`), ~1.2x the DB size for `db`, ~0.5x for `dump`, measured where each method writes (`checkpointFreeBytes`, `:468`): `db` on the cluster's `data_directory` (`df` inside the DB container), `dump` on the host filesystem of `<remote_path>` (`df -Pk` over SSH), because `remoteDumpToFile` redirects `pg_dump` on the host. A failure names both numbers and suggests `--no-checkpoint` or `checkpoint rm`. If size or free space cannot be measured it warns and proceeds. It runs AFTER the push (see step order), so a refusal still restores the code. `doctor`'s `disk` check uses the same need and the same filesystems: failed when a deploy would checkpoint (`resolveCheckpointMode(deployArgs{}, …)`) and the disk is short, a warning when checkpoints are off; skipped on Reverb targets (Unit 131).
 - **Index**: LOCAL `~/.config/echo/checkpoints/<projectKey>.toml`, keyed by the same `DeployTargetKey` as deploy history; the objects live on the server. Entry: `name`, `method` (`db|dump|code`), `db`, `created_at`, `deploy_shas`, `dump_path`, `code_sha` (git target's branch HEAD before the advance), `code_snapshot`. Because the index is local, another machine does not see this machine's checkpoints (`deploy --rollback` there reports none recorded).
 - **Retention**: after a deploy records its entry, the newest `keep` survive; older entries are destroyed (copy DB or dump file, plus their code snapshot) and unindexed (`pruneCheckpoints`, best-effort).
-- **`checkpoint list`** (default) reconciles against the server: an entry whose object is gone is `stale` and is dropped from the index; an untracked `*__ckpt_*` database is shown as `orphan` (never removed automatically). `checkpoint create [--method]` is manual (prod-gated; `db` method stops the app, then runs `up -d`), `checkpoint rm [name|--all] [--force]` behind a red confirm, `--json` on list. Reverb environments keep snapshots server-side and never touch this index (see [remote-targets.md](remote-targets.md)).
+- **`checkpoint list`** (default) reconciles against the server: an entry whose object is gone is `stale` and is dropped from the index; an untracked `*__ckpt_*` database is shown as `orphan` (never removed automatically). `checkpoint create [--method]` is manual (prod-gated; `db` method stops the app, then starts the stack again), `checkpoint rm [name|--all] [--force]` behind a red confirm, `--json` on list. Reverb environments keep snapshots server-side and never touch this index (see [remote-targets.md](remote-targets.md)).
 - **Not covered**: the filestore is not snapshotted. Rollback restores DB and code, not attachments written by the failed run. No unit exists for it.
 - **Fail-closed**: a checkpoint creation failure aborts the deploy before the Odoo run.
 
@@ -54,13 +54,36 @@ On acceptance `handleDeployFailure` runs, in this order:
 2. Restore the DB from the checkpoint with `consume=true` (the checkpoint is renamed over the live DB; the point of the checkpoint is served). Without a checkpoint it warns `restoring the code only`. If the DB restore itself fails: ERROR, the checkpoint entry (with its code parts) is kept, and the function returns a combined error WITHOUT restoring code and with the app left stopped.
 3. Restore code (`restoreDeployedCode`): git target, the branch moves back to the pre-advance `CodeSHA` with no FF gate and provenance cleared (`gitRestoreCode`); then the [snapshot](#code-snapshot) is extracted (covered paths deleted first). Failures are logged ERROR and listed, never returned, so the original deploy error is never masked.
 4. Re-run `pre_push`/`post_push` actions so an image-built target rebuilds from the restored code (skipped under `--no-actions`; a failure is ERROR only).
-5. `up -d`.
+5. Start the stack ([without recreating the db](#restarts-never-recreate-the-database)).
 6. Bookkeeping: whatever was not restored is re-recorded as a restore point; the snapshot is destroyed when its code came back; `RolledBack` is set (watch counts it); a final `rolled back — commits not marked deployed` line carries `database=` and `code=`.
 
-`deploy --rollback` is the standalone version (`runDeployRollback`): newest entry, or a picker when several and a TTY (so the newest may be a `code` entry, which restores code only); red confirm with the entry's age (age over 1 h printed in red as a data-loss warning; `--force` skips); stop app, restore DB, restore code from `code_sha`/`code_snapshot` (+ re-run push actions), `up -d`, un-mark the entry's `deploy_shas` from deploy history.
+`deploy --rollback` is the standalone version (`runDeployRollback`): newest entry, or a picker when several and a TTY (so the newest may be a `code` entry, which restores code only); red confirm with the entry's age (age over 1 h printed in red as a data-loss warning; `--force` skips); stop app, restore DB, restore code from `code_sha`/`code_snapshot` (+ re-run push actions), start the stack, un-mark the entry's `deploy_shas` from deploy history.
 
 - **`--rollback` PRESERVES a `db` checkpoint**: it copies back through `CREATE DATABASE … TEMPLATE` so the same point stays restorable (needs about one extra DB of disk; the just-dropped broken DB frees it). `--consume-checkpoint` opts into the cheaper rename that destroys it. The automatic on-failure rollback consumes. A `dump` entry is never consumed. `--consume-checkpoint` outside `--rollback` is `ErrUsage`.
 - A `post_deploy` failure never reaches this path.
+
+## Restarts never recreate the database
+
+- **Rule**: every path that starts a stack (`deploy`, its rollback, `deploy --rollback`, `checkpoint create`, `sideload`,
+  `db-push`, `up` remote and local) goes through `docker.UpCalls` (`internal/docker/compose.go`): with no service,
+  `up --detach --no-recreate` then `up --detach --no-deps <odoo>`; with named services, `up --detach --no-recreate <db>`
+  then `up --detach --no-deps <others>`. Remote: `remoteUpCmd` (`internal/cmd/docker_remote.go`). The db service is
+  `db_container` unless the db is outside the compose file (Reverb, `dbExecDocker`).
+- **Why**: a plain `up -d` recreates every container whose image tag now resolves to another image. On 2026-10-23 a
+  `deploy --from habitta_staging` logged `recreate name=odoo-db-1`: `postgres:16` on the shared Ionos host had been
+  re-pulled from a Debian 12 (glibc 2.36) to a Debian 13 (glibc 2.41) build, every database then reported a collation
+  version mismatch and the next checkpoint failed (`template database "habitta_prod" has a collation version
+  mismatch`); dev hit the same at 10:33. Echo never pulls; the recreate was its own `up -d`. Relay starts the same way.
+- **Drift warning**: before each start, `docker.DBImageDriftScript` (over `ckptRunSSH` remotely) compares the db
+  container's image with what its image name (`.Config.Image`) resolves to now; a difference logs
+  `WARNING echo.<cmd>.compose: db image changed on the host — keeping the running container service= image= running= new=`.
+  It never fails a command.
+- **`doctor`'s `dbimage` check** reads `compose config --format json` and warns when the db image is a bare tag
+  (`postgres:16`) instead of one naming the OS release (`-bookworm`, `-trixie`, `-alpine`, ...) or a digest.
+- **Gap**: a db container that does not exist yet is still created on whatever the tag names now; recreating it on
+  purpose (a Postgres upgrade) is a manual `docker compose up -d --force-recreate db` plus `REFRESH COLLATION VERSION`.
+- **Hypothesis:** `docker compose ps -a -q <svc>`, `docker inspect` and `config --format json` behave as used here on
+  the servers' compose v2; covered only by fakes so far (no compose on the dev Mac), not run against a real host.
 
 ## Code snapshot
 

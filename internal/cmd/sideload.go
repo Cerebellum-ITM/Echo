@@ -764,7 +764,8 @@ func RunSideload(ctx context.Context, opts SideloadOpts) (SideloadResult, error)
 		if err := step("stop", remoteComposeCmd(rsc.remotePath, rsc.target.composeCmd, "stop")); err != nil {
 			return res, err
 		}
-		if err := step("up -d", remoteComposeCmd(rsc.remotePath, rsc.target.composeCmd, "up", "-d")); err != nil {
+		warnRemoteDBImageDrift(ctx, rsc, opts.log)
+		if err := step("up", remoteUpCmd(rsc)); err != nil {
 			return res, err
 		}
 		var runFields [][2]string

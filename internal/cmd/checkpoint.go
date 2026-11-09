@@ -270,7 +270,8 @@ func runCheckpointCreate(ctx context.Context, opts CheckpointOpts, rsc remoteShe
 	entry, info, err := createCheckpoint(ctx, rsc, rsc.prof.DBName, method, nil, opts.StreamOut, opts.Log)
 	if stopStack {
 		// Bring the stack back up regardless of the checkpoint outcome.
-		_ = runSSHStream(ctx, rsc.sshHost, remoteComposeCmd(rsc.remotePath, rsc.target.composeCmd, "up", "-d"), nil, opts.StreamOut)
+		warnRemoteDBImageDrift(ctx, rsc, opts.log)
+		_ = runSSHStream(ctx, rsc.sshHost, remoteUpCmd(rsc), nil, opts.StreamOut)
 	}
 	if err != nil {
 		return CheckpointResult{}, err

@@ -119,7 +119,7 @@ func TestEntryPointsRefuseBusyTarget(t *testing.T) {
 			if after := treeFiles(t, remote.dir); !reflect.DeepEqual(after, before) {
 				t.Errorf("a busy target was written:\n%v\nwant:\n%v", after, before)
 			}
-			for _, write := range []string{"'stop'", "'up' '-d'", "stop-after-init", "cat > "} {
+			for _, write := range []string{"'stop'", "'up' '--detach'", "stop-after-init", "cat > "} {
 				if strings.Contains(remote.composeLog(), write) {
 					t.Errorf("compose write %q ran on a busy target", write)
 				}

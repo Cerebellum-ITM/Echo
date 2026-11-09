@@ -8,6 +8,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **`uninstall` runs on remote targets.** `uninstall <mod>... --from <target>`
+  (or `--remote` for the directory's link) pipes the same uninstall script
+  into `odoo shell` in the target's running Odoo container over SSH, with no
+  local compose project, the way remote `update` runs `-u`. With no module
+  names it opens a picker over the remote's addons (`--installed`: every
+  module installed in the remote database); a prod-stage target asks for a
+  confirm that `--force` skips; `--json` names the remote target. It also
+  runs on Relay targets, through `docker exec` like `shell-run`.
 - **Envs that Relay deploys are connect targets again.** A target with
   `relay = "<app>/<env>"` asks Relay (`GET /api/v1/resolve/{app}/{env}`)
   where the env lives and reaches it over SSH with the user's own ssh alias,
@@ -34,8 +42,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   target's odoo container, imported there with overwrite and removed; the
   target's stage gates it like any remote write, and a usage error now exits
   2.
+- **`doctor` checks how the db image is pinned.** A new `dbimage` check reads
+  the target's compose configuration and warns when the db service's image is
+  a bare version tag such as `postgres:16`, which a re-pull moves to a new OS
+  base; a tag naming the OS release (`postgres:16-bookworm`) or a digest
+  passes.
 
 ### Fixed
+- **No restart recreates the database container any more.** `deploy`, its
+  rollback and `deploy --rollback`, `checkpoint create`, `sideload`, `db-push`
+  and `up` (remote and local) ran `docker compose up -d`, which recreates
+  every container whose image tag now resolves to another image. When
+  something else on the host re-pulled `postgres:16` onto a Debian 13 build,
+  the next deploy put the database on the new glibc and every database
+  reported a collation version mismatch. Echo now starts the stack with
+  `up --detach --no-recreate` and the Odoo service with
+  `up --detach --no-deps`, so only Odoo may be recreated; named services
+  start the same way, the db service with `--no-recreate`. Before starting,
+  a WARNING names the db service, its image, the running image and the one
+  the tag resolves to now when they differ, and the running container is
+  kept.
 - **`db-push --filestore` no longer leaves a new instance's filestore owned
   by root.** The restored files took the owner of the filestore root, but an
   instance that never stored an attachment has no filestore root, so the

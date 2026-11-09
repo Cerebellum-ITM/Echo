@@ -56,7 +56,7 @@ Source: `RunDeploy` (`sources`, `archived`, `branchMods`, `worktreeMods`), `depl
 9. `pre_deploy` actions.
 10. Stop: only the Odoo app when checkpointing (the DB container must stay up for `psql`/`pg_dump`), otherwise `compose stop` of everything.
 11. Checkpoint.
-12. `up -d`.
+12. Start (`remoteUpCmd`): never recreates the db container, see [deploy-safety](deploy-safety.md#restarts-never-recreate-the-database).
 13. Odoo run: `-i`/`-u`, `+ --i18n-overwrite`, `+` tests when enabled.
 14. Verify: non-zero exit OR any `deployFailureRe` hit in the stream (`CRITICAL`, traceback, `Failed to load registry`, non-zero `N failed, M error(s)`, `FAILED (failures|errors=`) fails the deploy.
 15. Lock `verified=true`; mark deploy history; record the checkpoint (links the code snapshot) and prune to `keep`, or delete the snapshot when no checkpoint exists.
