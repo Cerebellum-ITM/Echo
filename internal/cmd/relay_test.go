@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"testing"
@@ -16,6 +17,7 @@ import (
 
 	"github.com/pascualchavez/echo/internal/config"
 	"github.com/pascualchavez/echo/internal/docker"
+	"github.com/pascualchavez/echo/internal/odoo"
 	"github.com/pascualchavez/echo/internal/relay"
 )
 
@@ -29,6 +31,13 @@ const relayResolveBody = `{"app":"fb","env":"stage","stage":"staging","branch":"
 const relayResolvePort1024Body = `{"app":"habitta","env":"ui","stage":"dev","branch":"ui","odoo_version":"19.0",
 	"server":"morwi-habitta","ssh":{"host":"18.144.1.2","port":1024},"compose_project":"relay-habitta-ui",
 	"containers":{"odoo":"relay-habitta-ui-odoo","db":"relay-habitta-ui-db"},"db":{"name":"habitta","user":"odoo"},
+	"odoo_conf":"/etc/odoo/odoo.conf"}`
+
+// relayResolveV18Body is an env on Odoo 18, where i18n-update goes through
+// `odoo shell`.
+const relayResolveV18Body = `{"app":"habitta","env":"dev","stage":"dev","branch":"dev","odoo_version":"18.0",
+	"server":"morwi-fb","ssh":{"host":"54.151.87.198","port":22},"compose_project":"relay-habitta-dev",
+	"containers":{"odoo":"relay-habitta-dev-odoo","db":"relay-habitta-dev-db"},"db":{"name":"habitta","user":"odoo"},
 	"odoo_conf":"/etc/odoo/odoo.conf"}`
 
 // fakeRelay serves resolve and the deploy routes. deployStates are what
@@ -56,6 +65,8 @@ func newFakeRelay(t *testing.T, deployStates ...string) *fakeRelay {
 			_, _ = io.WriteString(w, relayResolveBody)
 		case r.URL.Path == "/api/v1/resolve/habitta/ui":
 			_, _ = io.WriteString(w, relayResolvePort1024Body)
+		case r.URL.Path == "/api/v1/resolve/habitta/dev":
+			_, _ = io.WriteString(w, relayResolveV18Body)
 		case r.URL.Path == "/api/v1/resolve/fb/qa":
 			w.WriteHeader(http.StatusNotFound)
 			_, _ = io.WriteString(w, `{"error":{"code":"unknown_env","message":"unknown env \"qa\" in app \"fb\""}}`)
@@ -98,7 +109,7 @@ printf '%s\t%s\n' "$host" "$cmd" >> "`+logPath+`"
 case "$cmd" in
   *"ps' '--format' 'json'"*) printf '{"Service":"odoo","Name":"relay-fb-stage-odoo","State":"running","Status":"Up 5 minutes"}\n' ;;
   *"'--log-level=warn'"*) cat >/dev/null; printf '@@ECHO_PROBE@@ 1 1 eyJvayI6IHRydWUsICJraW5kIjogImV2YWwiLCAicmVzdWx0IjogMywgInN0ZG91dCI6ICIifQ==\n' ;;
-  *"'odoo' 'shell'"*) cat >/dev/null; printf '19.0.4.1.1\n' ;;
+  *"'odoo' 'shell'"*) cat >>"`+logPath+`.stdin"; printf '19.0.4.1.1\n' ;;
 esac
 `)
 	if err := os.Chmod(filepath.Join(bin, "ssh"), 0o755); err != nil {
@@ -111,6 +122,7 @@ esac
 		ConnectTargets: []config.ConnectTarget{
 			{Name: "fb-stage", SSHHost: "morwi-fb", RemotePath: config.RelayPath("fb/stage"), Relay: "fb/stage"},
 			{Name: "classic", SSHHost: "Ionos", RemotePath: "/srv/odoo"},
+			{Name: "habitta-dev", SSHHost: "morwi-fb", RemotePath: config.RelayPath("habitta/dev"), Relay: "habitta/dev"},
 		},
 	}
 	return cfg, logPath
@@ -345,6 +357,42 @@ func TestI18nUpdateOnRelayUsesTheContainerConf(t *testing.T) {
 	}
 	if !strings.Contains(got[2], "'rm' '-f' '/tmp/echo-i18n-") || strings.Contains(got[2], ".conf") {
 		t.Errorf("cleanup = %s, want only the .po removed", got[2])
+	}
+}
+
+func TestI18nUpdateOnRelayV18PipesTheImportScript(t *testing.T) {
+	f := newFakeRelay(t)
+	cfg, logPath := relayTestEnv(t, f.URL)
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, "fb_mod", "__manifest__.py"), "{'name': 'fb_mod'}\n")
+	mustWrite(t, filepath.Join(root, "fb_mod", "i18n", "es_MX.po"), "msgid \"\"\nmsgstr \"\"\n")
+	cfg.ProjectPath = root
+
+	err := RunI18nUpdate(context.Background(), I18nOpts{Cfg: cfg, Root: root, Args: []string{"fb_mod", "es_MX", "--from", "habitta-dev"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := sshLog(t, logPath)
+	if len(got) != 3 {
+		t.Fatalf("ssh ran %d commands:\n%s", len(got), strings.Join(got, "\n"))
+	}
+	tmp := regexp.MustCompile(`/tmp/echo-i18n-[0-9]+-[0-9a-f]+\.po`).FindString(got[0])
+	if tmp == "" || !strings.HasPrefix(got[0], "morwi-fb\tdocker exec -i 'relay-habitta-dev-odoo' 'sh' '-c' 'cat > ") {
+		t.Fatalf("copy = %s", got[0])
+	}
+	if !strings.HasSuffix(got[1], "docker exec -i 'relay-habitta-dev-odoo' 'odoo' 'shell' '-d' 'habitta' '--db_user' 'odoo' '--no-http'") ||
+		strings.Contains(got[1], "i18n-import") {
+		t.Errorf("import = %s, want odoo shell without --i18n-import", got[1])
+	}
+	if !strings.Contains(got[2], "'rm' '-f' '"+tmp+"'") {
+		t.Errorf("cleanup = %s, want %s removed", got[2], tmp)
+	}
+	stdin, err := os.ReadFile(logPath + ".stdin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := string(odoo.I18nImportScript(tmp, "es_MX")); string(stdin) != want {
+		t.Errorf("odoo shell stdin =\n%s\nwant the import script for %s", stdin, tmp)
 	}
 }
 

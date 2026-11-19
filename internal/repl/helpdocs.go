@@ -430,7 +430,7 @@ var commandDocs = []commandDoc{
 		name:    "i18n-update",
 		section: "i18n",
 		usage:   "i18n-update <mod> [lang] [--force] [--from <target> | --remote]",
-		summary: "Import the module's <lang>.po into the DB (--i18n-overwrite)",
+		summary: "Import the module's <lang>.po into the DB, overwriting existing terms",
 		flags: []helpItem{
 			{"--force", "", "Skip the prod-stage confirmation prompt"},
 			{"--from", "<target>", "Load it into a named connect target's DB"},

@@ -34,6 +34,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`compare --targets` refuses a Relay env.** It reads a deploy lock, which a
   Relay env does not have; naming one now exits 2 instead of trying to read a
   lock at a path that does not exist.
+- **`i18n-update` loaded nothing on Odoo 16 to 18 and reported success.**
+  Below Odoo 19 it ran `--i18n-import=/tmp/echo-i18n-*.po`, and Odoo only
+  opens translation files under its addons paths: the import was skipped
+  without a log line and the run exited 0. It now pipes a small script into
+  `odoo shell` that loads the copied `.po` from an open file with overwrite
+  and commits, locally and on remote and Relay targets. The run exits 1 when
+  the language is not active in the database or the file cannot be opened,
+  and prints `loaded <file> for <lang>` on success. Odoo 19's `odoo i18n
+  import` is unchanged.
 
 ## [0.30.0] - 2026-11-09
 

@@ -9,6 +9,9 @@
 package odoo
 
 import (
+	_ "embed"
+	"encoding/base64"
+	"encoding/json"
 	"strconv"
 	"strings"
 )
@@ -341,15 +344,18 @@ func ExportI18n(c Conn, version, module, lang, outPath, confPath string) Cmd {
 }
 
 // UpdateI18n builds the argv to import a .po file at inPath into the DB,
-// overwriting existing terms.
+// overwriting existing terms. UpdateI18nStdin is what that argv reads on
+// stdin.
 //
 // On Odoo 19 (major ≥ 19) this is `odoo i18n import -c <conf> -d <db>
 // -l <lang> -w <inPath>`: the file is positional, `-l` is the single
 // required language, and `-w/--overwrite` is the replacement for the legacy
 // `--i18n-overwrite`. The subcommand takes no module argument (terms come
-// from the file), so module is unused on this path. Older series keep the
-// legacy `--modules=`/`--i18n-import=`/`--i18n-overwrite` flags; confPath is
-// ignored there.
+// from the file), so module is unused on this path.
+//
+// Older series run `odoo shell` with the import script on stdin, because the
+// legacy `--i18n-import=<inPath>` silently loads nothing for a path outside
+// the addons paths (see i18n_import.py). module and confPath are unused there.
 func UpdateI18n(c Conn, version, module, lang, inPath, confPath string) Cmd {
 	if Major(version) >= 19 {
 		args := Cmd{"odoo", "i18n", "import", "-c", confPath}
@@ -358,12 +364,29 @@ func UpdateI18n(c Conn, version, module, lang, inPath, confPath string) Cmd {
 		}
 		return append(args, "-l", lang, "-w", inPath)
 	}
-	args := append(Cmd{"odoo"}, c.flags()...)
-	return append(args,
-		"--modules="+module,
-		"-l", lang,
-		"--i18n-import="+inPath,
-		"--i18n-overwrite",
-		"--stop-after-init",
-	)
+	return Shell(c)
+}
+
+// UpdateI18nStdin returns the stdin for UpdateI18n's argv: nil on Odoo 19+,
+// the import script (I18nImportScript) on older series.
+func UpdateI18nStdin(version, lang, inPath string) []byte {
+	if Major(version) >= 19 {
+		return nil
+	}
+	return I18nImportScript(inPath, lang)
+}
+
+//go:embed i18n_import.py
+var i18nImportTemplate string
+
+const i18nArgsPlaceholder = "__ECHO_I18N_ARGS__"
+
+// I18nImportScript renders the Python fed to `odoo shell` to load the .po at
+// path for lang with overwrite and commit. Path and language travel as base64
+// of their JSON, like the probe request. The script exits non-zero when the
+// language is not active or the file cannot be opened.
+func I18nImportScript(path, lang string) []byte {
+	args, _ := json.Marshal(map[string]string{"path": path, "lang": lang})
+	encoded := base64.StdEncoding.EncodeToString(args)
+	return []byte(strings.Replace(i18nImportTemplate, i18nArgsPlaceholder, encoded, 1))
 }
