@@ -151,7 +151,9 @@ func parseI18nPullArgs(args []string) (i18nPullArgs, error) {
 
 // resolvePullRemote returns the ssh host + remote project path to pull
 // from: a named connect target when --from is set, otherwise the project's
-// own [connect] config. Errors when neither yields a usable remote.
+// own [connect] config. Errors when neither yields a usable remote. A from
+// that names no target but is a Relay reference (relay:<app>/<env>) returns
+// an empty host: the Relay resolve picks it (relaySSHHost).
 func resolvePullRemote(cfg *config.Config, from string) (sshHost, remotePath string, err error) {
 	if from != "" {
 		for _, t := range cfg.ConnectTargets {
@@ -161,6 +163,12 @@ func resolvePullRemote(cfg *config.Config, from string) (sshHost, remotePath str
 				}
 				return t.SSHHost, t.RemotePath, nil
 			}
+		}
+		if spec, ok := config.RelaySpec(from); ok {
+			if _, _, err := parseRelaySpec(spec); err != nil {
+				return "", "", err
+			}
+			return "", from, nil
 		}
 		return "", "", fmt.Errorf("unknown connect target: %s", from)
 	}

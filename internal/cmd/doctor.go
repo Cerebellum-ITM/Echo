@@ -174,6 +174,9 @@ func RunDoctor(ctx context.Context, opts DoctorOpts) (DoctorResult, error) {
 	if name == "" {
 		name = linkTargetName(opts.Cfg)
 	}
+	if _, ok := config.RelaySpec(remotePath); ok {
+		return runDoctorRelay(ctx, opts, host, remotePath, name)
+	}
 	d := doctorTarget{
 		cfg:   opts.Cfg,
 		name:  name,

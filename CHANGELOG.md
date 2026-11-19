@@ -5,6 +5,49 @@ All notable changes to Echo are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- **`probe` and `doctor` run on Relay envs.** `probe --from <relay target>`
+  (or `--remote` on a Relay binding) runs the read-only probe with `docker
+  exec` in the env's odoo container, like `shell-run`. `doctor` on a Relay
+  env runs its own three checks: `relay` (the env resolves; a warning when it
+  has no release yet), `ssh` (one read over the user's alias) and
+  `containers` (the odoo and db containers exist and are running). The
+  report keeps its shape, with the gate stage and database from Relay's
+  resolve; a Relay env has no server profile, rsync, git deploy, lock or push
+  destination, so those checks do not apply.
+- **Relay envs are reachable without a connect target.** `--from
+  relay:<app>/<env>` works on every command a Relay target supports and saves
+  nothing, for short-lived dev envs. The SSH host of a receiver can be set
+  once per server in `[relay.ssh_hosts]` of `global.toml` (`<server> =
+  "<alias>"`, an alias from `~/.ssh/config`); `link --add <name> --relay
+  <app>/<env> --ssh-host <alias>` records it when the server has no entry.
+
+### Changed
+- **A Relay receiver on an SSH port other than 22 needs an alias.** Without
+  `--ssh-host`, a registered target's `ssh_host` or a `[relay.ssh_hosts]`
+  entry, registering or reaching its envs now exits 2 with the fix, instead
+  of a warning followed by a failing `ssh`.
+
+### Fixed
+- **`uninstall --from <target>` runs outside a compose project.** The remote
+  form exited 2 with `not inside a project` unless the current directory held
+  a `docker-compose.yml`, although it only reaches the target over SSH, like
+  remote `update` and `test`.
+- **`compare --targets` refuses a Relay env.** It reads a deploy lock, which a
+  Relay env does not have; naming one now exits 2 instead of trying to read a
+  lock at a path that does not exist.
+- **`i18n-update` loaded nothing on Odoo 16 to 18 and reported success.**
+  Below Odoo 19 it ran `--i18n-import=/tmp/echo-i18n-*.po`, and Odoo only
+  opens translation files under its addons paths: the import was skipped
+  without a log line and the run exited 0. It now pipes a small script into
+  `odoo shell` that loads the copied `.po` from an open file with overwrite
+  and commits, locally and on remote and Relay targets. The run exits 1 when
+  the language is not active in the database or the file cannot be opened,
+  and prints `loaded <file> for <lang>` on success. Odoo 19's `odoo i18n
+  import` is unchanged.
+
 ## [0.30.0] - 2026-11-09
 
 ### Added

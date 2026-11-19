@@ -33,13 +33,14 @@ var relayDeployPoll = 2 * time.Second
 var relaySupported = map[string]bool{
 	"shell": true, "shell-run": true, "logs": true, "ps": true, "test": true, "update": true,
 	"uninstall": true, "i18n-pull": true, "i18n-update": true, "deploy": true, "link": true,
+	"probe": true, "doctor": true,
 }
 
 // relayAlwaysRemote are the unsupported commands that reach the bound target
 // even without a remote flag.
 var relayAlwaysRemote = map[string]bool{
 	"push": true, "watch": true, "sideload": true, "checkpoint": true, "actions": true,
-	"db-pull": true, "db-push": true, "doctor": true,
+	"db-pull": true, "db-push": true,
 }
 
 const relayBakedAddons = "Relay builds the env's image from git with the addons baked in; " +
@@ -92,7 +93,29 @@ func relayTargetFor(cfg *config.Config, from string) (host, path, name string, o
 			return t.SSHHost, t.RemotePath, t.Name, ok
 		}
 	}
+	if _, ok := config.RelaySpec(from); ok {
+		return "", from, from, true
+	}
 	return "", "", "", false
+}
+
+// relaySSHHost picks the SSH host of the env's receiver: the explicit one (a
+// registered target's ssh_host, or --ssh-host), else the [relay.ssh_hosts]
+// alias of its server, else the resolved host when its port is 22 or unset.
+// Echo never passes ssh -p, so any other port needs an alias.
+func relaySSHHost(cfg *config.Config, explicit string, re relay.Env) (string, error) {
+	if explicit != "" {
+		return explicit, nil
+	}
+	if alias := cfg.RelaySSHHosts[re.Server]; alias != "" {
+		return alias, nil
+	}
+	if re.SSH.Port == 0 || re.SSH.Port == 22 {
+		return re.SSH.Host, nil
+	}
+	return "", fmt.Errorf("%w: the receiver %s listens for SSH on port %d and Echo passes no port — add "+
+		"%s = \"<an alias from ~/.ssh/config>\" under [relay.ssh_hosts] in global.toml, or register the target "+
+		"with link --add <name> --relay %s/%s --ssh-host <alias>", ErrUsage, re.Server, re.SSH.Port, re.Server, re.App, re.Env)
 }
 
 func parseRelaySpec(spec string) (app, env string, err error) {
@@ -166,8 +189,8 @@ func resolveRelayShell(ctx context.Context, cfg *config.Config, sshHost, remoteP
 		return remoteShellContext{}, relayError(err)
 	}
 	targetName := targetNameAt(cfg, sshHost, remotePath)
-	if sshHost == "" {
-		sshHost = re.SSH.Host
+	if sshHost, err = relaySSHHost(cfg, sshHost, re); err != nil {
+		return remoteShellContext{}, err
 	}
 
 	prof := config.RemoteProfile{
@@ -325,13 +348,9 @@ func runLinkAddRelay(ctx context.Context, opts LinkOpts, name, spec, sshHost str
 	if err != nil {
 		return relayError(err)
 	}
-	if sshHost == "" {
-		sshHost = re.SSH.Host
-		if re.SSH.Port != 0 && re.SSH.Port != 22 {
-			opts.log("WARNING", "relay", "the receiver's SSH port is not 22 and a bare host carries no port", "",
-				[2]string{"host", sshHost}, [2]string{"port", strconv.Itoa(re.SSH.Port)},
-				[2]string{"fix", "add a Host block for it in ~/.ssh/config and pass that alias with --ssh-host"})
-		}
+	explicit := sshHost
+	if sshHost, err = relaySSHHost(opts.Cfg, explicit, re); err != nil {
+		return err
 	}
 	t := config.ConnectTarget{
 		Name:       name,
@@ -346,5 +365,29 @@ func runLinkAddRelay(ctx context.Context, opts LinkOpts, name, spec, sshHost str
 	rememberTarget(opts.Cfg, t)
 	opts.log("INFO", "", "registered", re.DB.Name,
 		[2]string{"target", name}, [2]string{"relay", t.Relay}, [2]string{"host", sshHost})
+	if explicit != "" {
+		rememberRelaySSHHost(opts, re.Server, explicit)
+	}
 	return bindLinkTarget(ctx, opts, t)
+}
+
+// rememberRelaySSHHost saves alias as the receiver's [relay.ssh_hosts] entry
+// when it has none, so later ad-hoc references to its envs reach it too. A
+// failed save leaves the registration standing.
+func rememberRelaySSHHost(opts LinkOpts, server, alias string) {
+	saved, err := config.SaveRelaySSHHost(server, alias)
+	if err != nil {
+		opts.log("WARNING", "relay", "could not remember the receiver's SSH alias", "",
+			[2]string{"server", server}, [2]string{"host", alias}, [2]string{"err", err.Error()})
+		return
+	}
+	if !saved {
+		return
+	}
+	if opts.Cfg.RelaySSHHosts == nil {
+		opts.Cfg.RelaySSHHosts = map[string]string{}
+	}
+	opts.Cfg.RelaySSHHosts[server] = alias
+	opts.log("INFO", "relay", "remembered the receiver's SSH alias", "",
+		[2]string{"server", server}, [2]string{"host", alias})
 }

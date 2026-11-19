@@ -1,7 +1,11 @@
 package odoo
 
 import (
+	"encoding/base64"
+	"encoding/json"
 	"reflect"
+	"regexp"
+	"strings"
 	"testing"
 )
 
@@ -114,10 +118,75 @@ func TestUpdateI18nV19(t *testing.T) {
 
 func TestUpdateI18nLegacy(t *testing.T) {
 	c := Conn{DB: "dev"}
-	got := UpdateI18n(c, "17.0", "sale", "es_MX", "/tmp/x.po", "")
-	want := Cmd{"odoo", "-d", "dev", "--modules=sale", "-l", "es_MX",
-		"--i18n-import=/tmp/x.po", "--i18n-overwrite", "--stop-after-init"}
-	if !reflect.DeepEqual(got, want) {
-		t.Errorf("legacy import = %v, want %v", got, want)
+	for _, version := range []string{"18.0", "17", "16.0", "15.0", ""} {
+		got := UpdateI18n(c, version, "sale", "es_MX", "/tmp/x.po", "")
+		want := Cmd{"odoo", "shell", "-d", "dev", "--no-http"}
+		if !reflect.DeepEqual(got, want) {
+			t.Errorf("version %q: import = %v, want %v", version, got, want)
+		}
+		for _, a := range got {
+			if strings.HasPrefix(a, "--i18n-import") {
+				t.Errorf("version %q: argv carries %q, which loads nothing outside the addons paths", version, a)
+			}
+		}
+		if UpdateI18nStdin(version, "es_MX", "/tmp/x.po") == nil {
+			t.Errorf("version %q: no import script on stdin", version)
+		}
 	}
+	if stdin := UpdateI18nStdin("19.0", "es_MX", "/tmp/x.po"); stdin != nil {
+		t.Errorf("v19 stdin = %q, want none", stdin)
+	}
+}
+
+func TestI18nImportScript(t *testing.T) {
+	tests := []struct {
+		name, path, lang string
+	}{
+		{"plain", "/tmp/echo-i18n-1-ab.po", "es_MX"},
+		{"quotes and newline stay data", "/tmp/a\"b'c\n.po", "es\")\nimport os"},
+		{"variant locale", "/tmp/x.po", "sr@latin"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			script := string(I18nImportScript(tt.path, tt.lang))
+			if strings.Contains(script, i18nArgsPlaceholder) {
+				t.Fatal("placeholder left in the script")
+			}
+			if strings.Contains(script, tt.lang) || strings.Contains(script, tt.path) {
+				t.Fatal("path or language spliced into the source")
+			}
+			got := decodeI18nArgs(t, script)
+			if got["path"] != tt.path || got["lang"] != tt.lang {
+				t.Errorf("args = %v, want path %q lang %q", got, tt.path, tt.lang)
+			}
+			for _, want := range []string{
+				"from odoo.tools.translate import TranslationImporter",
+				"from odoo.tools.translate import trans_load_data",
+				"importer.save(overwrite=True)",
+				`("active", "=", True)`,
+				"env.cr.commit()",
+			} {
+				if !strings.Contains(script, want) {
+					t.Errorf("script missing %q", want)
+				}
+			}
+		})
+	}
+}
+
+func decodeI18nArgs(t *testing.T, script string) map[string]string {
+	t.Helper()
+	m := regexp.MustCompile(`base64\.b64decode\("([A-Za-z0-9+/=]+)"\)`).FindStringSubmatch(script)
+	if m == nil {
+		t.Fatal("no base64 arguments in the script")
+	}
+	raw, err := base64.StdEncoding.DecodeString(m[1])
+	if err != nil {
+		t.Fatal(err)
+	}
+	var args map[string]string
+	if err := json.Unmarshal(raw, &args); err != nil {
+		t.Fatal(err)
+	}
+	return args
 }

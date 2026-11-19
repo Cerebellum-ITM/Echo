@@ -146,6 +146,10 @@ func RunCompareTargets(ctx context.Context, opts CompareTargetsOpts) (CompareTar
 		if err != nil {
 			return CompareTargetsResult{}, fmt.Errorf("%w: %v", ErrUsage, err)
 		}
+		if spec, ok := config.RelaySpec(remotePath); ok {
+			return CompareTargetsResult{}, fmt.Errorf("%w: compare --targets reads a deploy lock and the Relay env %s has none",
+				ErrUsage, spec)
+		}
 		sides[i] = TargetSide{Name: name, Host: host, Path: remotePath}
 	}
 	if sides[0].Host == sides[1].Host && sides[0].Path == sides[1].Path {

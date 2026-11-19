@@ -257,3 +257,65 @@ token_file = "~/.config/relay/echo-token"
 		}
 	}
 }
+
+func TestRelaySSHHosts(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	path := writeGlobal(t, globalWithEveryTable+`
+[relay]
+url = "https://relay.example.test"
+token_file = "~/.config/relay/echo-token"
+
+[relay.ssh_hosts]
+morwi-fb = "morwi-fb-2222"
+`)
+	cfg, err := LoadGlobal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.RelaySSHHosts["morwi-fb"] != "morwi-fb-2222" {
+		t.Fatalf("RelaySSHHosts = %v", cfg.RelaySSHHosts)
+	}
+
+	saved, err := SaveRelaySSHHost("morwi-habitta", "habitta-ssh")
+	if err != nil || !saved {
+		t.Fatalf("SaveRelaySSHHost = %v, %v; want a write", saved, err)
+	}
+	saved, err = SaveRelaySSHHost("morwi-fb", "other-alias")
+	if err != nil || saved {
+		t.Fatalf("SaveRelaySSHHost over an entry = %v, %v; want no write", saved, err)
+	}
+	g := mustLoadGlobalFile(t, path)
+	want := map[string]string{"morwi-fb": "morwi-fb-2222", "morwi-habitta": "habitta-ssh"}
+	if len(g.Relay.SSHHosts) != len(want) || g.Relay.SSHHosts["morwi-fb"] != want["morwi-fb"] ||
+		g.Relay.SSHHosts["morwi-habitta"] != want["morwi-habitta"] {
+		t.Errorf("ssh_hosts = %v, want %v", g.Relay.SSHHosts, want)
+	}
+	if g.Relay.URL != "https://relay.example.test" || g.Relay.TokenFile != "~/.config/relay/echo-token" {
+		t.Errorf("[relay] altered: %+v", g.Relay)
+	}
+
+	before := sshHostsTable(t, path)
+	if err := SaveConnectTarget(ConnectTarget{Name: "other", SSHHost: "Ionos", RemotePath: "/srv/odoo"}); err != nil {
+		t.Fatal(err)
+	}
+	if after := sshHostsTable(t, path); after != before {
+		t.Errorf("a connect-target save changed [relay.ssh_hosts]:\n%s\nwant\n%s", after, before)
+	}
+}
+
+// sshHostsTable is the [relay.ssh_hosts] table of the file at path, as text.
+func sshHostsTable(t *testing.T, path string) string {
+	t.Helper()
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, table, found := strings.Cut(string(raw), "[relay.ssh_hosts]")
+	if !found {
+		t.Fatalf("no [relay.ssh_hosts] in:\n%s", raw)
+	}
+	if i := strings.Index(table, "\n["); i >= 0 {
+		table = table[:i]
+	}
+	return table
+}

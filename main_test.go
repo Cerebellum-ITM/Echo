@@ -30,6 +30,8 @@ func TestProjectlessOneShot(t *testing.T) {
 		{"update --from target", "update", []string{"--from", "prod"}, true},
 		{"update --from=target", "update", []string{"--from=prod", "sale"}, true},
 		{"update local needs a project", "update", []string{"sale"}, false},
+		{"uninstall --from target", "uninstall", []string{"sale", "--from", "staging"}, true},
+		{"uninstall local needs a project", "uninstall", []string{"sale"}, false},
 		{"test --remote", "test", []string{"--remote"}, true},
 		{"test local needs a project", "test", []string{"sale"}, false},
 		{"db-admin --remote", "db-admin", []string{"--remote"}, true},

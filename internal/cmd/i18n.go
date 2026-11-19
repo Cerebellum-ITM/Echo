@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -181,8 +182,9 @@ func RunI18nExport(ctx context.Context, opts I18nOpts) error {
 	return nil
 }
 
-// RunI18nUpdate imports the module's <lang>.po back into the DB with
-// --i18n-overwrite. Shows a prod-confirm in stage=prod unless --force.
+// RunI18nUpdate imports the module's <lang>.po back into the DB, overwriting
+// existing terms (see odoo.UpdateI18n). Shows a prod-confirm in stage=prod
+// unless --force.
 func RunI18nUpdate(ctx context.Context, opts I18nOpts) error {
 	if from, remote := remoteFlagsIn(opts.Args); from != "" || remote {
 		return runI18nUpdateRemote(ctx, opts, from)
@@ -239,7 +241,12 @@ func RunI18nUpdate(ctx context.Context, opts I18nOpts) error {
 	defer confCleanup()
 
 	argv := odoo.UpdateI18n(conn, opts.Cfg.OdooVersion, parsed.module, parsed.lang, containerTmp, confPath)
-	return runOdooI18n(ctx, opts, argv)
+	stdin := odoo.UpdateI18nStdin(opts.Cfg.OdooVersion, parsed.lang, containerTmp)
+	if stdin == nil {
+		return runOdooI18n(ctx, opts, argv)
+	}
+	return docker.ExecWithStdinReader(ctx, opts.Cfg.ComposeCmd, opts.Root, opts.Cfg.OdooContainer,
+		argv, bytes.NewReader(stdin), opts.StreamOut)
 }
 
 // resolveExportDest computes the host destination for i18n-export.

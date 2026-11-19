@@ -11,7 +11,8 @@ import (
 
 // runI18nUpdateRemote loads the local <mod>/i18n/<lang>.po into a REMOTE
 // database: the file is streamed into the odoo container over SSH and
-// imported there with the overwrite flag, then removed. The target's stage
+// imported there with overwrite (on series below 19 by a script piped into
+// `odoo shell`), then removed. The target's stage
 // gates it like any remote write.
 func runI18nUpdateRemote(ctx context.Context, opts I18nOpts, from string) error {
 	parsed, err := parseI18nArgs(opts.Args, false, true, true)
@@ -66,5 +67,6 @@ func runI18nUpdateRemote(ctx context.Context, opts I18nOpts, from string) error 
 	if opts.StreamOut != nil {
 		opts.StreamOut("→ " + src + " into " + targetLabel(rsc))
 	}
-	return runSSHStream(ctx, rsc.sshHost, remoteContainerCmd(rsc.remotePath, t, argv), nil, opts.StreamOut)
+	stdin := odoo.UpdateI18nStdin(t.odooVersion, parsed.lang, tmp)
+	return runSSHStream(ctx, rsc.sshHost, remoteContainerCmd(rsc.remotePath, t, argv), stdin, opts.StreamOut)
 }
