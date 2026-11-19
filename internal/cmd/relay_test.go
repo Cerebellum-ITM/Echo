@@ -88,6 +88,7 @@ cmd="$*"
 printf '%s\t%s\n' "$host" "$cmd" >> "`+logPath+`"
 case "$cmd" in
   *"ps' '--format' 'json'"*) printf '{"Service":"odoo","Name":"relay-fb-stage-odoo","State":"running","Status":"Up 5 minutes"}\n' ;;
+  *"'--log-level=warn'"*) cat >/dev/null; printf '@@ECHO_PROBE@@ 1 1 eyJvayI6IHRydWUsICJraW5kIjogImV2YWwiLCAicmVzdWx0IjogMywgInN0ZG91dCI6ICIifQ==\n' ;;
   *"'odoo' 'shell'"*) cat >/dev/null; printf '19.0.4.1.1\n' ;;
 esac
 `)
@@ -133,6 +134,10 @@ func TestRelayGuard(t *testing.T) {
 		{"supported verb", cfg, "shell-run", []string{"--from", "fb-stage", "x.py"}, false},
 		{"deploy is delegated", cfg, "deploy", []string{"--from", "fb-stage"}, false},
 		{"uninstall runs in the container", cfg, "uninstall", []string{"--from", "fb-stage", "sale"}, false},
+		{"probe on the env", cfg, "probe", []string{"-c", "1", "--from", "fb-stage"}, false},
+		{"probe --remote through the binding", &bound, "probe", []string{"-c", "1", "--remote"}, false},
+		{"doctor on the env", cfg, "doctor", []string{"--from", "fb-stage"}, false},
+		{"doctor through the binding", &bound, "doctor", nil, false},
 		{"push refused", cfg, "push", []string{"--from=fb-stage"}, true},
 		{"restart refused", cfg, "restart", []string{"--from", "fb-stage"}, true},
 		{"db-admin refused", cfg, "db-admin", []string{"--from", "fb-stage"}, true},
@@ -170,6 +175,22 @@ func TestRelayShellRunRunsInTheContainer(t *testing.T) {
 		t.Errorf("output = %q", out)
 	}
 	want := "morwi-fb\tdocker exec -i 'relay-fb-stage-odoo' 'odoo' 'shell' '-d' 'fuentebuena' '--db_user' 'odoo' '--no-http'"
+	if got := sshLog(t, logPath); len(got) != 1 || got[0] != want {
+		t.Errorf("ssh ran %q\nwant %q", got, want)
+	}
+}
+
+func TestRelayProbeRunsInTheContainer(t *testing.T) {
+	f := newFakeRelay(t)
+	cfg, logPath := relayTestEnv(t, f.URL)
+	res, err := RunProbe(context.Background(), ProbeOpts{Cfg: cfg, Args: []string{"-c", "1+2", "--from", "fb-stage"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(res.Result) != "3" || res.DB != "fuentebuena" || res.Target != "fb-stage" {
+		t.Errorf("result = %+v", res)
+	}
+	want := "morwi-fb\tdocker exec -i 'relay-fb-stage-odoo' 'odoo' 'shell' '-d' 'fuentebuena' '--db_user' 'odoo' '--no-http' '--log-level=warn'"
 	if got := sshLog(t, logPath); len(got) != 1 || got[0] != want {
 		t.Errorf("ssh ran %q\nwant %q", got, want)
 	}

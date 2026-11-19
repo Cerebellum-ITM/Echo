@@ -5,6 +5,19 @@ All notable changes to Echo are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- **`probe` and `doctor` run on Relay envs.** `probe --from <relay target>`
+  (or `--remote` on a Relay binding) runs the read-only probe with `docker
+  exec` in the env's odoo container, like `shell-run`. `doctor` on a Relay
+  env runs its own three checks: `relay` (the env resolves; a warning when it
+  has no release yet), `ssh` (one read over the user's alias) and
+  `containers` (the odoo and db containers exist and are running). The
+  report keeps its shape, with the gate stage and database from Relay's
+  resolve; a Relay env has no server profile, rsync, git deploy, lock or push
+  destination, so those checks do not apply.
+
 ## [0.30.0] - 2026-11-09
 
 ### Added

@@ -106,7 +106,7 @@ var commandDocs = []commandDoc{
 			"Bare link with several targets and --add open pickers and exit 2 without a TTY; name the target instead",
 			"Registering a target headlessly is init --remote ... --name <target> --link",
 			"The binding is saved before the probe; an unreachable remote is a WARNING, not a failure",
-			"A Relay target needs [relay] url and token_file (an echo-scope token) in global.toml; shell, shell-run, logs, ps, test, update, uninstall, i18n-pull and i18n-update run in its containers with docker exec, deploy is handed to Relay, every other remote verb exits 2",
+			"A Relay target needs [relay] url and token_file (an echo-scope token) in global.toml; shell, shell-run, logs, ps, test, update, uninstall, probe, i18n-pull and i18n-update run in its containers with docker exec, doctor checks the resolve, SSH and the containers, deploy is handed to Relay, every other remote verb exits 2",
 		},
 		examples: []helpExample{
 			{"link staging", "Bind this directory to the staging target"},
@@ -129,6 +129,7 @@ var commandDocs = []commandDoc{
 			"Any failed check exits 1; warnings alone exit 0",
 			"With no link, no --from and several targets it opens a target picker, which exits 2 without a TTY",
 			"--json prints {target, checks, counts} on stdout; each check has id, status, reason, message and fields",
+			"On a Relay env the checks are relay (the resolve), ssh and containers; a Relay env has no server profile, rsync, git deploy, lock or push destination to check",
 		},
 		examples: []helpExample{
 			{"doctor --from staging --json", "Readiness report of staging as JSON"},
@@ -336,6 +337,7 @@ var commandDocs = []commandDoc{
 			"--json prints {ok, kind, result, stdout, error, db, stage, target, duration_ms}; error has type, message, traceback, file and line",
 			"Values of keys containing secret, password, token, api_key or apikey print as *** unless --reveal",
 			"Exit 0 with a result, 1 when the Python raised or no result came back, 2 on a usage error",
+			"Runs on a Relay env through docker exec in its Odoo container",
 		},
 		examples: []helpExample{
 			{`probe -c "env['res.partner'].search_count([])" --from staging --json`, "Count partners on staging as a JSON payload"},

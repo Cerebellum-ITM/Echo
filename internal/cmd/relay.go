@@ -33,13 +33,14 @@ var relayDeployPoll = 2 * time.Second
 var relaySupported = map[string]bool{
 	"shell": true, "shell-run": true, "logs": true, "ps": true, "test": true, "update": true,
 	"uninstall": true, "i18n-pull": true, "i18n-update": true, "deploy": true, "link": true,
+	"probe": true, "doctor": true,
 }
 
 // relayAlwaysRemote are the unsupported commands that reach the bound target
 // even without a remote flag.
 var relayAlwaysRemote = map[string]bool{
 	"push": true, "watch": true, "sideload": true, "checkpoint": true, "actions": true,
-	"db-pull": true, "db-push": true, "doctor": true,
+	"db-pull": true, "db-push": true,
 }
 
 const relayBakedAddons = "Relay builds the env's image from git with the addons baked in; " +
