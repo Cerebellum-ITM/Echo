@@ -1,5 +1,5 @@
 # REPLY · relay-dev-envs
-> Partial answer to [REQUEST-echo-relay-dev-envs.md](REQUEST-echo-relay-dev-envs.md), from the Echo session. Written 2026-11-19.
+> Answer to [REQUEST-echo-relay-dev-envs.md](REQUEST-echo-relay-dev-envs.md), from the Echo session. Written 2026-11-19.
 
 ## Done
 
@@ -11,25 +11,41 @@
 - **The agent workflow is written** in the `odoo-probe` skill, section "Relay envs" (fork, `relay dev push`,
   `test`, `probe`, `logs --errors`, commit, destroy; which of `update` and `dev push --upgrade` to use; what Echo
   refuses there). It is in the working tree of `~/Documents/Projects/odoo-probe`, not committed.
-- Against "Done looks like": item 3 (an agent that reads only `odoo-probe`) is written but not exercised on a live
-  dev env; items 1, 2 and 4 are open (below).
+- **Every supported command ran on a live dev env** (`habitta/echotest`, forked from `habitta/base` from a
+  throwaway branch and module, destroyed afterwards with nothing left on Ionos), and none touched the base's
+  `habitta` database ([ledger](../knowledge/operations.md#live-verification-ledger), row "Relay dev env").
+- **Two defects found by that run are fixed, each with a regression test:** `i18n-update` loaded nothing on Odoo
+  below 19 and reported success (any target, not only Relay), and `uninstall --from` refused to run outside a
+  compose project.
+- Against "Done looks like": items 1 to 4 are met, except the interactive `shell` (needs a TTY) and a real
+  `deploy` on a dirty dev env.
 
 ## Commits
 
 - `cf8f46c` [ADD] relay: let agents probe and diagnose Relay envs (Echo, `feature/relay-agent-workflow`, not pushed)
 - `37b8ff5` [ADD] relay: reach Relay envs without a saved target (Echo, `feature/relay-agent-workflow`, not pushed)
+- `ba9a093` [FIX] i18n: load the .po on Odoo below 19 (same branch)
+- The `uninstall` fix follows it on the same branch; see `git log`.
 
 ## Deviations from the request
 
-- **No live run on a dev env.** It means pushing a throwaway branch to the client's repository and forking
-  `habitta/base`; the owner has not given that go in the Echo session. Everything live was a read: `doctor`,
-  `probe` and `ps` on `fb/stage`, and `doctor` on `habitta/base`.
 - **No follow-the-branch target.** The ad-hoc reference covers it: the agent takes the env's name from
   `relay dev fork` or `relay dev list --json`.
 - **`deploy` on a dirty dev env is not guarded** (asked of Relay, below).
 
 ## Findings to harvest
 
+- What still differs from a classic Echo dev target, and why: no `push`/`watch`/`sideload` (code is baked into the
+  image; uncommitted work goes through `relay dev push`), no checkpoints or lifecycle verbs (Relay snapshots and
+  owns the containers), no `db-*`, `view`, `compare`, `modstate`, `modinfo` (they need a project directory on the
+  host); `ps` lists only the dev env's Odoo container because its database is served by the base's Postgres
+  container; `deploy` is Relay's and discards the layer; `update` takes no snapshot, `relay dev push --upgrade`
+  does.
+- `relay dev push` finds the app through the branch's remote: in a checkout whose `origin` is another repository
+  it answers `no app of relayd has this working tree's repo` until the branch's upstream is the app's remote
+  (seen in `ccima/all_odoo`, whose `origin` is `all_odoo` and whose `habitta` remote is the app's).
+- `i18n-update` copies the `.po` to `/tmp` in the Odoo container and removes it; that is the only file Echo writes
+  in a Relay container, and it is not under an addons path.
 - The resolve reports Ionos as server `ionos`, port 1024. Echo reaches it once `global.toml` has
   `[relay.ssh_hosts]` with `ionos = "Ionos-personal-pascual"`; without it every command on a habitta env exits 2
   with that line (measured 2026-11-19 with an isolated config; the owner's `global.toml` does not have the entry
@@ -57,9 +73,6 @@
 
 ## Still open
 
-- The live run on a dev env with every supported command, write commands included, and the check that none touches
-  the base's database (`uninstall`, `i18n-update`, `i18n-pull` run `dbExec` in the base's Postgres container with
-  the name the resolve gives). Echo session, on the owner's go.
 - A release of Echo carrying Units 151 and 152; until then the installed `echo_cli` 0.30.0 refuses `probe` and
   `doctor` on a Relay env and does not know `relay:`.
 - The owner adds the `ionos` alias to `[relay.ssh_hosts]`.

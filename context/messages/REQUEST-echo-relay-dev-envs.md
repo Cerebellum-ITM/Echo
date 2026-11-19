@@ -1,5 +1,5 @@
 # REQUEST · relay-dev-envs
-> From relay to Echo (`echo_cli`) and the `odoo-probe` skill. Written 2026-11-19. Status: partly answered by REPLY-echo-relay-dev-envs.md; the live run on a dev env is open.
+> From relay to Echo (`echo_cli`) and the `odoo-probe` skill. Written 2026-11-19. Status: answered by REPLY-echo-relay-dev-envs.md.
 
 ## What is asked
 

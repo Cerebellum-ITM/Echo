@@ -21,7 +21,9 @@ instead of scraped from logs.
   `doctor` on a Relay env) and Unit 152 (`37b8ff5`: `--from relay:<app>/<env>` with no registered target,
   `[relay.ssh_hosts]`, a non-22 receiver without an alias is an error). Both verified with reads on `fb/stage` and
   `habitta/base` ([ledger](knowledge/operations.md#live-verification-ledger)); `[Unreleased]` in `CHANGELOG.md`
-  holds them. The installed binary does not have them.
+  holds them. The same branch has two fixes found by the live run on a dev env (2026-11-19, ledger row "Relay dev
+  env"): `ba9a093` (`i18n-update` loaded nothing on Odoo below 19) and the `uninstall --from` projectless fix.
+  The installed binary has none of this.
 - The `odoo-probe` skill has a "Relay envs" section (agent workflow on a dev env) in the working tree of
   `~/Documents/Projects/odoo-probe`, uncommitted, next to an older uncommitted `uninstall` edit.
 - `~/.local/bin/echo_cli` is `0.30.0+45e8f4b` (installed 2026-11-18 with `make build` on a clean `main`).
@@ -41,11 +43,10 @@ instead of scraped from logs.
 
 ## Next
 
-1. Finish [REQUEST-echo-relay-dev-envs](messages/REQUEST-echo-relay-dev-envs.md), on the user's go: add
-   `ionos = "Ionos-personal-pascual"` to `[relay.ssh_hosts]` (the user's `global.toml`), fork a dev env of
-   `habitta/base` from a throwaway branch, run every command of `relaySupported` on it with `--from
-   relay:habitta/<name>` (writes included), confirm none touches the base's `habitta` database, destroy it. Then
-   merge the branch, release, and commit the skill.
+1. Close the Relay work, on the user's go: merge `feature/relay-agent-workflow`, release (it carries a fix for
+   every Odoo below 19), install the binary, commit the `odoo-probe` skill, and add `ionos =
+   "Ionos-personal-pascual"` to `[relay.ssh_hosts]` in the user's `global.toml` (the live run used an isolated
+   config).
 2. Live-check what 0.30.0 shipped unverified, on a dev target with the user's go: `db-push --filestore` to an
    instance without a filestore, `uninstall --from <t>` on a dev target, and a start after a db image re-pull.
 3. After the owner upgrades relayd on Ionos and saves the echo token: `ps`, `logs` and a `shell-run` on
@@ -63,13 +64,11 @@ instead of scraped from logs.
 
 | File | From → to | Status |
 |---|---|---|
-| [messages/REQUEST-echo-relay-dev-envs.md](messages/REQUEST-echo-relay-dev-envs.md) | relay → Echo, `odoo-probe` | partly answered by [REPLY](messages/REPLY-echo-relay-dev-envs.md) (Units 151, 152, skill section); open: the live run on a dev env; it asks Relay for `role`/`dev_of`/`dirty` in the resolve and a line in its skill |
+| [messages/REQUEST-echo-relay-dev-envs.md](messages/REQUEST-echo-relay-dev-envs.md) | relay → Echo, `odoo-probe` | answered by [REPLY](messages/REPLY-echo-relay-dev-envs.md): Units 151, 152, the live run, two fixes, the skill section; it asks Relay for `role`/`dev_of`/`dirty` in the resolve and a line in its skill. Harvest and archive at the next close |
 | Relay's `context/messages/REQUEST-echo-propose-scripts.md` (`~/Documents/Projects/relay`) | relay → Echo, `odoo-probe` | open since 2026-11-03 |
 
 ## Open questions for the user
 
-- Go for the live run on a dev env (it pushes a throwaway branch to the client's `addons-habitta` and forks
-  `habitta/base`)?
 - The `odoo-probe` "Relay envs" section lets an agent run write-mode commands on its own dev env without asking
   per operation, as Relay's skill already does for `relay dev`: keep that rule or keep per-operation permission?
 
