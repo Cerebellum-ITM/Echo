@@ -31,6 +31,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   of a warning followed by a failing `ssh`.
 
 ### Fixed
+- **`uninstall --from <target>` runs outside a compose project.** The remote
+  form exited 2 with `not inside a project` unless the current directory held
+  a `docker-compose.yml`, although it only reaches the target over SSH, like
+  remote `update` and `test`.
 - **`compare --targets` refuses a Relay env.** It reads a deploy lock, which a
   Relay env does not have; naming one now exits 2 instead of trying to read a
   lock at a path that does not exist.
