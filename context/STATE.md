@@ -49,7 +49,10 @@ instead of scraped from logs.
 
 ## Messages
 
-None open.
+| File | From → to | Status |
+|---|---|---|
+| [messages/REQUEST-echo-relay-dev-envs.md](messages/REQUEST-echo-relay-dev-envs.md) | relay → Echo, `odoo-probe` | open: review Echo on Relay dev envs, fix, document the agent workflow |
+| Relay's `context/messages/REQUEST-echo-propose-scripts.md` (`~/Documents/Projects/relay`) | relay → Echo, `odoo-probe` | open since 2026-11-03 |
 
 ## Open questions for the user
 
