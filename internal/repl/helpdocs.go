@@ -96,7 +96,7 @@ var commandDocs = []commandDoc{
 			{"--list", "", "List the targets, marking the current one (no SSH, no write)"},
 			{"--json", "", "With --list: the targets as one JSON array; with --show: the binding and remote target as one object"},
 			{"--relay", "<app>/<env>", "With --add <name>: register an env Relay deploys, headless, and bind to it"},
-			{"--ssh-host", "<alias>", "With --relay: the ~/.ssh/config alias to reach the receiver (default: the host Relay reports)"},
+			{"--ssh-host", "<alias>", "With --relay: the ~/.ssh/config alias to reach the receiver (default: its [relay.ssh_hosts] entry, else the host Relay reports); remembered for the receiver when it has no entry"},
 		},
 		notes: []string{
 			"A target name, --add, --next, --show, --rm and --list are mutually exclusive; --json only applies to --list and --show",
@@ -107,6 +107,8 @@ var commandDocs = []commandDoc{
 			"Registering a target headlessly is init --remote ... --name <target> --link",
 			"The binding is saved before the probe; an unreachable remote is a WARNING, not a failure",
 			"A Relay target needs [relay] url and token_file (an echo-scope token) in global.toml; shell, shell-run, logs, ps, test, update, uninstall, probe, i18n-pull and i18n-update run in its containers with docker exec, doctor checks the resolve, SSH and the containers, deploy is handed to Relay, every other remote verb exits 2",
+			"--from relay:<app>/<env> reaches a Relay env without registering it (nothing is saved); link relay:<app>/<env> does not bind, register the env first",
+			"[relay.ssh_hosts] in global.toml maps a receiver's server name to a ~/.ssh/config alias (<server> = \"<alias>\"); a receiver on an SSH port other than 22 needs one, or --ssh-host, else the command exits 2",
 		},
 		examples: []helpExample{
 			{"link staging", "Bind this directory to the staging target"},
@@ -340,9 +342,9 @@ var commandDocs = []commandDoc{
 			"Runs on a Relay env through docker exec in its Odoo container",
 		},
 		examples: []helpExample{
-			{`probe -c "env['res.partner'].search_count([])" --from staging --json`, "Count partners on staging as a JSON payload"},
 			{`probe read sale.order --domain '[["state","=","sale"]]' --fields name,amount_total --limit 5`, "Five confirmed sale orders"},
 			{"probe arch sale.view_order_form --remote", "Combined order form and every view that extends it on the linked remote"},
+			{`probe -c "env['res.partner'].search_count([])" --from relay:habitta/ui --json`, "Count partners on a Relay env reached ad hoc"},
 		},
 	},
 	{
@@ -1256,6 +1258,7 @@ var helpTopics = []helpTopic{
 		{"exit codes", "", "0 ok · 1 error or ERROR/CRITICAL lines · 2 usage, or a picker/confirm without a TTY · 3 cancelled"},
 		{"no TTY", "", "Every picker needs its flag (--commits, --modules, --auto, <mod...>); prod confirms need --force"},
 		{"remote targets", "", "--from <target> names a connect target; --remote uses this directory's link (see link)"},
+		{"relay envs", "", "--from relay:<app>/<env> reaches a Relay env without registering it; nothing is saved (see link)"},
 		{"pre-flight", "", "link --show --json: the linked target's stage, db, Odoo version, deployed code and containers"},
 		{"live data", "", "probe -c <expr> --json (or ref, read, fields, param, arch) reads the target's DB in a read-only transaction"},
 		{"module runs", "", "install, update, uninstall and test --json: errors with file:line frames, warnings, failing tests"},

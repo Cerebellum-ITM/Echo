@@ -17,6 +17,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   report keeps its shape, with the gate stage and database from Relay's
   resolve; a Relay env has no server profile, rsync, git deploy, lock or push
   destination, so those checks do not apply.
+- **Relay envs are reachable without a connect target.** `--from
+  relay:<app>/<env>` works on every command a Relay target supports and saves
+  nothing, for short-lived dev envs. The SSH host of a receiver can be set
+  once per server in `[relay.ssh_hosts]` of `global.toml` (`<server> =
+  "<alias>"`, an alias from `~/.ssh/config`); `link --add <name> --relay
+  <app>/<env> --ssh-host <alias>` records it when the server has no entry.
+
+### Changed
+- **A Relay receiver on an SSH port other than 22 needs an alias.** Without
+  `--ssh-host`, a registered target's `ssh_host` or a `[relay.ssh_hosts]`
+  entry, registering or reaching its envs now exits 2 with the fix, instead
+  of a warning followed by a failing `ssh`.
+
+### Fixed
+- **`compare --targets` refuses a Relay env.** It reads a deploy lock, which a
+  Relay env does not have; naming one now exits 2 instead of trying to read a
+  lock at a path that does not exist.
 
 ## [0.30.0] - 2026-11-09
 

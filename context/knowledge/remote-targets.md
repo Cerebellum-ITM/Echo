@@ -107,6 +107,17 @@ without deploying. Relay's side is its unit 25 (`GET /api/v1/resolve/{app}/{env}
   `remote_path = ""` and writes the `relay` key only on Relay targets (`omitempty`), so a save leaves other targets
   byte-identical. **Trap:** an `echo_cli` without Unit 149 (0.29.0 and older) drops `[relay]` and the `relay` keys if it
   ever saves `global.toml` (its `globalFile` does not model them).
+- **Ad hoc, without a target (Unit 152):** a `--from` that names no target but is `relay:<app>/<env>`
+  (`config.RelaySpec`) makes `resolvePullRemote` return an empty host and that path (a malformed spec is
+  `ErrUsage`), and `relayTargetFor` returns it too, so `RelayGuard` and deploy treat it like a registered target.
+  Nothing is saved; `fromName` stays the reference, so status lines and `--json` `target` read `relay:<app>/<env>`.
+  `link relay:<app>/<env>` does not bind (it is an unknown target with a registration hint).
+- **The SSH host is chosen once**, by `relaySSHHost` (`internal/cmd/relay.go`), at resolve and at `link --add
+  --relay`: the explicit host (a target's `ssh_host` or `--ssh-host`), else `[relay.ssh_hosts]` keyed by the
+  resolve's `server`, else the resolve's host when its port is 0 or 22, else `ErrUsage` naming the server and both
+  fixes (Echo passes no `ssh -p`). `[relay.ssh_hosts]` is global-only (`relayConfig.SSHHosts`,
+  `Config.RelaySSHHosts`), holds `~/.ssh/config` aliases only, and `link --add --relay --ssh-host` writes the
+  entry when the server has none (`config.SaveRelaySSHHost`, never overwrites).
 - `resolveRemoteShell` sees the `relay:` path and calls `resolveRelayShell` (`internal/cmd/relay.go`): one resolve,
   no SSH. Both transports are `docker exec -i <container>` (`odooExec`/`dbExec` = docker), interactive shells
   `docker exec -it`; the `odoo.Conn` carries only `-d` and `--db_user`, because the container's `/etc/odoo/odoo.conf`

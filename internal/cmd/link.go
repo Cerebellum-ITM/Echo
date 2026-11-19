@@ -579,6 +579,10 @@ func resolveLinkTarget(ctx context.Context, opts LinkOpts, name string) (config.
 				return validLinkTarget(t)
 			}
 		}
+		if spec, ok := config.RelaySpec(name); ok {
+			return config.ConnectTarget{}, fmt.Errorf(
+				"unknown connect target: %s (register it first: link --add <name> --relay %s)", name, spec)
+		}
 		if len(targets) == 0 {
 			return config.ConnectTarget{}, ErrNoConnectTargets
 		}

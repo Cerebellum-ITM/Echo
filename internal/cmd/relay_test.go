@@ -24,6 +24,13 @@ const relayResolveBody = `{"app":"fb","env":"stage","stage":"staging","branch":"
 	"containers":{"odoo":"relay-fb-stage-odoo","db":"relay-fb-stage-db"},"db":{"name":"fuentebuena","user":"odoo"},
 	"odoo_conf":"/etc/odoo/odoo.conf","release":{"deploy_id":11,"app_sha":"165297d159028635cfad56c6d54978c12308b63f"}}`
 
+// relayResolvePort1024Body is an env whose receiver listens for SSH on a
+// port Echo cannot pass.
+const relayResolvePort1024Body = `{"app":"habitta","env":"ui","stage":"dev","branch":"ui","odoo_version":"19.0",
+	"server":"morwi-habitta","ssh":{"host":"18.144.1.2","port":1024},"compose_project":"relay-habitta-ui",
+	"containers":{"odoo":"relay-habitta-ui-odoo","db":"relay-habitta-ui-db"},"db":{"name":"habitta","user":"odoo"},
+	"odoo_conf":"/etc/odoo/odoo.conf"}`
+
 // fakeRelay serves resolve and the deploy routes. deployStates are what
 // successive reads of the deploy return.
 type fakeRelay struct {
@@ -47,6 +54,8 @@ func newFakeRelay(t *testing.T, deployStates ...string) *fakeRelay {
 		switch {
 		case r.URL.Path == "/api/v1/resolve/fb/stage":
 			_, _ = io.WriteString(w, relayResolveBody)
+		case r.URL.Path == "/api/v1/resolve/habitta/ui":
+			_, _ = io.WriteString(w, relayResolvePort1024Body)
 		case r.URL.Path == "/api/v1/resolve/fb/qa":
 			w.WriteHeader(http.StatusNotFound)
 			_, _ = io.WriteString(w, `{"error":{"code":"unknown_env","message":"unknown env \"qa\" in app \"fb\""}}`)
@@ -144,6 +153,8 @@ func TestRelayGuard(t *testing.T) {
 		{"push through the binding", &bound, "push", nil, true},
 		{"--remote through the binding", &bound, "stop", []string{"--remote"}, true},
 		{"local verb in a bound directory", &bound, "stop", nil, false},
+		{"push ad hoc refused", cfg, "push", []string{"--from", "relay:fb/stage"}, true},
+		{"probe ad hoc", cfg, "probe", []string{"-c", "1", "--from", "relay:fb/stage"}, false},
 		{"classic target untouched", cfg, "push", []string{"--from", "classic"}, false},
 		{"unknown target left to the command", cfg, "push", []string{"--from", "nope"}, false},
 	}
@@ -334,5 +345,165 @@ func TestI18nUpdateOnRelayUsesTheContainerConf(t *testing.T) {
 	}
 	if !strings.Contains(got[2], "'rm' '-f' '/tmp/echo-i18n-") || strings.Contains(got[2], ".conf") {
 		t.Errorf("cleanup = %s, want only the .po removed", got[2])
+	}
+}
+
+func TestRelaySSHHost(t *testing.T) {
+	cfg := &config.Config{RelaySSHHosts: map[string]string{"mapped": "mapped-alias"}}
+	env := func(server string, port int) relay.Env {
+		return relay.Env{App: "habitta", Env: "ui", Server: server, SSH: relay.SSH{Host: "18.144.1.2", Port: port}}
+	}
+	tests := []struct {
+		name     string
+		explicit string
+		re       relay.Env
+		want     string
+	}{
+		{"explicit wins", "mine", env("mapped", 1024), "mine"},
+		{"map entry wins over the resolve host", "", env("mapped", 22), "mapped-alias"},
+		{"port 22 uses the resolve host", "", env("other", 22), "18.144.1.2"},
+		{"port 0 uses the resolve host", "", env("other", 0), "18.144.1.2"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := relaySSHHost(cfg, tt.explicit, tt.re)
+			if err != nil || got != tt.want {
+				t.Errorf("relaySSHHost = %q, %v; want %q", got, err, tt.want)
+			}
+		})
+	}
+	_, err := relaySSHHost(cfg, "", env("other", 1024))
+	if !errors.Is(err, ErrUsage) {
+		t.Fatalf("port 1024 without an alias: err = %v, want usage", err)
+	}
+	for _, part := range []string{"other", "1024", "[relay.ssh_hosts]", "--ssh-host", "--relay habitta/ui"} {
+		if !strings.Contains(err.Error(), part) {
+			t.Errorf("err %q does not name %q", err, part)
+		}
+	}
+}
+
+func TestResolvePullRemoteRelayReference(t *testing.T) {
+	cfg := &config.Config{ConnectTargets: []config.ConnectTarget{
+		{Name: "fb-stage", SSHHost: "morwi-fb", RemotePath: config.RelayPath("fb/stage"), Relay: "fb/stage"},
+		{Name: "classic", SSHHost: "Ionos", RemotePath: "/srv/odoo"},
+	}}
+	host, path, err := resolvePullRemote(cfg, "relay:habitta/ui")
+	if err != nil || host != "" || path != "relay:habitta/ui" {
+		t.Errorf("ad hoc = %q %q %v, want no host and the reference", host, path, err)
+	}
+	if _, _, err := resolvePullRemote(cfg, "relay:bad"); !errors.Is(err, ErrUsage) {
+		t.Errorf("relay:bad: err = %v, want usage", err)
+	}
+	if host, path, err := resolvePullRemote(cfg, "classic"); err != nil || host != "Ionos" || path != "/srv/odoo" {
+		t.Errorf("classic = %q %q %v", host, path, err)
+	}
+	if host, path, err := resolvePullRemote(cfg, "fb-stage"); err != nil || host != "morwi-fb" || path != config.RelayPath("fb/stage") {
+		t.Errorf("fb-stage = %q %q %v", host, path, err)
+	}
+	if _, _, err := resolvePullRemote(cfg, "nope"); err == nil || !strings.Contains(err.Error(), "unknown connect target") {
+		t.Errorf("nope: err = %v, want unknown connect target", err)
+	}
+}
+
+func TestRelayAdHocProbeUsesTheMappedAlias(t *testing.T) {
+	f := newFakeRelay(t)
+	cfg, logPath := relayTestEnv(t, f.URL)
+	cfg.RelaySSHHosts = map[string]string{"morwi-fb": "fb-alias"}
+	res, err := RunProbe(context.Background(), ProbeOpts{Cfg: cfg, Args: []string{"-c", "1+2", "--from", "relay:fb/stage"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(res.Result) != "3" || res.Target != "relay:fb/stage" {
+		t.Errorf("result = %+v", res)
+	}
+	want := "fb-alias\tdocker exec -i 'relay-fb-stage-odoo' 'odoo' 'shell' '-d' 'fuentebuena' '--db_user' 'odoo' '--no-http' '--log-level=warn'"
+	if got := sshLog(t, logPath); len(got) != 1 || got[0] != want {
+		t.Errorf("ssh ran %q\nwant %q", got, want)
+	}
+	assertNoGlobalConfig(t)
+}
+
+func TestRelayAdHocDoctorAndDeploy(t *testing.T) {
+	relayDeployPoll = time.Millisecond
+	t.Cleanup(func() { relayDeployPoll = 2 * time.Second })
+	f := newFakeRelay(t, "succeeded")
+	cfg, _ := relayTestEnv(t, f.URL)
+	cfg.RelaySSHHosts = map[string]string{"morwi-fb": "fb-alias"}
+
+	calls := scriptDoctorSSH(t, "/relay-fb-stage-odoo true\n/relay-fb-stage-db true\n", nil)
+	res, err := RunDoctor(context.Background(), DoctorOpts{Cfg: cfg, Root: t.TempDir(), Args: []string{"--from", "relay:fb/stage"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Target.Name != "relay:fb/stage" || res.Target.Host != "fb-alias" || res.Counts.Failed != 0 {
+		t.Errorf("doctor = %+v", res)
+	}
+	if len(*calls) != 1 || (*calls)[0][0] != "fb-alias" {
+		t.Errorf("ssh calls = %q", *calls)
+	}
+
+	dep, err := RunDeploy(context.Background(), DeployOpts{Cfg: cfg, Args: []string{"--from", "relay:fb/stage", "--dry-run"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(f.created) != 1 || f.created[0] != (relay.DeployRequest{App: "fb", Env: "stage", DryRun: true}) || dep.Target != "relay:fb/stage" {
+		t.Errorf("created %+v, result %+v", f.created, dep)
+	}
+	assertNoGlobalConfig(t)
+}
+
+func TestLinkAddRelayNon22Port(t *testing.T) {
+	f := newFakeRelay(t)
+	cfg, _ := relayTestEnv(t, f.URL)
+	opts := LinkOpts{Cfg: cfg, Root: t.TempDir(), Args: []string{"--add", "habitta-ui", "--relay", "habitta/ui"}}
+	if err := RunLink(context.Background(), opts); !errors.Is(err, ErrUsage) {
+		t.Fatalf("no alias: err = %v, want usage", err)
+	}
+	assertNoGlobalConfig(t)
+
+	opts.Args = []string{"--add", "habitta-ui", "--relay", "habitta/ui", "--ssh-host", "habitta-ssh"}
+	if err := RunLink(context.Background(), opts); err != nil {
+		t.Fatal(err)
+	}
+	opts.Args = []string{"--add", "habitta-ui-2", "--relay", "habitta/ui", "--ssh-host", "other-alias"}
+	if err := RunLink(context.Background(), opts); err != nil {
+		t.Fatal(err)
+	}
+	g, err := config.LoadGlobal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	hosts := map[string]string{}
+	for _, ct := range g.ConnectTargets {
+		hosts[ct.Name] = ct.SSHHost
+	}
+	if hosts["habitta-ui"] != "habitta-ssh" || hosts["habitta-ui-2"] != "other-alias" {
+		t.Errorf("saved hosts = %v", hosts)
+	}
+	if len(g.RelaySSHHosts) != 1 || g.RelaySSHHosts["morwi-habitta"] != "habitta-ssh" {
+		t.Errorf("[relay.ssh_hosts] = %v, want only the first alias", g.RelaySSHHosts)
+	}
+	if cfg.RelaySSHHosts["morwi-habitta"] != "habitta-ssh" {
+		t.Errorf("in-memory ssh_hosts = %v", cfg.RelaySSHHosts)
+	}
+}
+
+func TestLinkRelayReferenceHintsRegistration(t *testing.T) {
+	cfg := &config.Config{ConnectTargets: []config.ConnectTarget{{Name: "classic", SSHHost: "Ionos", RemotePath: "/srv/odoo"}}}
+	err := RunLink(context.Background(), LinkOpts{Cfg: cfg, Root: t.TempDir(), Args: []string{"relay:habitta/ui"}})
+	if err == nil || !strings.Contains(err.Error(), "unknown connect target") ||
+		!strings.Contains(err.Error(), "link --add <name> --relay habitta/ui") {
+		t.Errorf("err = %v, want unknown target with the registration hint", err)
+	}
+}
+
+// assertNoGlobalConfig fails when the run wrote global.toml under the test's
+// HOME.
+func assertNoGlobalConfig(t *testing.T) {
+	t.Helper()
+	matches, _ := filepath.Glob(filepath.Join(os.Getenv("HOME"), ".config", "echo", "global.toml"))
+	if len(matches) != 0 {
+		t.Errorf("global.toml was written: %v", matches)
 	}
 }

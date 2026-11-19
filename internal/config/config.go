@@ -212,6 +212,9 @@ type Config struct {
 	RelayURL       string
 	RelayToken     string
 	RelayTokenFile string
+	// RelaySSHHosts maps a receiver's server name, as Relay's resolve reports
+	// it, to the ~/.ssh/config alias that reaches it.
+	RelaySSHHosts map[string]string
 }
 
 // DeployAction is one declared step in the deploy lifecycle. Phase is
@@ -316,9 +319,10 @@ type reverbConfig struct {
 
 // relayConfig is the [relay] table, valid in global.toml only (Unit 149).
 type relayConfig struct {
-	URL       string `toml:"url"`
-	Token     string `toml:"token,omitempty"`
-	TokenFile string `toml:"token_file,omitempty"`
+	URL       string            `toml:"url"`
+	Token     string            `toml:"token,omitempty"`
+	TokenFile string            `toml:"token_file,omitempty"`
+	SSHHosts  map[string]string `toml:"ssh_hosts,omitempty"`
 }
 
 // pushConfig is the [push] table, valid in both global.toml and a project
@@ -799,6 +803,7 @@ func applyRelay(cfg *Config, f *relayConfig) {
 	cfg.RelayURL = f.URL
 	cfg.RelayToken = f.Token
 	cfg.RelayTokenFile = f.TokenFile
+	cfg.RelaySSHHosts = f.SSHHosts
 }
 
 // RemoteProfile is the subset of a server-side Echo configuration the
@@ -1395,6 +1400,39 @@ func SaveConnectTarget(t ConnectTarget) error {
 		cfg.ConnectTargets = append(cfg.ConnectTargets, t)
 	}
 	return SaveGlobal(cfg)
+}
+
+// SaveRelaySSHHost records alias as the SSH host of the Relay receiver
+// server in [relay.ssh_hosts], preserving every other section. An existing
+// entry for server is never overwritten; saved reports whether it wrote.
+func SaveRelaySSHHost(server, alias string) (saved bool, err error) {
+	root, err := configRoot()
+	if err != nil {
+		return false, err
+	}
+	if err := os.MkdirAll(root, 0o700); err != nil {
+		return false, err
+	}
+	path := filepath.Join(root, GlobalFileName)
+	g, err := loadGlobalFile(path)
+	if err != nil {
+		return false, err
+	}
+	if g.Relay == nil {
+		g.Relay = &relayConfig{}
+	}
+	if _, exists := g.Relay.SSHHosts[server]; exists {
+		return false, nil
+	}
+	if g.Relay.SSHHosts == nil {
+		g.Relay.SSHHosts = map[string]string{}
+	}
+	g.Relay.SSHHosts[server] = alias
+	var buf bytes.Buffer
+	if err := toml.NewEncoder(&buf).Encode(g); err != nil {
+		return false, err
+	}
+	return true, writeAtomic(path, buf.Bytes())
 }
 
 // BackfillProjectPath silently migrates a pre-existing project profile

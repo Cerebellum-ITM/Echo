@@ -379,6 +379,7 @@ func TestCompareTargetsUsage(t *testing.T) {
 		{"--targets", "dev,dev"},
 		{"--targets", "dev,nope"},
 		{"--targets", "dev,twin"},
+		{"--targets", "dev,relay:fb/stage"},
 		{"--targets", "dev,staging", "--from", "dev"},
 		{"--targets", "dev,staging", "--all"},
 		{"--targets", "dev,staging", "--remote"},
